@@ -47,7 +47,7 @@ function Test-MortalRogsRustMsvcLink {
     $exe = Join-Path $probeRoot "probe.exe"
     New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
     try {
-        [System.IO.File]::WriteAllText($source, "fn main() { println!(\"ok\"); }`n")
+        [System.IO.File]::WriteAllText($source, 'fn main() { println!("ok"); }' + [Environment]::NewLine)
         & rustc $source -o $exe *> $null
         return $LASTEXITCODE -eq 0 -and (Test-Path $exe)
     } finally {
