@@ -10,11 +10,13 @@ if ($Distro) {
     $wslArgs += @("-d", $Distro)
 }
 
-$script = @"
+# Keep bash variables literal. Only the explicit placeholder below is replaced
+# by PowerShell before the script is sent into WSL.
+$script = @'
 set -euo pipefail
-ROOT=$LinuxRoot
-mkdir -p \"\$ROOT\"
-cd \"\$ROOT\"
+ROOT='__LINUX_ROOT__'
+mkdir -p "$ROOT"
+cd "$ROOT"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo 'python3 is required inside WSL.' >&2
@@ -35,7 +37,8 @@ obs = env.reset(seed=1)
 assert len(obs) == 4, f'Expected 4P MJX, got {len(obs)} players'
 print('MJX_OK', getattr(mjx, '__version__', 'unknown'), sorted(obs))
 PY
-"@
+'@
+$script = $script.Replace('__LINUX_ROOT__', $LinuxRoot.Replace("'", "'\"'\"'"))
 
 & wsl @wslArgs bash -lc $script
 if ($LASTEXITCODE -ne 0) {
