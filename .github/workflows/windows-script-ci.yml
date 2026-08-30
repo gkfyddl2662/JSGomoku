@@ -75,7 +75,9 @@ jobs:
             'triton-windows>=3\.6,<3\.7',
             'TRITON_WINDOWS_OK',
             'Invoke-NativeCapture',
-            'Get-TritonVersion'
+            'Get-TritonVersion',
+            'MORTAL_UNIFIED_MODEL_IMPORT_OK',
+            'patch_mortal_unified_stage1\.py'
           )) {
             if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
               throw "Missing Windows smoke contract: $pattern"
@@ -83,6 +85,12 @@ jobs:
           }
           if (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern 'import triton; print\(triton\.__version__\)" 2>\$null' -Quiet) {
             throw 'Triton import probe must not terminate Windows PowerShell through NativeCommandError'
+          }
+          if (-not (Select-String -Path scripts/patch_mortal_unified_stage1.py -Pattern 'from libriichi import consts as _libriichi_consts' -Quiet)) {
+            throw 'Unified model Stage 1 must use extension-safe libriichi consts import'
+          }
+          if (-not (Select-String -Path scripts/patch_mortal_unified_stage1.py -Pattern 'legacy libriichi\.consts import remains' -Quiet)) {
+            throw 'Unified model Stage 1 must reject legacy libriichi.consts imports'
           }
           if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
             throw 'Missing Python unified runtime smoke success marker'
