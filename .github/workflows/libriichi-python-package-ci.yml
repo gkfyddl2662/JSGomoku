@@ -34,6 +34,7 @@ jobs:
         run: |
           python scripts/patch_mortal_unified_all.py --root /tmp/mortal-libriichi-package
           grep -q 'module-name = "libriichi"' /tmp/mortal-libriichi-package/libriichi/pyproject.toml
+          grep -q 'UNIFIED_GAMEPLAY_ABI' /tmp/mortal-libriichi-package/libriichi/src/dataset/mod.rs
           grep -q 'fn libriichi(' /tmp/mortal-libriichi-package/libriichi/src/lib.rs
           ! grep -R --include='*.py' -n 'from libriichi\.' /tmp/mortal-libriichi-package/mortal
 
@@ -57,7 +58,9 @@ jobs:
           assert consts.obs_shape_for('4p', 4) == (1012, 34)
           assert hasattr(arena, 'OneVsTwo') and hasattr(arena, 'OneVsThree')
           assert hasattr(dataset, 'GameplayLoader')
+          assert dataset.UNIFIED_GAMEPLAY_ABI == 2
           print('LIBRIICHI_PYTHON_IMPORT_OK', libriichi.__file__)
+          print('LIBRIICHI_GAMEPLAY_ABI_OK', dataset.UNIFIED_GAMEPLAY_ABI)
           PY
 
       - name: Run real CPU 3P and 4P gameplay log roundtrip
