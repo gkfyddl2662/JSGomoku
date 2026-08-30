@@ -73,11 +73,16 @@ jobs:
             'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
             'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK',
             'triton-windows>=3\.6,<3\.7',
-            'TRITON_WINDOWS_OK'
+            'TRITON_WINDOWS_OK',
+            'Invoke-NativeCapture',
+            'Get-TritonVersion'
           )) {
             if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
               throw "Missing Windows smoke contract: $pattern"
             }
+          }
+          if (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern 'import triton; print\(triton\.__version__\)" 2>\$null' -Quiet) {
+            throw 'Triton import probe must not terminate Windows PowerShell through NativeCommandError'
           }
           if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
             throw 'Missing Python unified runtime smoke success marker'
