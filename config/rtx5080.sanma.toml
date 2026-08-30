@@ -14,6 +14,10 @@ save_every = 400
 test_every = 20000
 submit_every = 400
 
+[env]
+# Keep dense GRP placement shaping on the same 3P scale used by online/eval.
+pts = [6, 0, -6]
+
 [dataset]
 file_batch_size = 48
 num_workers = 8

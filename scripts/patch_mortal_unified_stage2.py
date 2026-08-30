@@ -134,8 +134,10 @@ def patch_dataloader(text: str) -> str:
         "        game_cfg = config.get('game', {})\n"
         "        game_mode = str(game_cfg.get('mode', config.get('control', {}).get('game_mode', '4p'))).casefold()\n"
         "        if game_mode in ('3', '3p', 'sanma'):\n"
+        "            game_mode = '3p'\n"
         "            num_players, grp_input_size = 3, int(game_cfg.get('grp_input_size', 6))\n"
         "        elif game_mode in ('4', '4p', 'yonma'):\n"
+        "            game_mode = '4p'\n"
         "            num_players, grp_input_size = 4, int(game_cfg.get('grp_input_size', 7))\n"
         "        else:\n"
         "            raise ValueError(f'Unsupported game mode: {game_mode!r}')\n"
@@ -146,7 +148,23 @@ def patch_dataloader(text: str) -> str:
         "        self.grp = GRP(**network_cfg)\n"
         "        grp_state = torch.load(config['grp']['state_file'], weights_only=True, map_location=torch.device('cpu'))\n"
         "        self.grp.load_state_dict(grp_state['model'])\n"
-        "        self.reward_calc = RewardCalculator(self.grp, self.pts, num_players=num_players)\n",
+        "        global_reward = config.get('global_reward', {})\n"
+        "        self.global_reward_enabled = bool(global_reward.get('enabled', False))\n"
+        "        self.score_delta_weight = float(global_reward.get('score_delta_weight', 0.0))\n"
+        "        self.score_scale = float(global_reward.get('score_scale', 12000.0))\n"
+        "        if self.global_reward_enabled and self.score_scale <= 0:\n"
+        "            raise ValueError('global_reward.score_scale must be positive')\n"
+        "        reward_pts = self.pts\n"
+        "        if self.global_reward_enabled:\n"
+        "            reward_pts = list(global_reward.get(\n"
+        "                f'rank_utility_{game_mode}',\n"
+        "                global_reward.get('rank_utility', self.pts[:num_players]),\n"
+        "            ))\n"
+        "            if len(reward_pts) != num_players:\n"
+        "                raise ValueError(\n"
+        "                    f'global_reward rank utility for {game_mode} must have {num_players} entries, got {len(reward_pts)}'\n"
+        "                )\n"
+        "        self.reward_calc = RewardCalculator(self.grp, reward_pts, num_players=num_players)\n",
         "mode-aware gameplay reward construction",
     )
     text = replace_once(
@@ -154,8 +172,13 @@ def patch_dataloader(text: str) -> str:
         "                final_scores = grp.take_final_scores()\n"
         "                scores_seq = np.concatenate((grp_feature[:, 3:] * 1e4, [final_scores]))\n",
         "                final_scores = np.asarray(grp.take_final_scores())[:self.num_players]\n"
+        "                if self.global_reward_enabled and self.score_delta_weight != 0:\n"
+        "                    score_rewards = self.reward_calc.calc_delta_points(player_id, grp_feature, final_scores)\n"
+        "                    if len(score_rewards) != len(kyoku_rewards):\n"
+        "                        raise RuntimeError('rank and score reward sequences disagree')\n"
+        "                    kyoku_rewards = kyoku_rewards + score_rewards / self.score_scale * self.score_delta_weight\n"
         "                scores_seq = np.concatenate((grp_feature[:, 3:] * 1e4, [final_scores]))\n",
-        "mode-aware final score width",
+        "mode-aware final score and global reward shaping",
     )
     return text
 
@@ -257,8 +280,12 @@ def apply(root: Path) -> None:
         "self.num_players = num_players",
         "network_cfg['num_players'] = num_players",
         "network_cfg['input_size'] = grp_input_size",
-        "RewardCalculator(self.grp, self.pts, num_players=num_players)",
+        "self.global_reward_enabled",
+        "rank_utility_{game_mode}",
+        "RewardCalculator(self.grp, reward_pts, num_players=num_players)",
         "np.asarray(grp.take_final_scores())[:self.num_players]",
+        "calc_delta_points(player_id, grp_feature, final_scores)",
+        "score_rewards / self.score_scale * self.score_delta_weight",
     )
     required_reward = (
         REWARD_MARKER,
