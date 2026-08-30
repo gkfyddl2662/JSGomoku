@@ -89,6 +89,8 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
     if not rust_only:
         model = (root / "mortal/model.py").read_text(encoding="utf-8")
         train = (root / "mortal/train.py").read_text(encoding="utf-8")
+        dataloader = (root / "mortal/dataloader.py").read_text(encoding="utf-8")
+        reward = (root / "mortal/reward_calculator.py").read_text(encoding="utf-8")
         train_grp = (root / "mortal/train_grp.py").read_text(encoding="utf-8")
         evaluator3 = (root / "mortal/one_vs_two.py").read_text(encoding="utf-8")
         evaluator4 = (root / "mortal/one_vs_three.py").read_text(encoding="utf-8")
@@ -99,6 +101,14 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
             raise RuntimeError("unified Python model postcondition failed")
         if "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" not in train:
             raise RuntimeError("unified trainer postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_DATALOADER_STAGE2" not in dataloader:
+            raise RuntimeError("unified dataloader postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_REWARD_STAGE2" not in reward:
+            raise RuntimeError("unified reward-calculator postcondition failed")
+        if "torch.zeros((1, 4)" in reward:
+            raise RuntimeError("hard-coded 4P reward final ranking remains")
+        if "network_cfg['num_players'] = num_players" not in dataloader:
+            raise RuntimeError("mode-aware GRP player count is missing from dataloader")
         if "MORTAL_ROGS_UNIFIED_GRP_TRAINER_STAGE6B" not in train_grp:
             raise RuntimeError("unified GRP trainer postcondition failed")
         if "MORTAL_ROGS_UNIFIED_EVAL_STAGE5C" not in evaluator3:
