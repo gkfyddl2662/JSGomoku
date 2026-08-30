@@ -110,11 +110,11 @@ def normalize_mode(mode: str | None) -> str:
 def load_settings() -> Settings:
     project_root = Path(__file__).resolve().parents[1]
     runtime_root = Path(
-        os.getenv("MORTAL_RUNTIME_ROOT", project_root.parent / "Mortal_ROGS_Runtime")
+        os.getenv("MORTAL_RUNTIME_ROOT", project_root / "_runtime")
     ).expanduser().resolve()
 
-    # Individual roots remain supported for existing installations, but fresh
-    # installs live together under MORTAL_RUNTIME_ROOT/{3p,4p}.
+    # Individual roots remain supported for old installations. Fresh installs
+    # are fully managed inside this project under _runtime/{3p,4p}.
     legacy_3p = os.getenv("MORTAL_SANMA_ROOT")
     mortal_3p_root = Path(
         os.getenv("MORTAL_3P_ROOT", legacy_3p or runtime_root / "3p")
