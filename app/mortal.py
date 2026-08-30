@@ -76,8 +76,30 @@ class MortalController:
             return cmd, self.s.project_root, {}
 
         if kind == "mjx_probe":
-            script = self.s.project_root / "scripts" / "check_mjx_runtime.py"
-            return [py, str(script)], self.s.project_root, {}
+            if os.name != "nt":
+                raise ValueError("MJX probe currently targets the Windows + WSL2 deployment")
+            distro = str(args.get("distro", "")).strip()
+            linux_root = str(args.get("linux_root", "~/mortal-rogs-mjx")).strip() or "~/mortal-rogs-mjx"
+            cmd = ["wsl.exe"]
+            if distro:
+                cmd.extend(["-d", distro])
+            probe_code = (
+                "import mjx; e=mjx.MjxEnv(); o=e.reset(seed=1); "
+                "assert len(o)==4; print('MJX_OK', getattr(mjx,'__version__','unknown'), sorted(o))"
+            )
+            bash = (
+                'ROOT="${ROGS_MJX_ROOT/#\\~/$HOME}"; '
+                '"$ROOT/.venv/bin/python" -c "$ROGS_MJX_PROBE"'
+            )
+            cmd.extend([
+                "env",
+                f"ROGS_MJX_ROOT={linux_root}",
+                f"ROGS_MJX_PROBE={probe_code}",
+                "bash",
+                "-lc",
+                bash,
+            ])
+            return cmd, self.s.project_root, {}
 
         if kind == "convert":
             source = self._resolve_user_path(args.get("source"), must_exist=True)
