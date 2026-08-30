@@ -1,12 +1,19 @@
 param(
     [string]$InstallRoot = "",
     [switch]$InstallRustIfMissing,
+    [switch]$InstallBuildToolsIfMissing,
     [switch]$SkipRustBuild,
     [switch]$SkipPatch
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+$MsvcHelper = Join-Path $PSScriptRoot "windows_msvc.ps1"
+if (-not (Test-Path $MsvcHelper)) {
+    throw "Missing MSVC helper: $MsvcHelper"
+}
+. $MsvcHelper
+
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
     $InstallRoot = Join-Path (Split-Path $ProjectRoot -Parent) "Mortal_Unified"
 }
@@ -95,6 +102,9 @@ foreach ($cmd in @("git", "python")) {
     }
 }
 Ensure-RustToolchain
+if (-not $SkipRustBuild) {
+    Ensure-MortalRogsMsvcBuildEnvironment -InstallIfMissing:$InstallBuildToolsIfMissing
+}
 
 if (-not (Test-Path $InstallRoot)) {
     Write-Host "[1/8] Cloning pinned canonical Mortal..."
@@ -179,7 +189,7 @@ if (-not $SkipRustBuild) {
     try {
         & $Py -m maturin develop --release
         if ($LASTEXITCODE -ne 0) {
-            throw "maturin develop failed. If link.exe/cl.exe/Windows SDK is missing, install Visual Studio 2022 Build Tools with Desktop development with C++."
+            throw "maturin develop failed after the MSVC link probe passed. Check the Rust/C++ compiler output above."
         }
     } finally {
         Pop-Location
