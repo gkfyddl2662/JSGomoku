@@ -98,6 +98,26 @@ if (-not $SkipCompile) {
     Write-Host "TRITON_WINDOWS_OK version=$tritonVersion"
 }
 
+# Older unified runtimes were patched before the PyO3 packaging contract was
+# finalized and may still import `libriichi.consts` as if libriichi were a
+# regular Python package. The unified extension exposes `consts` as an
+# attribute, so repair model.py in place before the smoke. This Stage 1 patch
+# is idempotent and does not require rebuilding the Rust extension.
+Write-Host "[0.5/2] Verifying unified Python extension imports..."
+$modelCompatPatch = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage1.py"
+& $Py $modelCompatPatch --root $InstallRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to apply unified model import compatibility patch"
+}
+$modelImportProbe = Invoke-NativeCapture -Executable $Py -Arguments @(
+    "-c",
+    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts; import model; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION)"
+)
+if ($modelImportProbe.ExitCode -ne 0) {
+    throw "Unified model import probe failed:`n$($modelImportProbe.Output)"
+}
+Write-Host $modelImportProbe.Output
+
 Write-Host "[1/2] Running one-process 3P -> 4P CUDA/BF16 runtime smoke..."
 $smokeArgs = @(
     (Join-Path $ProjectRoot "scripts\smoke_unified_runtime.py"),
