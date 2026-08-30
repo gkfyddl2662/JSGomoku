@@ -60,13 +60,21 @@ function Ensure-MortalRogsMsvcBuildEnvironment {
         [switch]$InstallIfMissing
     )
 
+    # The bootstrap's one-click -InstallRustIfMissing request means the user
+    # opted into installing the complete native Rust/MSVC prerequisite stack.
+    $allowInstall = [bool]$InstallIfMissing
+    $rustInstallVariable = Get-Variable -Name InstallRustIfMissing -Scope 1 -ErrorAction SilentlyContinue
+    if ($null -ne $rustInstallVariable -and [bool]$rustInstallVariable.Value) {
+        $allowInstall = $true
+    }
+
     Import-MortalRogsVsDevEnvironment | Out-Null
     if (Test-MortalRogsRustMsvcLink) {
         Write-Host "MSVC_LINK_PROBE_OK"
         return
     }
 
-    if (-not $InstallIfMissing) {
+    if (-not $allowInstall) {
         throw @"
 Rust MSVC link probe failed. Visual Studio C++ Build Tools / Windows SDK are required.
 Rerun bootstrap with -InstallBuildToolsIfMissing, or install them with:
