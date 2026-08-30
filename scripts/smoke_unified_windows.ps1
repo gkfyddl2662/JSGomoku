@@ -1,0 +1,93 @@
+param(
+    [string]$InstallRoot = "",
+    [switch]$SkipCompile,
+    [switch]$SkipTrainingStep,
+    [switch]$SkipControlCenter
+)
+
+$ErrorActionPreference = "Stop"
+$ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    $InstallRoot = Join-Path (Split-Path $ProjectRoot -Parent) "Mortal_Unified"
+}
+$InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
+$Py = Join-Path $InstallRoot ".venv\Scripts\python.exe"
+$MortalDir = Join-Path $InstallRoot "mortal"
+$Config3P = Join-Path $MortalDir "config.3p.toml"
+$Config4P = Join-Path $MortalDir "config.4p.toml"
+
+foreach ($path in @($Py, $Config3P, $Config4P)) {
+    if (-not (Test-Path $path)) {
+        throw "Unified runtime is incomplete; missing: $path"
+    }
+}
+
+$env:MORTAL_UNIFIED_ROOT = $InstallRoot
+$existingPythonPath = $env:PYTHONPATH
+$parts = @($ProjectRoot, $MortalDir)
+if (-not [string]::IsNullOrWhiteSpace($existingPythonPath)) {
+    $parts += $existingPythonPath
+}
+$env:PYTHONPATH = [string]::Join([System.IO.Path]::PathSeparator, $parts)
+
+Write-Host "[1/2] Running one-process 3P -> 4P CUDA/BF16 runtime smoke..."
+$smokeArgs = @(
+    (Join-Path $ProjectRoot "scripts\smoke_unified_runtime.py"),
+    "--runtime-root",
+    $InstallRoot
+)
+if ($SkipCompile) { $smokeArgs += "--skip-compile" }
+if ($SkipTrainingStep) { $smokeArgs += "--skip-training-step" }
+& $Py @smokeArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Unified CUDA runtime smoke failed with exit code $LASTEXITCODE"
+}
+
+if (-not $SkipControlCenter) {
+    Write-Host "[2/2] Verifying Control Center uses the same root, Python and Mortal code for both modes..."
+    $ControlCenterProbe = @'
+from pathlib import Path
+from app.settings import load_settings
+from app.mortal import MortalController
+
+settings = load_settings()
+controller = MortalController(settings)
+r3 = settings.runtime('3p')
+r4 = settings.runtime('4p')
+assert r3.unified and r4.unified
+assert r3.root == r4.root
+assert r3.python_executable == r4.python_executable
+assert r3.mortal_dir == r4.mortal_dir
+assert r3.config_file != r4.config_file
+assert r3.mode_root != r4.mode_root
+assert r3.models_dir != r4.models_dir
+assert r3.data_dir != r4.data_dir
+assert r3.runs_dir != r4.runs_dir
+
+s3 = controller.status('3p')
+s4 = controller.status('4p')
+assert s3['ready'], s3
+assert s4['ready'], s4
+assert s3['python'] == s4['python']
+assert s3['mortal_dir'] == s4['mortal_dir']
+
+for mode, expected_eval in [('3p', 'one_vs_two.py'), ('4p', 'one_vs_three.py')]:
+    cmd, cwd, env = controller.command_for('evaluate', {'mode': mode})
+    assert Path(cmd[0]).resolve() == r3.python_executable.resolve()
+    assert cmd[1] == expected_eval
+    assert Path(cwd).resolve() == r3.mortal_dir.resolve()
+    assert env['MORTAL_GAME_MODE'] == mode
+    assert Path(env['MORTAL_UNIFIED_ROOT']).resolve() == r3.root.resolve()
+
+print('CONTROL_CENTER_UNIFIED_RUNTIME_OK')
+'@
+    & $Py -c $ControlCenterProbe
+    if ($LASTEXITCODE -ne 0) {
+        throw "Control Center unified routing probe failed with exit code $LASTEXITCODE"
+    }
+} else {
+    Write-Host "[2/2] Skipping Control Center probe (-SkipControlCenter)."
+}
+
+Write-Host ""
+Write-Host "WINDOWS_UNIFIED_RUNTIME_SMOKE_OK root=$InstallRoot python=$Py"
