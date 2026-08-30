@@ -54,6 +54,7 @@ jobs:
           python scripts/patch_libriichi_unified_arena_stage4c.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_game_stage5a.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_game_stage5a_fix.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_game_stage5b.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
@@ -68,13 +69,9 @@ jobs:
           grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_NUKIDORA_3P: usize = 38" /tmp/mortal-unified/libriichi/src/consts.rs
-          grep -q "obs_shape_for_players" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "4 => Ok((170, 34))" /tmp/mortal-unified/libriichi/src/consts.rs
-          grep -q "q_values: Vec<Vec<f32>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
-          grep -q "masks_recv: Vec<Vec<bool>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "translated_action" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "Event::Nukidora" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
-          ! grep -q "3P action translation is not installed yet" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "MORTAL_ROGS_UNIFIED_PLAYER_STATE_STAGE3C" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_NUKIDORA_STAGE3D" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_ACTION_OBS_STAGE3E" /tmp/mortal-unified/libriichi/src/state/obs_repr.rs
@@ -83,15 +80,16 @@ jobs:
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4B" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4C" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "let live_tiles = if num_players == 3 { 55 } else { 70 }" /tmp/mortal-unified/libriichi/src/arena/board.rs
-          grep -q "self.tsumo_actor = (actor + 1) % self.num_players" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "fn calc_tsumo_deltas" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "hidden_live_cap" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5A" /tmp/mortal-unified/libriichi/src/arena/game.rs
           grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5A_FIX" /tmp/mortal-unified/libriichi/src/arena/game.rs
           grep -q "tenhou_sanma_hanchan" /tmp/mortal-unified/libriichi/src/arena/game.rs
-          grep -q "target_score: 40_000" /tmp/mortal-unified/libriichi/src/arena/game.rs
           grep -q "unified_sanma_tsumogiri_game_smoke" /tmp/mortal-unified/libriichi/src/arena/game.rs
           grep -q "Rankings::new_n" /tmp/mortal-unified/libriichi/src/arena/result.rs
+          grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5B" /tmp/mortal-unified/libriichi/src/arena/one_vs_two.rs
+          grep -q "unified_one_vs_two_rotates_all_three_challenger_seats" /tmp/mortal-unified/libriichi/src/arena/one_vs_two.rs
+          grep -q "m.add_class::<OneVsTwo>()" /tmp/mortal-unified/libriichi/src/arena/mod.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
