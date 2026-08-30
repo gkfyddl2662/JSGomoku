@@ -140,23 +140,24 @@ if ($gameplayAbi -lt 2) {
     Write-Host "MORTAL_UNIFIED_DATASET_STAGE8B_OK abi=$gameplayAbi"
 }
 
-Write-Host "[0.5/4] Repairing/verifying unified Python ABI imports..."
+Write-Host "[0.5/4] Repairing/verifying unified Python ABI imports and evaluators..."
 foreach ($patch in @(
     "patch_mortal_unified_stage1.py",
+    "patch_mortal_unified_eval_stage8c.py",
     "patch_mortal_unified_python_abi_stage8a.py"
 )) {
     $patchPath = Join-Path $ProjectRoot "scripts\$patch"
     & $Py $patchPath --root $InstallRoot
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to apply unified Python ABI compatibility patch: $patch"
+        throw "Failed to apply unified Python ABI/evaluator compatibility patch: $patch"
     }
 }
 $modelImportProbe = Invoke-NativeCapture -Executable $Py -Arguments @(
     "-c",
-    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts, arena, dataset, stat; import model, engine, player, dataloader, train_grp; assert getattr(dataset, 'UNIFIED_GAMEPLAY_ABI', 0) >= 2; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION); print('MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK'); print('MORTAL_UNIFIED_DATASET_STAGE8B_IMPORT_OK', dataset.UNIFIED_GAMEPLAY_ABI)"
+    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts, arena, dataset, stat; import model, engine, player, dataloader, train_grp, one_vs_three; assert getattr(dataset, 'UNIFIED_GAMEPLAY_ABI', 0) >= 2; assert getattr(one_vs_three, 'MODE', None) == '4p'; assert getattr(one_vs_three, 'ACTION_SPACE', None) == 46; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION); print('MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK'); print('MORTAL_UNIFIED_DATASET_STAGE8B_IMPORT_OK', dataset.UNIFIED_GAMEPLAY_ABI); print('MORTAL_UNIFIED_EVAL_STAGE8C_IMPORT_OK')"
 )
 if ($modelImportProbe.ExitCode -ne 0) {
-    throw "Unified Python ABI import probe failed:`n$($modelImportProbe.Output)"
+    throw "Unified Python ABI/evaluator import probe failed:`n$($modelImportProbe.Output)"
 }
 Write-Host $modelImportProbe.Output
 
