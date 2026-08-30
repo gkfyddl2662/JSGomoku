@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -19,7 +17,7 @@ from .settings import load_settings
 settings = load_settings()
 controller = MortalController(settings)
 jobs = JobManager()
-app = FastAPI(title="Mortal ROGS Control Center", version="0.2.0")
+app = FastAPI(title="Mortal ROGS Control Center", version="0.3.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
 
 
@@ -30,11 +28,6 @@ class ConfigBody(BaseModel):
 class JobBody(BaseModel):
     kind: str
     args: dict[str, Any] = Field(default_factory=dict)
-
-
-class PromoteBody(BaseModel):
-    source: str
-    destination: str = "best_sanma.pth"
 
 
 @app.get("/")
@@ -105,14 +98,6 @@ def api_data() -> dict[str, Any]:
 @app.get("/api/checkpoints")
 def api_checkpoints() -> list[dict[str, Any]]:
     return controller.checkpoints()
-
-
-@app.post("/api/checkpoints/promote")
-def api_promote(body: PromoteBody) -> dict[str, str]:
-    try:
-        return controller.promote_checkpoint(body.source, body.destination)
-    except Exception as exc:
-        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/jobs")
