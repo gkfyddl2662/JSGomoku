@@ -112,6 +112,14 @@ jobs:
             --runtime-root /tmp/mortal-libriichi-package \
             --device cpu
 
+      - name: Run mixed-mode device coordination and graceful drain E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_inference_coordination.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
+
       - name: Run untouched vanilla AkagiOT client against Mortal API
         env:
           PYTHONDONTWRITEBYTECODE: '1'
