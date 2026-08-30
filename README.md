@@ -2,9 +2,30 @@
 
 Windows에서 **3인마작(3P / Sanma)과 4인마작(4P / Yonma) AI를 하나의 프로그램으로 설치·학습·평가·관리**하기 위한 프로젝트입니다.
 
-최종 목표는 3P용 프로그램과 4P용 프로그램을 따로 관리하는 것이 아니라, **하나의 Mortal 코어에서 모드만 3P / 4P로 바꾸어 사용하는 것**입니다.
+현재 기본 구조는 이미 단일 런타임으로 통합되어 있습니다.
 
-> 현재는 개발 중인 연구 버전입니다. Web UI와 기본 학습·평가 기능은 통합되어 있지만, 내부 Mortal 엔진을 완전히 하나로 합치는 작업은 진행 중입니다.
+```text
+Mortal-ROGS
+ ├─ Web UI                 ← 하나
+ ├─ Mortal 코드            ← 하나
+ ├─ Python 가상환경         ← 하나
+ ├─ libriichi 확장          ← 하나
+ │   ├─ 3P 모드
+ │   └─ 4P 모드
+ └─ runtime
+     ├─ 3p
+     │   ├─ data
+     │   ├─ models
+     │   └─ runs
+     └─ 4p
+         ├─ data
+         ├─ models
+         └─ runs
+```
+
+3P와 4P는 같은 프로그램과 같은 실행 환경을 사용하지만, **학습 데이터와 모델 파일은 서로 분리해서 관리**합니다.
+
+> 현재는 연구/개발 버전입니다. Windows + RTX 5080 환경에서 3P/4P 통합 런타임, 실제 대국, 로그 재로딩, mini-training, checkpoint strict reload, evaluator까지 end-to-end 검증을 통과했습니다.
 
 ---
 
@@ -13,55 +34,44 @@ Windows에서 **3인마작(3P / Sanma)과 4인마작(4P / Yonma) AI를 하나의
 | 단계 | 목표 | 상태 |
 |---|---|---|
 | **Milestone 1** | 하나의 Web UI에서 3P / 4P 관리 | ✅ 완료 |
-| **Milestone 2** | Windows + NVIDIA GPU 자동 설치 환경 | ✅ 기본 기능 완료 |
-| **Milestone 3** | 학습·평가·Self-play·TensorBoard 통합 관리 | ✅ 기본 기능 완료 |
-| **Milestone 4** | **3P / 4P를 하나의 Mortal 코어로 통합** | 🚧 개발 중 |
+| **Milestone 2** | Windows + NVIDIA GPU 자동 설치 | ✅ 완료 |
+| **Milestone 3** | 3P / 4P 단일 Mortal·Python·libriichi 런타임 | ✅ 완료 |
+| **Milestone 4** | 실제 3P / 4P 대국·로그·학습·평가 E2E | ✅ 완료 |
 | **Milestone 5** | 자동 평가 및 더 좋은 모델 자동 승격 | ✅ 기본 기능 완료 |
-| **Milestone 6** | MJX를 이용한 고속 3P 평가 | 🚧 개발 중 |
-| **Milestone 7** | 실제 3P / 4P 모델 배포 호환성 최종 검증 | 🚧 검증 중 |
-| **Milestone 8** | 처음 사용하는 사람도 쉽게 설치·사용하는 안정 버전 | ⏳ 예정 |
+| **Milestone 6** | Akagi-NG 배포용 모델 최종 실전 검증 | 🚧 진행 중 |
+| **Milestone 7** | MJX 기반 고속 평가 | 🚧 개발 중 |
+| **Milestone 8** | 안정 버전 설치·업데이트·복구 UX 정리 | 🚧 진행 중 |
 
-### 현재 가장 중요한 작업
-
-1. 3P와 4P가 같은 Mortal 코드와 같은 Python 환경을 사용하도록 통합
-2. 3P 규칙을 통합 엔진에 이식
-3. 3P / 4P 학습 결과가 기존 기준 엔진과 동일하게 동작하는지 검증
-4. MJX 3인마작 평가 엔진 완성
-5. 실제 학습 모델의 배포 테스트
+현재 우선순위는 **실제 장시간 학습 안정성, 배포 모델 검증, MJX 고속 평가**입니다.
 
 ---
 
-# 이 프로젝트로 할 수 있는 것
+# 주요 기능
 
 ## 3P / 4P 모드 선택
 
-Web UI에서 원하는 게임 모드를 선택할 수 있습니다.
+Web UI에서 다음 모드를 선택할 수 있습니다.
 
 - **3P Sanma**
 - **4P Yonma**
 
-선택한 모드에 따라 데이터, 설정, 모델, 학습, 평가 화면이 자동으로 바뀝니다.
+선택한 모드에 따라 데이터, 설정, 모델, 학습, 평가 경로가 자동으로 전환됩니다.
 
 ## AI 학습
 
-- 준비된 대국 데이터로 학습
+- 준비된 대국 데이터로 Offline 학습
 - GRP 학습
 - Mortal-ROGS 학습
 - Self-play 학습
 - 학습 상태 저장 및 재시작
+- TensorBoard 모니터링
 
 ## 모델 평가
 
 - 3P: 1 vs 2 평가
 - 4P: 1 vs 3 평가
-- 여러 게임 결과를 이용한 통계 평가
-- 이전 Best 모델보다 실제로 좋아졌는지 자동 확인
-
-## 모델 관리
-
-- 학습된 `.pth` 모델 목록 확인
-- 후보 모델 비교
-- 조건을 통과한 모델만 Best 모델로 승격
+- 통계 기반 후보 모델 비교
+- 더 좋은 모델만 Best로 승격
 - 배포 전 호환성 검사
 
 ## GPU 모니터링
@@ -76,90 +86,30 @@ Web UI에서 다음 정보를 확인할 수 있습니다.
 - 학습 로그
 - TensorBoard
 
-## NVIDIA GPU 최적화
-
-현재 기본 설정은 RTX 5080 / 16GB VRAM을 기준으로 맞추고 있습니다.
-
-- CUDA
-- BF16 학습
-- 빠른 데이터 로딩
-- `torch.compile`
-- TensorFloat32
-- GPU 메모리 전송 최적화
-
-다른 NVIDIA GPU에서도 사용할 수 있으며, VRAM이 부족하면 batch size를 낮추면 됩니다.
-
 ---
 
-# 현재 3P / 4P 통합 상태
+# 지원 환경
 
-사용자에게는 이미 하나의 Web UI로 보이지만, 현재 개발 버전 내부에는 안정성 확인을 위해 3P와 4P 실행 환경이 임시로 분리되어 있습니다.
+현재 기본 설정과 실제 검증은 다음 환경을 기준으로 합니다.
 
-```text
-현재 개발 단계
+- Windows 10 / 11 64-bit
+- NVIDIA GPU
+- RTX 5080 16GB 기준 preset 제공
+- CUDA 12.8
+- PyTorch 2.11
+- BF16
+- `torch.compile`
+- Windows Triton 3.6.x
 
-Mortal-ROGS
- ├─ Web UI              ← 하나
- ├─ 학습/평가 관리       ← 하나
- ├─ 3P 임시 실행 환경
- └─ 4P 임시 실행 환경
-```
-
-최종 구조는 다음과 같이 바꾸는 것이 목표입니다.
-
-```text
-최종 목표
-
-Mortal-ROGS
- ├─ Web UI              ← 하나
- ├─ Mortal 코어          ← 하나
- ├─ Python 환경          ← 하나
- ├─ Mahjong 엔진         ← 하나
- │    ├─ 3P 모드
- │    └─ 4P 모드
- └─ 모델/데이터
-      ├─ 3P
-      └─ 4P
-```
-
-3P와 4P는 게임 규칙과 모델 출력 크기가 다르기 때문에 **학습된 모델 파일은 각각 따로 유지**됩니다. 하지만 사용자가 프로그램을 두 개 관리할 필요는 없도록 만드는 것이 목표입니다.
-
-현재 `Mortal_Sanma`는 3P 규칙이 올바르게 동작하는지 확인하기 위한 **참고 기준**으로 사용합니다. 최종 프로그램 자체를 `Mortal_Sanma`와 4P Mortal 두 개로 유지하는 것이 목표는 아닙니다.
+다른 NVIDIA GPU에서도 사용할 수 있습니다. VRAM이 부족하면 batch size를 낮추면 됩니다.
 
 ---
 
 # 빠른 설치
 
-## 1. 필요한 프로그램
+## 1. 프로젝트 다운로드
 
-권장 환경:
-
-- Windows 10 / 11 64-bit
-- NVIDIA GPU
-- 최신 NVIDIA 드라이버
-- Git
-- Python 3.11 권장
-- Visual Studio 2022 Build Tools
-
-Visual Studio Build Tools 설치 시 다음 항목을 권장합니다.
-
-```text
-Desktop development with C++
-```
-
-PowerShell에서 확인:
-
-```powershell
-git --version
-python --version
-nvidia-smi
-```
-
-Rust는 설치 스크립트가 자동 설치를 시도할 수 있습니다.
-
----
-
-## 2. 프로젝트 다운로드
+PowerShell:
 
 ```powershell
 cd C:\Users\<사용자명>\Downloads
@@ -171,47 +121,106 @@ git clone --branch research/mortal-rogs-v4-impl --single-branch `
 cd .\mortal-rogs
 ```
 
-정상적으로 받은 경우:
+이미 받은 경우:
 
 ```powershell
-Test-Path .\.git
-Test-Path .\scripts\bootstrap_all_runtimes.ps1
+cd C:\Users\<사용자명>\Downloads\mortal-rogs
+git pull origin research/mortal-rogs-v4-impl
 ```
-
-두 명령 모두 `True`가 나와야 합니다.
 
 ---
 
-## 3. 현재 개발 버전 설치
+## 2. 단일 3P / 4P 런타임 설치
 
-현재 개발 버전에서는 아래 명령이 3P와 4P 실행 환경을 자동으로 준비합니다.
+권장 설치 방법:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File ".\scripts\bootstrap_all_runtimes.ps1" `
-  -InstallRustIfMissing
+  -File ".\scripts\setup_and_smoke_unified_windows.ps1"
 ```
 
-자동으로 다음 작업을 수행합니다.
+기본 설치 위치는 프로젝트 폴더와 같은 상위 폴더의:
 
-- 필요한 Python 환경 준비
-- 3P / 4P 실행 환경 준비
-- 필요한 마작 엔진 빌드
-- PyTorch 설치
-- GPU 최적화 설정 적용
-- Mortal-ROGS 학습 기능 적용
-- 설치 후 자동 테스트
+```text
+Mortal_Unified
+```
 
-> 단일 Mortal 코어 개발이 완료되면 이 설치 과정도 내부 실행 환경 하나만 만드는 방식으로 변경할 예정입니다.
+입니다.
+
+원하는 위치를 직접 지정할 수도 있습니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File ".\scripts\setup_and_smoke_unified_windows.ps1" `
+  -InstallRoot "D:\Mortal_Unified"
+```
+
+설치 스크립트는 필요한 경우 다음 작업을 자동으로 처리합니다.
+
+- Rust toolchain 준비
+- MSVC C++ Build Tools / Windows SDK 확인
+- Python 가상환경 생성
+- PyTorch 및 필요한 패키지 설치
+- 단일 Mortal 소스 준비
+- 3P / 4P 통합 patch 적용
+- `libriichi` 빌드
+- 3P / 4P 설정 생성
+- CUDA / BF16 / `torch.compile` 검사
+- 실제 대국·로그·mini-training·evaluator smoke test
+
+이미 설치된 런타임을 다시 실행해도 `.venv`, 모델, 데이터, 실행 결과를 보존하면서 필요한 소스/확장만 갱신하도록 설계되어 있습니다.
 
 ---
 
-# 실행 방법
+# 설치 상태 확인
+
+설치 후 전체 검증만 다시 실행하려면:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File ".\scripts\smoke_unified_windows.ps1" `
+  -InstallRoot "C:\Users\<사용자명>\Downloads\Mortal_Unified"
+```
+
+정상 완료 시 마지막에 다음이 표시됩니다.
+
+```text
+MORTAL_UNIFIED_RUNTIME_SMOKE_OK
+MORTAL_UNIFIED_GAMEPLAY_E2E_OK
+MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK
+MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK
+CONTROL_CENTER_UNIFIED_RUNTIME_OK
+WINDOWS_UNIFIED_RUNTIME_SMOKE_OK
+```
+
+이 검사는 단순 import 테스트만 하는 것이 아니라 다음 흐름을 실제로 수행합니다.
+
+```text
+CUDA/BF16/torch.compile
+        ↓
+3P 3게임 + 4P 4게임
+        ↓
+*.json.gz 로그 생성
+        ↓
+GameplayLoader 재로딩
+        ↓
+실제 로그 mini-training
+        ↓
+checkpoint 저장 / strict reload
+        ↓
+3P 1 vs 2 / 4P 1 vs 3 evaluator
+        ↓
+Control Center unified routing 확인
+```
+
+---
+
+# Web UI 실행
 
 프로젝트 폴더에서:
 
 ```powershell
-.\_runtime\3p\.venv\Scripts\python.exe -m app.main
+C:\Users\<사용자명>\Downloads\Mortal_Unified\.venv\Scripts\python.exe -m app.main
 ```
 
 브라우저에서:
@@ -220,14 +229,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 http://127.0.0.1:8188
 ```
 
-Web UI 상단에서 원하는 모드를 선택합니다.
+Web UI 상단에서 `3P Sanma` 또는 `4P Yonma`를 선택합니다.
 
-```text
-3P Sanma
-4P Yonma
-```
-
-이후에는 대부분의 작업을 Web UI에서 할 수 있습니다.
+프로젝트와 `Mortal_Unified`가 같은 상위 폴더에 있으면 Control Center가 unified runtime을 자동으로 감지합니다.
 
 ---
 
@@ -235,71 +239,72 @@ Web UI 상단에서 원하는 모드를 선택합니다.
 
 권장 순서:
 
-1. 프로젝트 설치
+1. 프로젝트와 unified runtime 설치
 2. Web UI 실행
 3. 3P 또는 4P 선택
 4. 학습 데이터 준비
 5. Offline 학습 실행
 6. TensorBoard로 상태 확인
 7. 모델 평가
-8. 더 좋은 모델인지 확인
-9. 조건을 통과하면 Best 모델로 승격
+8. 기존 Best보다 좋아졌는지 확인
+9. 조건을 통과하면 Best로 승격
 10. 필요하면 Self-play로 추가 학습
 
-처음에는 **Offline 학습 → 평가**까지만 사용하는 것을 권장합니다.
+처음에는 **Offline 학습 → 평가** 흐름부터 사용하는 것을 권장합니다.
 
 ---
 
-# 3P 사용
+# 3P Sanma
 
-3P 모드에서 사용할 수 있는 주요 기능:
+3P 모드 주요 기능:
 
-- Sanma 데이터 학습
-- Tenhou 데이터 준비 도구
+- Sanma 학습 데이터 사용
 - GRP 학습
 - Mortal-ROGS 학습
+- Self-play
 - 1 vs 2 평가
-- Self-play
 - 모델 비교 및 승격
 
-3P 규칙의 기준 동작은 현재 `Mortal_Sanma`를 참고해 검증하고 있습니다.
+3P와 4P는 같은 Mortal/libriichi를 사용하지만 3P 모델은 별도 checkpoint로 저장됩니다.
 
 ---
 
-# 4P 사용
+# 4P Yonma
 
-4P 모드에서 사용할 수 있는 주요 기능:
+4P 모드 주요 기능:
 
-- 4인마작 데이터 학습
+- 4인마작 학습 데이터 사용
 - GRP 학습
 - Mortal-ROGS 학습
-- 1 vs 3 평가
 - Self-play
+- 1 vs 3 평가
 - 모델 비교 및 승격
 
-4P 학습 데이터는 Mortal에서 사용하는 `*.json.gz` 형식을 기준으로 합니다.
+4P 역시 3P와 독립된 checkpoint와 데이터 경로를 사용합니다.
 
 ---
 
 # Mortal-ROGS란?
 
-Mortal-ROGS는 기존 Mortal을 기반으로 **학습 과정과 모델 평가 방법을 개선해 더 강한 AI를 만드는 것**을 목표로 합니다.
+Mortal-ROGS는 기존 Mortal을 기반으로 **학습 과정과 모델 평가를 개선해 더 강한 AI를 만드는 것**을 목표로 합니다.
 
-일반 사용자는 세부 알고리즘을 직접 조정할 필요가 없습니다.
+일반 사용자는 내부 학습 알고리즘의 세부 수식을 직접 조정할 필요가 없습니다.
 
-주요 목표:
+주요 방향은 다음과 같습니다.
 
 - 좋은 행동과 나쁜 행동의 차이를 더 잘 학습
 - 한 국의 결과뿐 아니라 최종 순위까지 고려
-- 강한 보조 판단을 학습에 활용
-- 여러 상대와 반복해서 두면서 성능 개선
-- 실제로 좋아진 모델만 Best로 교체
+- 보조 판단을 학습 단계에서 활용
+- 여러 상대와 반복 self-play
+- 실제 평가에서 좋아진 모델만 Best로 승격
+
+배포용 모델 형식은 기존 Mortal v4 `Brain + current_dqn` 구조를 유지합니다.
 
 ---
 
 # 모델 평가와 Best 승격
 
-새 모델이 만들어져도 바로 기존 Best 모델을 덮어쓰지 않습니다.
+새 모델이 만들어져도 바로 기존 Best를 덮어쓰지 않습니다.
 
 ```text
 새 모델
@@ -308,85 +313,61 @@ Mortal-ROGS는 기존 Mortal을 기반으로 **학습 과정과 모델 평가 �
   ↓
 기존 Best와 비교
   ↓
-실제로 좋아졌는지 확인
+성능 개선 확인
   ↓
-호환성 확인
+호환성 검사
   ↓
-Best 모델로 승격
+Best 승격
 ```
-
-이 방식으로 일시적으로 운이 좋았던 모델이 바로 Best가 되는 것을 줄입니다.
 
 ---
 
 # MJX 고속 평가
 
-4P에서는 MJX를 고속 평가용으로 사용할 수 있습니다.
+MJX는 대량 게임을 빠르게 실행하기 위한 고속 평가 backend 후보입니다.
 
-3P용 MJX는 현재 개발 중입니다.
+현재 상태:
 
-현재 목표:
+- 4P: 고속 평가 backend로 개발/검증 중
+- 3P: Sanma 규칙 이식 및 parity 검증이 아직 진행 중
 
-- 3인마작 규칙 지원
-- 3P 게임 진행 지원
-- 북빼기 등 3P 규칙 지원
-- 기존 3P 기준 엔진과 결과 비교
-- 검증 완료 후 대량 평가에 사용
+따라서 현재 **정확성 기준 경로는 unified Mortal/libriichi evaluator**입니다.
 
-현재 3P에서는 기존 3P 엔진을 기준으로 사용하며, **MJX-Sanma는 아직 실험 기능**입니다.
+MJX-Sanma가 기준 엔진과 충분히 일치하는 것이 확인되기 전에는 production 기본값으로 사용하지 않습니다.
 
 ---
 
-# 기존 `Mortal_Sanma` 설치가 있는 경우
+# 기존 설치가 있는 경우
 
-기존에 다음과 같은 폴더를 만들었다면:
-
-```text
-C:\Users\<사용자명>\Downloads\Mortal_Sanma
-```
-
-다시 처음부터 받을 필요는 없습니다.
-
-```powershell
-cd C:\Users\<사용자명>\Downloads\mortal-rogs
-git pull
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File ".\scripts\migrate_legacy_runtime.ps1" `
-  -Legacy3PRoot "C:\Users\<사용자명>\Downloads\Mortal_Sanma" `
-  -InstallRustIfMissing `
-  -Bootstrap4P
-```
-
-이 경로는 **단일 코어가 완성되기 전 개발 버전용 마이그레이션 방법**입니다.
-
----
-
-# 설치 상태 확인
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File ".\scripts\smoke_windows.ps1"
-```
-
-현재 개발 버전에서 정상적으로 완료되면 마지막에:
+과거 개발 버전의 다음 경로는 legacy runtime으로 취급합니다.
 
 ```text
-WINDOWS_DUAL_RUNTIME_SMOKE_OK
+Mortal_Sanma
+_runtime\3p
+_runtime\4p
 ```
 
-가 표시됩니다.
+새 설치에서는 `Mortal_Unified`를 기본으로 사용합니다.
 
-단일 코어 전환이 완료되면 이 검사 역시 하나의 실행 환경을 확인하는 방식으로 변경될 예정입니다.
+기존 데이터나 모델이 있다면 삭제할 필요는 없습니다. 필요한 파일을 mode별 unified storage로 옮길 수 있습니다.
+
+```text
+Mortal_Unified\runtime\3p\data
+Mortal_Unified\runtime\3p\models
+Mortal_Unified\runtime\4p\data
+Mortal_Unified\runtime\4p\models
+```
+
+legacy bootstrap 스크립트는 당분간 호환/복구 목적으로 남겨두지만 **새 사용자에게 권장하는 기본 설치 경로는 아닙니다.**
 
 ---
 
 # VRAM 부족 해결
 
-학습 중 CUDA Out Of Memory 오류가 발생하면 batch size를 낮춥니다.
+학습 중 CUDA Out Of Memory가 발생하면 batch size를 낮춥니다.
 
 ```text
-512 → 384 → 256
+512 → 384 → 256 → 128
 ```
 
 Web UI 설정에서 변경할 수 있습니다.
@@ -411,75 +392,64 @@ Test-Path .\.git
 
 `True`가 나와야 합니다.
 
-## `cargo is required`
+## `ModuleNotFoundError: libriichi`
 
-설치 명령에 다음 옵션을 사용합니다.
-
-```text
--InstallRustIfMissing
-```
-
-## `maturin` virtualenv 오류
-
-최신 코드를 받은 뒤 같은 설치 명령을 다시 실행합니다.
+unified runtime의 Python을 사용하고 있는지 확인합니다.
 
 ```powershell
-git pull
+C:\Users\<사용자명>\Downloads\Mortal_Unified\.venv\Scripts\python.exe `
+  -c "import libriichi; print(libriichi.__file__)"
 ```
 
-## `link.exe`, `cl.exe`, Windows SDK 오류
+문제가 계속되면 unified setup script를 다시 실행하면 managed runtime이 필요한 부분을 복구합니다.
 
-Visual Studio 2022 Build Tools의 다음 항목이 필요합니다.
+## `TritonMissing`
+
+최신 unified setup/smoke는 Windows용 Triton을 자동으로 검사하고 필요한 버전을 설치합니다.
+
+```powershell
+git pull origin research/mortal-rogs-v4-impl
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File ".\scripts\smoke_unified_windows.ps1"
+```
+
+## MSVC / `link.exe` 오류
+
+설치 스크립트가 MSVC 환경을 자동으로 검사합니다. 자동 설치가 불가능한 환경에서는 Visual Studio 2022 Build Tools의 다음 workload가 필요합니다.
 
 ```text
 Desktop development with C++
 ```
 
-## CUDA를 찾지 못함
+---
 
-```powershell
-nvidia-smi
+# 현재 검증 범위
+
+현재 자동 CI와 Windows 실기 검증은 다음을 포함합니다.
+
+- 3P / 4P 단일 patch chain
+- Rust compile / tests
+- Python model / engine contract
+- PyO3 `libriichi` 실제 빌드/import
+- 3P / 4P 실제 대국
+- 로그 생성 및 재로딩
+- 실제 로그 mini-training
+- checkpoint strict reload
+- 3P / 4P evaluator
+- Windows RTX 5080 CUDA/BF16/`torch.compile`
+- Control Center unified routing
+
+아직 주요 후속 과제로 남아 있는 것은 **장시간 실학습 안정성, 실제 배포 환경 검증, MJX 고속 평가**입니다.
+
+---
+
+# 개발 브랜치
+
+현재 개발은 다음 브랜치에서 진행합니다.
+
+```text
+research/mortal-rogs-v4-impl
 ```
 
-에서 GPU가 정상적으로 표시되는지 확인합니다.
-
-## `torch.compile` 오류
-
-일부 Windows 환경에서는 `torch.compile`이 문제를 일으킬 수 있습니다. Web UI 설정에서 compile 옵션을 끈 뒤 다시 실행할 수 있습니다.
-
----
-
-# 업데이트
-
-프로젝트 폴더에서:
-
-```powershell
-git pull
-```
-
-일반적인 업데이트에서는 `_runtime`의 모델과 데이터가 삭제되지 않습니다.
-
----
-
-# 현재 상태
-
-- ✅ 하나의 Web UI에서 3P / 4P 선택
-- ✅ 통합 학습·평가 관리 화면
-- ✅ RTX 5080 기본 설정
-- ✅ GRP / Mortal-ROGS 학습 기능
-- ✅ Self-play 실행 기능
-- ✅ TensorBoard
-- ✅ 모델 관리 및 통계 평가
-- 🚧 **3P / 4P 단일 Mortal 코어**
-- 🚧 **3P / 4P 단일 Mahjong 엔진**
-- 🚧 MJX-Sanma 고속 평가
-- 🚧 실제 모델 배포 최종 검증
-- ⏳ 안정 버전 설치/업데이트 경험 개선
-
----
-
-# 한 줄 요약
-
-**목표는 3P Mortal과 4P Mortal을 따로 쓰는 것이 아니라, Mortal-ROGS 하나에서 3P / 4P 모드만 바꿔 사용하는 것입니다.**
-
-현재는 그 목표로 옮겨가는 개발 단계이며, 기존 이중 실행 환경은 검증이 끝날 때까지 임시 호환용으로 유지합니다.
+아직 연구/개발 단계이므로 중요한 모델과 학습 데이터는 별도 백업을 권장합니다.
