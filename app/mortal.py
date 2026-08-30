@@ -1,65 +1,115 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-from .settings import Settings
+from .settings import MortalRuntime, Settings, normalize_mode
 
 
 class MortalController:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
 
-    def status(self) -> dict[str, Any]:
+    def runtime(self, mode: str | None) -> MortalRuntime:
+        return self.s.runtime(normalize_mode(mode))
+
+    def status(self, mode: str = "3p") -> dict[str, Any]:
+        runtime = self.runtime(mode)
         checks = {
-            "root": self.s.mortal_root.exists(),
-            "mortal_dir": self.s.mortal_dir.exists(),
-            "config": self.s.config_file.exists(),
-            "train": (self.s.mortal_dir / "train.py").exists(),
-            "train_grp": (self.s.mortal_dir / "train_grp.py").exists(),
-            "one_vs_two": (self.s.mortal_dir / "one_vs_two.py").exists(),
-            "server": (self.s.mortal_dir / "server.py").exists(),
-            "client": (self.s.mortal_dir / "client.py").exists(),
-            "libriichi": self._libriichi_available(),
+            "root": runtime.root.exists(),
+            "python": runtime.python_executable.exists(),
+            "mortal_dir": runtime.mortal_dir.exists(),
+            "config": runtime.config_file.exists(),
+            "train": (runtime.mortal_dir / "train.py").exists(),
+            "train_grp": (runtime.mortal_dir / "train_grp.py").exists(),
+            "evaluate": (runtime.mortal_dir / runtime.evaluate_script).exists(),
+            "server": (runtime.mortal_dir / "server.py").exists(),
+            "client": (runtime.mortal_dir / "client.py").exists(),
+            "libriichi_source": self._libriichi_source_exists(runtime),
         }
         return {
-            "mortal_root": str(self.s.mortal_root),
+            "mode": runtime.mode,
+            "players": runtime.players,
+            "mortal_root": str(runtime.root),
+            "mortal_dir": str(runtime.mortal_dir),
+            "python": str(runtime.python_executable),
+            "config_file": str(runtime.config_file),
             "ready": all(checks.values()),
             "checks": checks,
         }
 
-    def _mortal_env(self) -> dict[str, str]:
+    def all_statuses(self) -> dict[str, Any]:
+        return {mode: self.status(mode) for mode in ("3p", "4p")}
+
+    def _mortal_env(self, runtime: MortalRuntime) -> dict[str, str]:
         existing = os.environ.get("PYTHONPATH", "")
         project = str(self.s.project_root)
         pythonpath = project if not existing else project + os.pathsep + existing
         return {
-            "MORTAL_CFG": str(self.s.config_file),
+            "MORTAL_CFG": str(runtime.config_file),
+            "MORTAL_GAME_MODE": runtime.mode,
+            "MORTAL_PLAYER_COUNT": str(runtime.players),
             "PYTHONPATH": pythonpath,
         }
 
     def command_for(self, kind: str, args: dict[str, Any] | None = None) -> tuple[list[str], Path, dict[str, str]]:
         args = args or {}
-        env = self._mortal_env()
-        py = sys.executable
-        md = self.s.mortal_dir
+        mode = normalize_mode(str(args.get("mode", "3p")))
+        runtime = self.runtime(mode)
+        env = self._mortal_env(runtime)
+        py = str(runtime.python_executable)
+        md = runtime.mortal_dir
 
         table: dict[str, list[str]] = {
             "train_grp": [py, "train_grp.py"],
             "train": [py, "train.py"],
-            "evaluate": [py, "one_vs_two.py"],
+            "evaluate": [py, runtime.evaluate_script],
             "selfplay_server": [py, "server.py"],
             "selfplay_client": [py, "client.py"],
-            "tensorboard": [py, "-m", "tensorboard.main", "--logdir", str(self.s.runs_dir), "--host", "127.0.0.1", "--port", "6006"],
+            "tensorboard": [
+                py,
+                "-m",
+                "tensorboard.main",
+                "--logdir",
+                str(runtime.runs_dir),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "6006" if mode == "3p" else "6007",
+            ],
         }
         if kind in table:
+            self._require_runtime_ready_for_command(runtime, kind)
             return table[kind], md, env
 
         if kind == "patch":
-            script = self.s.project_root / "scripts" / "patch_mortal_all.py"
-            return [py, str(script), "--root", str(self.s.mortal_root)], self.s.project_root, env
+            if mode == "3p":
+                script = self.s.project_root / "scripts" / "patch_mortal_all.py"
+            else:
+                script = self.s.project_root / "scripts" / "patch_mortal_4p.py"
+            return [sys.executable, str(script), "--root", str(runtime.root)], self.s.project_root, env
+
+        if kind == "bootstrap_runtime":
+            if os.name != "nt":
+                raise ValueError("Dual Mortal bootstrap currently targets Windows")
+            script = self.s.project_root / "scripts" / "bootstrap_runtime.ps1"
+            cmd = [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-Mode",
+                mode,
+                "-InstallRoot",
+                str(runtime.root),
+            ]
+            if bool(args.get("skip_rust_build", False)):
+                cmd.append("-SkipRustBuild")
+            return cmd, self.s.project_root, {}
 
         if kind == "mjx_setup":
             if os.name != "nt":
@@ -130,12 +180,12 @@ class MortalController:
             if kind == "mjx_sanma_patch":
                 script = self.s.project_root / "scripts" / "patch_mjx_sanma.py"
                 through = int(args.get("through", 3))
-                if through not in (1, 2, 3):
-                    raise ValueError("MJX-Sanma patch stage must be 1, 2 or 3")
-                return [py, str(script), "--root", str(root), "--through", str(through)], self.s.project_root, env
+                if through not in (1, 2, 3, 4):
+                    raise ValueError("MJX-Sanma patch stage must be 1, 2, 3 or 4")
+                return [sys.executable, str(script), "--root", str(root), "--through", str(through)], self.s.project_root, env
             script = self.s.project_root / "scripts" / "audit_mjx_sanma.py"
             return [
-                py,
+                sys.executable,
                 str(script),
                 "--root",
                 str(root),
@@ -150,10 +200,10 @@ class MortalController:
                 raise ValueError("A candidate checkpoint relative path is required")
             if not isinstance(destination_value, str) or not destination_value.strip():
                 raise ValueError("A destination checkpoint relative path is required")
-            source = (self.s.models_dir / source_value).resolve()
-            destination = (self.s.models_dir / destination_value).resolve()
-            self._ensure_under(source, self.s.models_dir)
-            self._ensure_under(destination, self.s.models_dir)
+            source = (runtime.models_dir / source_value).resolve()
+            destination = (runtime.models_dir / destination_value).resolve()
+            self._ensure_under(source, runtime.models_dir)
+            self._ensure_under(destination, runtime.models_dir)
             if not source.is_file() or source.suffix != ".pth":
                 raise ValueError(f"Candidate checkpoint must be an existing .pth file: {source}")
             if destination.suffix != ".pth":
@@ -163,14 +213,11 @@ class MortalController:
             if paired.suffix.casefold() not in {".jsonl", ".json"}:
                 raise ValueError("Paired evaluation results must be JSON/JSONL")
             akagi_root = self._resolve_user_path(args.get("akagi_root"), must_exist=True)
-            mode = str(args.get("mode", "3p")).casefold()
-            if mode not in {"3p", "4p"}:
-                raise ValueError("Promotion mode must be 3p or 4p")
             profile = str(args.get("profile", "")).strip()
             if not profile:
                 raise ValueError("A rating profile is required")
 
-            report_dir = self.s.runs_dir / "promotion"
+            report_dir = runtime.runs_dir / "promotion"
             report_dir.mkdir(parents=True, exist_ok=True)
             report = report_dir / f"{source.stem}-{mode}-{profile}.json"
             script = self.s.project_root / "scripts" / "promote_if_passed.py"
@@ -194,29 +241,36 @@ class MortalController:
             ]
             return cmd, self.s.project_root, env
 
+        if kind in {"convert", "tenhou_dl"} and mode != "3p":
+            raise ValueError(
+                "The bundled Lawrence Tenhou conversion tools are 3P-only. "
+                "For 4P, point the Mortal dataset.globs setting at native 4P JSON.gz logs."
+            )
+
         if kind == "convert":
             source = self._resolve_user_path(args.get("source"), must_exist=True)
             output = self._resolve_user_path(args.get("output"), must_exist=False)
             output.mkdir(parents=True, exist_ok=True)
-            reviewer = self.s.mortal_root / "mjai-reviewer"
+            reviewer = runtime.root / "mjai-reviewer"
             return ["cargo", "run", "--example", "convert_dir", "--release", "--", str(source), str(output)], reviewer, env
 
         if kind == "tenhou_dl":
             source = self._resolve_user_path(args.get("source"), must_exist=True)
             output = self._resolve_user_path(args.get("output"), must_exist=False)
             output.mkdir(parents=True, exist_ok=True)
-            exe = self.s.mortal_root / "tenhou_dl" / "target" / "release" / ("tenhou_dl.exe" if os.name == "nt" else "tenhou_dl")
+            exe = runtime.root / "tenhou_dl" / "target" / "release" / ("tenhou_dl.exe" if os.name == "nt" else "tenhou_dl")
             return [str(exe), "--format", "gz", "--mode", "3", "--input", str(source), "--output", str(output)], exe.parent, env
 
         raise ValueError(f"Unsupported job kind: {kind}")
 
-    def scan_data(self) -> dict[str, Any]:
+    def scan_data(self, mode: str = "3p") -> dict[str, Any]:
+        runtime = self.runtime(mode)
         roots = {
-            "data": self.s.data_dir,
-            "models": self.s.models_dir,
-            "runs": self.s.runs_dir,
+            "data": runtime.data_dir,
+            "models": runtime.models_dir,
+            "runs": runtime.runs_dir,
         }
-        result: dict[str, Any] = {}
+        result: dict[str, Any] = {"mode": runtime.mode}
         for name, root in roots.items():
             files = list(root.rglob("*")) if root.exists() else []
             regular = [p for p in files if p.is_file()]
@@ -225,24 +279,50 @@ class MortalController:
                 "files": len(regular),
                 "bytes": sum(p.stat().st_size for p in regular),
             }
-        if self.s.data_dir.exists():
-            result["data"]["jsonl"] = len(list(self.s.data_dir.rglob("*.jsonl")))
-            result["data"]["gz"] = len(list(self.s.data_dir.rglob("*.gz")))
+        if runtime.data_dir.exists():
+            result["data"]["jsonl"] = len(list(runtime.data_dir.rglob("*.jsonl")))
+            result["data"]["gz"] = len(list(runtime.data_dir.rglob("*.gz")))
+            result["data"]["json_gz"] = len(list(runtime.data_dir.rglob("*.json.gz")))
         return result
 
-    def checkpoints(self) -> list[dict[str, Any]]:
-        if not self.s.models_dir.exists():
+    def checkpoints(self, mode: str = "3p") -> list[dict[str, Any]]:
+        runtime = self.runtime(mode)
+        if not runtime.models_dir.exists():
             return []
         rows = []
-        for p in self.s.models_dir.rglob("*.pth"):
+        for p in runtime.models_dir.rglob("*.pth"):
             st = p.stat()
             rows.append({
+                "mode": runtime.mode,
                 "name": p.name,
-                "relative": str(p.relative_to(self.s.models_dir)),
+                "relative": str(p.relative_to(runtime.models_dir)),
                 "bytes": st.st_size,
                 "mtime": st.st_mtime,
             })
         return sorted(rows, key=lambda x: x["mtime"], reverse=True)
+
+    def _require_runtime_ready_for_command(self, runtime: MortalRuntime, kind: str) -> None:
+        if not runtime.python_executable.exists():
+            raise ValueError(f"{runtime.mode} Python runtime is not installed: {runtime.python_executable}")
+        if not runtime.config_file.exists():
+            raise ValueError(f"{runtime.mode} Mortal config is missing: {runtime.config_file}")
+        script = {
+            "evaluate": runtime.evaluate_script,
+            "train": "train.py",
+            "train_grp": "train_grp.py",
+            "selfplay_server": "server.py",
+            "selfplay_client": "client.py",
+        }.get(kind)
+        if script and not (runtime.mortal_dir / script).is_file():
+            raise ValueError(f"{runtime.mode} Mortal script is missing: {runtime.mortal_dir / script}")
+
+    @staticmethod
+    def _libriichi_source_exists(runtime: MortalRuntime) -> bool:
+        candidates = (
+            runtime.root / "libriichi" / "Cargo.toml",
+            runtime.root / "Mortal" / "libriichi" / "Cargo.toml",
+        )
+        return any(p.is_file() for p in candidates)
 
     def _resolve_user_path(self, value: Any, must_exist: bool) -> Path:
         if not isinstance(value, str) or not value.strip():
@@ -258,11 +338,3 @@ class MortalController:
             path.relative_to(root.resolve())
         except ValueError as exc:
             raise ValueError("Path escapes the allowed directory") from exc
-
-    @staticmethod
-    def _libriichi_available() -> bool:
-        try:
-            import libriichi  # noqa: F401
-            return True
-        except Exception:
-            return False
