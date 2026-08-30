@@ -8,7 +8,7 @@ from audit_mjx_sanma import audit
 from patch_mjx_sanma_stage1 import apply as apply_stage1
 from patch_mjx_sanma_stage2 import apply as apply_stage2
 from patch_mjx_sanma_stage3 import apply as apply_stage3
-from patch_mjx_sanma_stage4 import apply as apply_stage4
+from patch_mjx_sanma_stage4_apply import apply as apply_stage4
 
 
 def main() -> int:
