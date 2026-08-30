@@ -184,6 +184,35 @@ impl OneVsTwo {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod unified_one_vs_two_tests {
+    use super::*;
+    use crate::agent::Tsumogiri;
+
+    #[test]
+    fn unified_one_vs_two_rotates_all_three_challenger_seats() {
+        let arena = OneVsTwo {
+            disable_progress_bar: true,
+            log_dir: None,
+        };
+        let results = arena
+            .run_batch(
+                |ids| Tsumogiri::new_batched(ids).map(|a| Box::new(a) as Box<dyn BatchAgent>),
+                |ids| Tsumogiri::new_batched(ids).map(|a| Box::new(a) as Box<dyn BatchAgent>),
+                (20260830, 9),
+                1,
+            )
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.num_players == 3));
+        assert!(results.iter().all(|r| r.scores[3] == 0));
+        for (i, result) in results.iter().enumerate() {
+            let rank = result.rankings().rank_by_player[i % 3];
+            assert!(rank < 3);
+        }
+    }
+}
 '''
 
 
@@ -240,6 +269,7 @@ def apply(root: Path) -> None:
             "BatchGame::tenhou_sanma_hanchan",
             "let indexes: Vec<[Index; 4]>",
             "Result<[i32; 3]>",
+            "unified_one_vs_two_rotates_all_three_challenger_seats",
         )
         if x not in wrapper_text
     ]
