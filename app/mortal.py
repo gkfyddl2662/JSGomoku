@@ -31,10 +31,18 @@ class MortalController:
             "checks": checks,
         }
 
+    def _mortal_env(self) -> dict[str, str]:
+        existing = os.environ.get("PYTHONPATH", "")
+        project = str(self.s.project_root)
+        pythonpath = project if not existing else project + os.pathsep + existing
+        return {
+            "MORTAL_CFG": str(self.s.config_file),
+            "PYTHONPATH": pythonpath,
+        }
+
     def command_for(self, kind: str, args: dict[str, Any] | None = None) -> tuple[list[str], Path, dict[str, str]]:
         args = args or {}
-        cfg = str(self.s.config_file)
-        env = {"MORTAL_CFG": cfg}
+        env = self._mortal_env()
         py = sys.executable
         md = self.s.mortal_dir
 
@@ -50,8 +58,8 @@ class MortalController:
             return table[kind], md, env
 
         if kind == "patch":
-            script = self.s.project_root / "scripts" / "patch_mortal.py"
-            return [py, str(script), "--root", str(self.s.mortal_root)], self.s.project_root, {}
+            script = self.s.project_root / "scripts" / "patch_mortal_all.py"
+            return [py, str(script), "--root", str(self.s.mortal_root)], self.s.project_root, env
 
         if kind == "mjx_setup":
             if os.name != "nt":
@@ -124,7 +132,7 @@ class MortalController:
                 through = int(args.get("through", 3))
                 if through not in (1, 2, 3):
                     raise ValueError("MJX-Sanma patch stage must be 1, 2 or 3")
-                return [py, str(script), "--root", str(root), "--through", str(through)], self.s.project_root, {}
+                return [py, str(script), "--root", str(root), "--through", str(through)], self.s.project_root, env
             script = self.s.project_root / "scripts" / "audit_mjx_sanma.py"
             return [
                 py,
@@ -133,21 +141,21 @@ class MortalController:
                 str(root),
                 "--allow-changed",
                 "--allow-blockers",
-            ], self.s.project_root, {}
+            ], self.s.project_root, env
 
         if kind == "convert":
             source = self._resolve_user_path(args.get("source"), must_exist=True)
             output = self._resolve_user_path(args.get("output"), must_exist=False)
             output.mkdir(parents=True, exist_ok=True)
             reviewer = self.s.mortal_root / "mjai-reviewer"
-            return ["cargo", "run", "--example", "convert_dir", "--release", "--", str(source), str(output)], reviewer, {}
+            return ["cargo", "run", "--example", "convert_dir", "--release", "--", str(source), str(output)], reviewer, env
 
         if kind == "tenhou_dl":
             source = self._resolve_user_path(args.get("source"), must_exist=True)
             output = self._resolve_user_path(args.get("output"), must_exist=False)
             output.mkdir(parents=True, exist_ok=True)
             exe = self.s.mortal_root / "tenhou_dl" / "target" / "release" / ("tenhou_dl.exe" if os.name == "nt" else "tenhou_dl")
-            return [str(exe), "--format", "gz", "--mode", "3", "--input", str(source), "--output", str(output)], exe.parent, {}
+            return [str(exe), "--format", "gz", "--mode", "3", "--input", str(source), "--output", str(output)], exe.parent, env
 
         raise ValueError(f"Unsupported job kind: {kind}")
 
