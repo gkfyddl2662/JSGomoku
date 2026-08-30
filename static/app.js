@@ -95,14 +95,34 @@ async function loadEvaluation() {
   } catch(e){ toast(`평가 backend: ${e.message}`,true); }
 }
 
+function inferenceModelText(mode, info) {
+  if(!info) return `${mode.toUpperCase()} NOT LOADED`;
+  if(!info.loaded) return `${mode.toUpperCase()} NOT LOADED`;
+  const state=info.current?'CURRENT':'STALE';
+  const perf=[info.device, info.compiled===true?'compile':'eager', info.amp_dtype||'FP32'].filter(Boolean).join('/');
+  return `${mode.toUpperCase()} ${state}${perf?` (${perf})`:''}`;
+}
+
 async function loadInference() {
   try {
     const s=await api('/api/inference/status');
     const el=document.getElementById('inferenceStatus');
     if(!el) return;
-    el.textContent=s.unified
-      ? `${s.default_url} · 3P ${s.endpoints?.['3p']} · 4P ${s.endpoints?.['4p']} · Best 모델 자동 재로딩`
-      : 'Unified runtime 설치가 필요합니다.';
+    if(!s.unified){
+      el.textContent='Unified runtime 설치가 필요합니다.';
+      return;
+    }
+    const live=s.live||{};
+    if(!live.running){
+      el.textContent=`OFFLINE · ${s.server_url||s.default_url} · Akagi-NG ot.server에 이 주소를 사용 · 3P ${s.endpoints?.['3p']} · 4P ${s.endpoints?.['4p']}`;
+      return;
+    }
+    const health=live.health||{};
+    const models=health.models||{};
+    const state=health.degraded?'DEGRADED':'RUNNING';
+    const details=[inferenceModelText('3p',models['3p']), inferenceModelText('4p',models['4p'])].join(' · ');
+    const error=[models['3p']?.last_error,models['4p']?.last_error].filter(Boolean).join(' | ');
+    el.textContent=`${state} · ${s.server_url} · ${details}${error?` · ${error}`:''}`;
   } catch(e){ toast(`Inference API: ${e.message}`,true); }
 }
 
@@ -118,6 +138,7 @@ async function startInferenceApi() {
     selectedJob=j.id;
     await loadJobs();
     toast(`Akagi API 시작 · http://${body.host}:${body.port}`);
+    setTimeout(()=>loadInference(),800);
   } catch(e){ toast(e.message,true); }
 }
 
@@ -276,7 +297,7 @@ async function loadSelectedJob() {
   } catch(e){ selectedJob=null; }
 }
 
-async function stopSelected(){ if(!selectedJob)return; try{await api(`/api/jobs/${selectedJob}/stop`,{method:'POST'});toast('프로세스를 중지했습니다.');await loadJobs();}catch(e){toast(e.message,true);} }
+async function stopSelected(){ if(!selectedJob)return; try{await api(`/api/jobs/${selectedJob}/stop`,{method:'POST'});toast('프로세스를 중지했습니다.');await loadJobs();await loadInference();}catch(e){toast(e.message,true);} }
 
 async function refreshAll(){ await Promise.all([loadSystem(),loadSetup(),loadEvaluation(),loadInference(),loadData(),loadCheckpoints(),loadJobs()]); }
 
@@ -285,5 +306,5 @@ window.addEventListener('load', async()=>{
   if(saved==='3p' || saved==='4p') document.getElementById('gameMode').value=saved;
   await changeGameMode();
   await Promise.all([loadSystem(),loadEvaluation(),loadInference(),loadJobs()]);
-  pollTimer=setInterval(async()=>{ await Promise.all([loadSystem(),loadJobs()]); },2500);
+  pollTimer=setInterval(async()=>{ await Promise.all([loadSystem(),loadInference(),loadJobs()]); },2500);
 });
