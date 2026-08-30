@@ -14,6 +14,7 @@ permissions:
 
 env:
   CANONICAL_MORTAL_SHA: 0cff2b52982be5b1163aa9a62fb01f03ce91e0d2
+  AKAGI_NG_SHA: 11c0ffc0d70bf8142585b92405b4412976c9e205
 
 jobs:
   python-extension:
@@ -42,6 +43,7 @@ jobs:
         run: |
           python -m venv /tmp/mortal-libriichi-package/.venv
           /tmp/mortal-libriichi-package/.venv/bin/python -m pip install --upgrade pip maturin numpy toml tqdm tensorboard
+          /tmp/mortal-libriichi-package/.venv/bin/python -m pip install -r requirements.txt
           /tmp/mortal-libriichi-package/.venv/bin/python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
           cd /tmp/mortal-libriichi-package/libriichi
           /tmp/mortal-libriichi-package/.venv/bin/python -m maturin develop --release
@@ -88,3 +90,21 @@ jobs:
             --runtime-root /tmp/mortal-libriichi-package \
             --device cpu \
             --require-trained-checkpoints
+
+      - name: Verify pinned Akagi-NG HTTP protocol contract
+        run: |
+          git clone https://github.com/Xe-Persistent/Akagi-NG.git /tmp/akagi-ng-api-contract
+          git -C /tmp/akagi-ng-api-contract checkout "$AKAGI_NG_SHA"
+          CLIENT=/tmp/akagi-ng-api-contract/akagi_backend/akagi_ng/mjai_bot/engine/akagi_ot.py
+          grep -q 'endpoint = "/react_batch_3p" if is_3p else "/react_batch"' "$CLIENT"
+          grep -q '"Authorization": self.api_key' "$CLIENT"
+          grep -q '"Content-Encoding": "gzip"' "$CLIENT"
+          grep -q 'r_json\["q_out"\]' "$CLIENT"
+
+      - name: Run Akagi-compatible inference API E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_akagi_api.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
