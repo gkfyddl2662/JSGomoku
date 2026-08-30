@@ -46,7 +46,7 @@ def patch_train(text: str) -> str:
         "        if version != 4:\n"
         "            raise ValueError('Unified 3P deployment currently requires Mortal v4')\n"
         "        obs_channels = int(game_cfg.get('obs_channels', 1010))\n"
-        "        oracle_obs_channels = int(game_cfg.get('oracle_obs_channels', 217))\n"
+        "        oracle_obs_channels = int(game_cfg.get('oracle_obs_channels', 170))\n"
         "        grp_input_size = int(game_cfg.get('grp_input_size', 6))\n"
         "    elif game_mode in ('4', '4p', 'yonma'):\n"
         "        game_mode = '4p'\n"
@@ -143,6 +143,7 @@ def apply(root: Path) -> None:
         MARKER,
         "game_mode = '3p'",
         "game_mode = '4p'",
+        "oracle_obs_channels', 170",
         "DQN(version=version, action_space=action_space)",
         "AuxNet((num_players,))",
         "masks.shape[-1] == action_space",
