@@ -1,5 +1,5 @@
 param(
-    [string]$RuntimeRoot = "$PSScriptRoot\..\..\Mortal_ROGS_Runtime",
+    [string]$RuntimeRoot = "",
     [switch]$SkipRustBuild,
     [switch]$InstallRustIfMissing,
     [switch]$SkipSmoke
@@ -7,6 +7,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+if (-not $RuntimeRoot) {
+    $RuntimeRoot = Join-Path $ProjectRoot "_runtime"
+}
 $RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
 $Bootstrap = Join-Path $ProjectRoot "scripts\bootstrap_runtime.ps1"
 $Smoke = Join-Path $ProjectRoot "scripts\smoke_windows.ps1"
