@@ -11,8 +11,9 @@ if (-not $CoreRoot) {
 }
 $CoreRoot = [System.IO.Path]::GetFullPath($CoreRoot)
 $Bootstrap = Join-Path $ProjectRoot "scripts\bootstrap_runtime.ps1"
-$Stage1 = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage1.py"
-$Stage2 = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage2.py"
+$LibriichiStage1 = Join-Path $ProjectRoot "scripts\patch_libriichi_unified_stage1.py"
+$ModelStage1 = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage1.py"
+$TrainerStage2 = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage2.py"
 $SharedPatch = Join-Path $ProjectRoot "scripts\patch_mortal_4p.py"
 $CanonicalCommit = "0cff2b52982be5b1163aa9a62fb01f03ce91e0d2"
 
@@ -23,26 +24,31 @@ foreach ($cmd in @("git", "python")) {
 }
 
 if (-not (Test-Path $CoreRoot)) {
-    Write-Host "[1/5] Cloning canonical Mortal core..." -ForegroundColor Cyan
+    Write-Host "[1/6] Cloning canonical Mortal core..." -ForegroundColor Cyan
     git clone https://github.com/Equim-chan/Mortal.git $CoreRoot
     if ($LASTEXITCODE -ne 0) { throw "canonical Mortal clone failed" }
 } else {
-    Write-Host "[1/5] Unified core already exists: $CoreRoot"
+    Write-Host "[1/6] Unified core already exists: $CoreRoot"
 }
 
 if (-not (Test-Path (Join-Path $CoreRoot ".git"))) {
     throw "Unified core is not a Git checkout: $CoreRoot"
 }
 
-Write-Host "[2/5] Pinning canonical Mortal commit $CanonicalCommit..." -ForegroundColor Cyan
+Write-Host "[2/6] Pinning canonical Mortal commit $CanonicalCommit..." -ForegroundColor Cyan
 git -C $CoreRoot fetch origin $CanonicalCommit
 if ($LASTEXITCODE -ne 0) { throw "failed to fetch canonical Mortal commit" }
 git -C $CoreRoot checkout --detach $CanonicalCommit
 if ($LASTEXITCODE -ne 0) { throw "failed to checkout canonical Mortal commit" }
 
+Write-Host "[3/6] Adding the 3P/4P contract to the single libriichi crate..." -ForegroundColor Cyan
+python $LibriichiStage1 --root $CoreRoot
+if ($LASTEXITCODE -ne 0) { throw "unified libriichi Stage 1 failed" }
+
 # Reuse the proven Windows/PyTorch/Rust bootstrap, but do not apply the old
-# 4P-only patch pipeline. This creates exactly one venv and one libriichi build.
-Write-Host "[3/5] Preparing the single Python/Rust runtime..." -ForegroundColor Cyan
+# mode-specific patch pipeline. Because the Rust contract was patched first,
+# maturin now builds exactly one libriichi extension containing both mode specs.
+Write-Host "[4/6] Building the single Python/Rust runtime..." -ForegroundColor Cyan
 $args = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
@@ -63,18 +69,19 @@ if (-not (Test-Path $Py -PathType Leaf)) {
     throw "Unified-core Python missing: $Py"
 }
 
-Write-Host "[4/5] Generalizing one Mortal model/trainer for 3P + 4P..." -ForegroundColor Cyan
-& $Py $Stage1 --root $CoreRoot
+Write-Host "[5/6] Generalizing one Mortal model/trainer for 3P + 4P..." -ForegroundColor Cyan
+& $Py $ModelStage1 --root $CoreRoot
 if ($LASTEXITCODE -ne 0) { throw "unified model Stage 1 failed" }
-& $Py $Stage2 --root $CoreRoot
+& $Py $TrainerStage2 --root $CoreRoot
 if ($LASTEXITCODE -ne 0) { throw "unified trainer Stage 2 failed" }
 & $Py $SharedPatch --root $CoreRoot
 if ($LASTEXITCODE -ne 0) { throw "shared RTX/ROGS patch failed" }
 
-Write-Host "[5/5] Verifying unified-core source layout..." -ForegroundColor Cyan
+Write-Host "[6/6] Verifying unified-core contracts..." -ForegroundColor Cyan
 $Model = Join-Path $CoreRoot "mortal\model.py"
 $Train = Join-Path $CoreRoot "mortal\train.py"
-foreach ($path in @($Model, $Train)) {
+$Consts = Join-Path $CoreRoot "libriichi\src\consts.rs"
+foreach ($path in @($Model, $Train, $Consts)) {
     if (-not (Test-Path $path -PathType Leaf)) { throw "Missing unified-core file: $path" }
 }
 if (-not (Select-String -Path $Model -Pattern "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" -Quiet)) {
@@ -83,12 +90,39 @@ if (-not (Select-String -Path $Model -Pattern "MORTAL_ROGS_UNIFIED_MODEL_STAGE1"
 if (-not (Select-String -Path $Train -Pattern "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" -Quiet)) {
     throw "Unified trainer marker missing"
 }
+if (-not (Select-String -Path $Consts -Pattern "MORTAL_ROGS_UNIFIED_LIBRIICHI_STAGE1" -Quiet)) {
+    throw "Unified libriichi marker missing"
+}
+
+if (-not $SkipRustBuild) {
+    $Probe = @'
+from libriichi.consts import (
+    ACTION_SPACE_3P,
+    ACTION_SPACE_4P,
+    action_space_for,
+    num_players_for,
+    obs_shape_for,
+)
+assert ACTION_SPACE_3P == 44
+assert ACTION_SPACE_4P == 46
+assert action_space_for('3p') == 44
+assert action_space_for('4p') == 46
+assert num_players_for('3p') == 3
+assert num_players_for('4p') == 4
+assert obs_shape_for('3p', 4) == (1010, 34)
+assert obs_shape_for('4p', 4) == (1012, 34)
+print('MORTAL_UNIFIED_LIBRIICHI_CONTRACT_OK')
+'@
+    & $Py -c $Probe
+    if ($LASTEXITCODE -ne 0) { throw "unified libriichi Python contract probe failed" }
+}
 
 Write-Host ""
 Write-Host "MORTAL_UNIFIED_CORE_STAGE2_OK root=$CoreRoot" -ForegroundColor Green
 Write-Host "One Mortal source tree: $CoreRoot"
 Write-Host "One Python environment: $Py"
-Write-Host "4P engine baseline: ready"
+Write-Host "One libriichi module: dual-mode shape/action contract ready"
+Write-Host "4P game engine: ready"
 Write-Host "3P model/trainer dimensions: ready"
-Write-Host "3P unified libriichi engine: pending next stage" -ForegroundColor Yellow
-Write-Host "Do not replace the current user runtime with this core until 3P engine parity passes." -ForegroundColor Yellow
+Write-Host "3P game rules inside unified libriichi: pending next stages" -ForegroundColor Yellow
+Write-Host "Do not replace the current user runtime until 3P game parity passes." -ForegroundColor Yellow
