@@ -31,21 +31,25 @@ jobs:
       - name: Compile serving and compatibility tooling
         run: |
           python -m py_compile \
+            app/inference_benchmark.py \
             serving/inference.py \
             serving/resilient.py \
             scripts/serve_akagi_api.py \
+            scripts/benchmark_inference_api.py \
             scripts/smoke_akagi_api.py \
             scripts/smoke_vanilla_akagi_client.py \
             scripts/check_mortal_api_checkpoint.py \
             scripts/export_akagi_mortal.py \
             scripts/check_akagi_compat.py \
             scripts/check_akagi_compat_dual.py
+          node --check static/inference.js
 
       - name: Enforce API-only architecture and serving scheduler
         run: |
           python -m pytest -q \
             tests/test_akagi_api_only_contract.py \
-            tests/test_inference_scheduler.py
+            tests/test_inference_scheduler.py \
+            tests/test_inference_benchmark_contract.py
 
       - name: Verify pinned untouched AkagiOT client source
         run: |
@@ -74,5 +78,6 @@ jobs:
           grep -q 'MORTAL_VANILLA_AKAGI_CIRCUIT_RECOVERY_OK' scripts/smoke_vanilla_akagi_client.py
           grep -q 'MORTAL_INFERENCE_MICROBATCH_OK' scripts/smoke_akagi_api.py
           grep -q 'MORTAL_INFERENCE_BACKGROUND_RELOAD_OK' scripts/smoke_akagi_api.py
+          grep -q 'MORTAL_INFERENCE_BENCHMARK_OK' scripts/benchmark_inference_api.py
           grep -q 'request_deadline_ms' serving/resilient.py
           grep -q '/api/inference/metrics' scripts/serve_akagi_api.py

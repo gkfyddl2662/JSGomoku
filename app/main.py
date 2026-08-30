@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from .configuration import ConfigError, load_preset, merge_preset, read_toml, write_toml
 from .evaluation import evaluation_status
 from .gpu import system_status
+from .inference_benchmark import create_inference_benchmark_router
 from .jobs import JobManager
 from .mortal import MortalController
 from .settings import load_settings, normalize_mode
@@ -40,6 +41,7 @@ _inference_target: dict[str, Any] = {
     },
 }
 _inference_job_id: str | None = None
+app.include_router(create_inference_benchmark_router(settings, controller, jobs, _inference_target))
 
 
 class ConfigBody(BaseModel):

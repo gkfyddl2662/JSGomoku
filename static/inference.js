@@ -167,9 +167,107 @@ async function loadInferenceTelemetry() {
   }
 }
 
+let latestInferenceBenchmark = null;
+
+function ensureInferenceBenchmarkControls() {
+  let root = document.getElementById('inferenceBenchmark');
+  if (root) return root;
+  const telemetry = ensureInferenceTelemetryElement();
+  if (!telemetry) return null;
+  root = document.createElement('div');
+  root.id = 'inferenceBenchmark';
+  root.className = 'top-gap';
+  root.innerHTML = [
+    '<div class="form-grid">',
+    '<label>Benchmark modes<select id="inferenceBenchmarkModes"><option value="both" selected>3P + 4P</option><option value="3p">3P only</option><option value="4p">4P only</option></select></label>',
+    '<label>Requests / mode<input id="inferenceBenchmarkRequests" type="number" value="64" min="4" max="4096" step="4" /></label>',
+    '<label>Concurrency<input id="inferenceBenchmarkConcurrency" type="number" value="8" min="1" max="256" step="1" /></label>',
+    '<label>Rows / request<input id="inferenceBenchmarkRows" type="number" value="1" min="1" max="64" step="1" /></label>',
+    '</div>',
+    '<div class="button-row top-gap">',
+    '<button class="secondary" onclick="startInferenceBenchmark()">RTX 5080 Serving Benchmark</button>',
+    '<button class="secondary" onclick="loadInferenceBenchmark()">최신 Benchmark 결과</button>',
+    '<button class="secondary" onclick="applyInferenceBenchmarkRecommendation()">추천값을 Tuning에 적용</button>',
+    '</div>',
+    '<div id="inferenceBenchmarkResult" class="subtle top-gap">Benchmark 미실행</div>',
+  ].join('');
+  telemetry.insertAdjacentElement('afterend', root);
+  return root;
+}
+
+function benchmarkModeText(mode, result) {
+  if (!result) return `${mode.toUpperCase()} -`;
+  const latency=result.latency_ms||{};
+  return `${mode.toUpperCase()} p95 ${inferenceMetricNumber(latency.p95,1)}ms · ${inferenceMetricNumber(result.rows_per_s,1)} rows/s · GPU batch ${inferenceMetricNumber(result.observed_rows_per_execution,2)} · error ${(Number(result.error_rate||0)*100).toFixed(2)}%`;
+}
+
+function renderInferenceBenchmark(report, path='') {
+  ensureInferenceBenchmarkControls();
+  latestInferenceBenchmark=report||null;
+  const el=document.getElementById('inferenceBenchmarkResult');
+  if(!el) return;
+  if(!report){ el.textContent='Benchmark 결과가 없습니다.'; return; }
+  const rec=report.recommendation?.recommended||{};
+  const reasons=(report.recommendation?.reasons||[]).join(' ');
+  const modeText=[benchmarkModeText('3p',report.modes?.['3p']),benchmarkModeText('4p',report.modes?.['4p'])].filter(x=>!x.endsWith(' -')).join(' · ');
+  el.textContent=`${modeText} · 추천 ${rec.micro_batch_ms ?? '-'}ms / max ${rec.micro_batch_max_rows ?? '-'} rows / pending ${rec.max_pending_requests ?? '-'} / deadline ${rec.request_deadline_ms ?? '-'}ms${reasons?` · ${reasons}`:''}${path?` · ${path}`:''}`;
+}
+
+async function startInferenceBenchmark() {
+  ensureInferenceBenchmarkControls();
+  const body={
+    modes: document.getElementById('inferenceBenchmarkModes')?.value || 'both',
+    requests_per_mode: inferenceNumber('inferenceBenchmarkRequests',64),
+    concurrency: inferenceNumber('inferenceBenchmarkConcurrency',8),
+    batch_rows: inferenceNumber('inferenceBenchmarkRows',1),
+  };
+  try {
+    const j=await api('/api/inference/benchmark/start',{method:'POST',body:JSON.stringify(body)});
+    selectedJob=j.id;
+    await loadJobs();
+    toast(`Serving benchmark 시작 · ${body.modes.toUpperCase()} · concurrency ${body.concurrency}`);
+    return j;
+  } catch(e){ toast(`Benchmark 시작 실패: ${e.message}`,true); throw e; }
+}
+
+async function loadInferenceBenchmark() {
+  ensureInferenceBenchmarkControls();
+  try {
+    const result=await api('/api/inference/benchmark/latest');
+    if(!result.available){ renderInferenceBenchmark(null); return result; }
+    renderInferenceBenchmark(result.report,result.path||'');
+    return result;
+  } catch(e){ toast(`Benchmark 결과: ${e.message}`,true); throw e; }
+}
+
+function applyInferenceBenchmarkRecommendation() {
+  const rec=latestInferenceBenchmark?.recommendation?.recommended;
+  if(!rec){ toast('먼저 완료된 benchmark 결과를 불러오세요.',true); return; }
+  ensureInferenceTuningControls();
+  const values={
+    inferenceMicroBatchMs: rec.micro_batch_ms,
+    inferenceMaxRows: rec.micro_batch_max_rows,
+    inferenceMaxPending: rec.max_pending_requests,
+    inferenceDeadlineMs: rec.request_deadline_ms,
+    inferenceReloadPollMs: rec.reload_poll_ms,
+  };
+  for(const [id,value] of Object.entries(values)){
+    const input=document.getElementById(id);
+    if(input && Number.isFinite(Number(value))) input.value=String(value);
+  }
+  const tuning=document.getElementById('inferenceTuning');
+  if(tuning) tuning.dataset.dirty='1';
+  toast('Benchmark 추천값을 입력했습니다. Akagi API 시작/재시작을 눌러 적용하세요.');
+}
+
 window.startInferenceApi = startInferenceApi;
+window.startInferenceBenchmark = startInferenceBenchmark;
+window.loadInferenceBenchmark = loadInferenceBenchmark;
+window.applyInferenceBenchmarkRecommendation = applyInferenceBenchmarkRecommendation;
 window.addEventListener('DOMContentLoaded', () => {
   ensureInferenceTuningControls();
   loadInferenceTelemetry();
+  ensureInferenceBenchmarkControls();
+  loadInferenceBenchmark();
   window.setInterval(loadInferenceTelemetry, 2500);
 });
