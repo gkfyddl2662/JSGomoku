@@ -1,0 +1,75 @@
+# Mortal-ROGS: Regret + Oracle + Global reward + Search distillation
+# Deployment ABI is intentionally locked to the Akagi-NG Mortal v4 path.
+
+[compat]
+model_version = 4
+action_space_3p = 44
+checkpoint_brain_key = "mortal"
+checkpoint_dqn_key = "current_dqn"
+require_akagi_smoke_test = true
+
+[student]
+conv_channels = 192
+num_blocks = 40
+norm = "BN"
+
+[objective]
+value_weight = 1.0
+regret_weight = 0.50
+teacher_kl_weight = 0.30
+entropy_weight = 0.002
+bc_anchor_weight = 0.10
+cql_anchor_weight = 0.25
+regret_clip = 12.0
+hedge_eta = 0.75
+teacher_temperature = 1.5
+
+[global_reward]
+enabled = true
+potential_gamma = 1.0
+rank_utility = [6.0, 0.0, -6.0]
+score_delta_weight = 0.15
+score_scale = 12000.0
+
+[oracle]
+enabled = true
+# Oracle is training-only. Never export oracle parameters in mortal/current_dqn.
+start_weight = 0.50
+final_weight = 0.05
+decay_steps = 250000
+hidden_info_dropout_start = 0.0
+hidden_info_dropout_final = 1.0
+
+[search_teacher]
+enabled = true
+# Search is a teacher, never an inference feature; this preserves Akagi input ABI.
+determinizations = 64
+rollouts_per_action = 4
+max_candidate_actions = 8
+sample_ratio = 0.10
+focus_riichi = true
+focus_final_round = true
+focus_push_fold = true
+
+[amortized_pmcp]
+enabled = true
+# Suphx pMCPA idea moved offline: adapt a temporary clone, then distil it back.
+worlds_per_hand = 64
+inner_steps = 4
+inner_lr = 0.00002
+sample_ratio = 0.025
+
+[selfplay]
+enabled = true
+league_size = 12
+latest_probability = 0.45
+champion_probability = 0.30
+historical_probability = 0.25
+snapshot_every_games = 2000
+
+[gating]
+games = 12000
+seat_rotation = true
+bootstrap_samples = 5000
+min_avg_rank_improvement = 0.005
+max_third_rate_regression = 0.003
