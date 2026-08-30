@@ -58,13 +58,26 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
         for stage in PYTHON_STAGES:
             run_stage(script_dir, stage, root)
 
-    consts = (root / "libriichi/src/consts.rs").read_text(encoding="utf-8")
-    model = (root / "mortal/model.py").read_text(encoding="utf-8") if not rust_only else ""
-    if "ACTION_SPACE_3P: usize = 44" not in consts or "ACTION_SPACE_4P: usize = 46" not in consts:
-        raise RuntimeError("unified action ABI postcondition failed")
+    if not python_only:
+        consts = (root / "libriichi/src/consts.rs").read_text(encoding="utf-8")
+        if (
+            "ACTION_SPACE_3P: usize = 44" not in consts
+            or "ACTION_SPACE_4P: usize = 46" not in consts
+        ):
+            raise RuntimeError("unified action ABI postcondition failed")
+        if "4 => Ok((1010, 34))" not in consts or "4 => Ok((170, 34))" not in consts:
+            raise RuntimeError("unified 3P observation/oracle postcondition failed")
+
     if not rust_only:
+        model = (root / "mortal/model.py").read_text(encoding="utf-8")
+        train = (root / "mortal/train.py").read_text(encoding="utf-8")
+        train_grp = (root / "mortal/train_grp.py").read_text(encoding="utf-8")
         if "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" not in model:
             raise RuntimeError("unified Python model postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" not in train:
+            raise RuntimeError("unified trainer postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_GRP_TRAINER_STAGE6B" not in train_grp:
+            raise RuntimeError("unified GRP trainer postcondition failed")
 
     mode = "rust" if rust_only else "python" if python_only else "all"
     print(f"MORTAL_UNIFIED_PATCH_ALL_OK mode={mode} root={root}")
