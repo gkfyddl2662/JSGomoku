@@ -2,12 +2,14 @@
 
 Mortal-ROGS의 Akagi-NG 연동 방식은 **API 전용**입니다.
 
+사용자는 Mortal-ROGS와 Akagi-NG를 서로 독립적으로 설치합니다. Mortal-ROGS는 별도로 다운로드한 **순정 Akagi-NG를 수정하거나 패치하지 않으며**, Akagi-NG 설치 폴더를 입력받지도 않습니다. 사용자는 Mortal-ROGS의 로컬 추론 API 주소와 API Key만 Akagi-NG의 기존 AkagiOT 설정에 입력하면 됩니다.
+
 Akagi-NG의 `models` 폴더에 Mortal-ROGS가 학습한 `.pth` 파일을 복사하지 않습니다. 모델은 항상 `Mortal_Unified` 쪽에 남아 있고, Mortal-ROGS가 모델을 로드하여 HTTP 추론 API를 제공합니다.
 
 ## 구조
 
 ```text
-Akagi-NG
+별도 설치한 순정 Akagi-NG
   │
   │ gzip HTTP
   │ Authorization: <API key>
@@ -22,7 +24,7 @@ Mortal_Unified
   └─ runtime/4p/models/best_mortal.pth
 ```
 
-Akagi-NG는 모델 파일을 직접 열지 않습니다.
+Akagi-NG는 Mortal-ROGS의 모델 파일을 직접 열지 않습니다. Mortal-ROGS 역시 Akagi-NG의 설치 디렉터리나 모델 디렉터리에 파일을 쓰지 않습니다.
 
 ## Mortal-ROGS에서 API 시작
 
@@ -43,9 +45,11 @@ Control Center의 **SERVING → Akagi-NG · Mortal API**에서 다음을 설정�
 
 RTX 5080 CUDA 환경에서 mode별 상태에는 `cuda:0/compile/bfloat16`이 표시되는 것이 정상입니다.
 
-## Akagi-NG 설정
+## 별도 설치한 Akagi-NG 설정
 
-Akagi-NG의 `settings.json`에서 `ot`를 다음과 같이 설정합니다.
+Akagi-NG는 공식/원본 배포본을 그대로 사용합니다. Mortal-ROGS 전용 파일을 Akagi-NG에 복사하거나 Akagi-NG 코드를 수정할 필요가 없습니다.
+
+Akagi-NG의 `settings.json`에서 기존 `ot` 설정에 Mortal-ROGS 서버 주소와 API Key를 입력합니다.
 
 ```json
 {
@@ -59,12 +63,15 @@ Akagi-NG의 `settings.json`에서 `ot`를 다음과 같이 설정합니다.
 
 `api_key`는 Mortal-ROGS SERVING 패널에 입력한 값과 같아야 합니다.
 
-Akagi-NG의 기존 AkagiOT client 계약을 그대로 사용합니다.
+Mortal-ROGS 서버는 Akagi-NG의 기존 AkagiOT client 계약을 그대로 구현합니다.
 
 - 3P: `POST /react_batch_3p`
 - 4P: `POST /react_batch`
+- header: `Authorization: <API key>`
 - request body: gzip JSON `{"obs": ..., "masks": ...}`
 - response: `actions`, `q_out`, `masks`, `is_greedy`
+
+따라서 Akagi-NG 입장에서는 Mortal-ROGS가 기존 AkagiOT 온라인 추론 서버처럼 보입니다.
 
 ## 모델 승격과 hot reload
 
@@ -107,7 +114,7 @@ Mortal-ROGS API 서버는 loopback이 아닌 주소에 API key 없이 노출하�
 
 ## 검증
 
-전체 Windows smoke에는 Akagi API E2E가 포함됩니다.
+전체 Windows smoke에는 Mortal-ROGS API E2E가 포함됩니다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
@@ -130,16 +137,28 @@ API 단계에서 검증하는 내용:
 - 올바른 checkpoint 복구 후 자동 reload
 - CUDA 환경에서 BF16 + `torch.compile`
 
+GitHub CI에서는 별도로 pinned 순정 Akagi-NG를 **read-only reference checkout**으로 가져옵니다. Akagi-NG 파일을 수정하지 않은 상태에서 그 저장소의 실제 `AkagiOTClient`와 `AkagiOTEngine`을 import하여 Mortal-ROGS API에 3P/4P 요청을 보내고, 테스트 후에도 Akagi-NG checkout이 clean인지 확인합니다.
+
 정상 완료 marker:
 
 ```text
 MORTAL_AKAGI_API_PERFORMANCE_OK
 MORTAL_AKAGI_API_HOT_RELOAD_OK
 MORTAL_AKAGI_API_E2E_OK
+MORTAL_VANILLA_AKAGI_CLIENT_3P_OK
+MORTAL_VANILLA_AKAGI_CLIENT_4P_OK
+MORTAL_VANILLA_AKAGI_CLIENT_E2E_OK
 ```
 
 ## 중요한 원칙
 
 Akagi-NG는 **UI/게임 연결/상태 추적/API client** 역할을 하고, Mortal-ROGS는 **모델 소유/학습/평가/승격/추론 serving**을 담당합니다.
 
-따라서 Mortal-ROGS가 만든 모델 checkpoint를 Akagi-NG에 직접 배포하거나 Akagi-NG가 직접 로드하도록 만드는 것은 이 프로젝트의 기본 배포 경로가 아닙니다.
+따라서 다음은 하지 않습니다.
+
+- Mortal-ROGS checkpoint를 Akagi-NG의 `models` 폴더로 복사
+- Akagi-NG가 Mortal-ROGS checkpoint를 직접 `torch.load`
+- Mortal-ROGS 설치 과정에서 Akagi-NG 소스 수정/패치
+- Mortal-ROGS Control Center에서 Akagi-NG 설치 경로 요구
+
+사용자에게 필요한 연결 정보는 **Mortal-ROGS API URL + API Key**뿐입니다.
