@@ -132,6 +132,16 @@ function inferenceDeviceMetric(device) {
   return `fair ${device?.policy || '-'} · active ${device?.active_executions ?? '-'}/${device?.max_parallel_executions ?? '-'} · waiting ${device?.waiting_executions ?? '-'} · peak ${device?.peak_active_executions ?? '-'} · contention ${device?.contended_acquisitions_total ?? '-'} · wait p95 ${inferenceMetricNumber(wait.p95,1)}ms`;
 }
 
+function inferenceCudaMemoryMetric(memory) {
+  if (!memory?.available) return memory?.reason || 'CUDA unavailable';
+  const devices = Array.isArray(memory.devices) ? memory.devices : [];
+  if (!devices.length) return 'CUDA available · no visible device';
+  return devices.map(device => {
+    const gib = value => Number.isFinite(value) ? `${(Number(value) / 1024).toFixed(2)}GB` : '-';
+    return `GPU${device.index ?? '-'} ${device.name || ''} · alloc ${gib(device.allocated_mib)} · reserved ${gib(device.reserved_mib)} · peak ${gib(device.peak_reserved_mib)} · free ${gib(device.free_mib)}/${gib(device.total_mib)}`;
+  }).join(' | ');
+}
+
 function inferenceLifecycleMetric(lifecycle) {
   const state = String(lifecycle?.state || 'unknown').toUpperCase();
   return `${state} · accepting ${lifecycle?.accepting ? 'YES' : 'NO'} · inflight ${lifecycle?.inflight_requests ?? '-'} · peak ${lifecycle?.peak_inflight_requests ?? '-'} · drain rejects ${lifecycle?.rejected_during_drain_total ?? '-'}`;
@@ -164,6 +174,7 @@ async function loadInferenceTelemetry() {
     const reload = serving.reload || {};
     const modes = serving.modes || {};
     const device = serving.device_scheduler || {};
+    const cudaMemory = serving.cuda_memory || {};
     const lifecycle = serving.lifecycle || health?.lifecycle || {};
     const deadline = inferenceMetricNumber(schedule.request_deadline_ms, 0);
     const wait = inferenceMetricNumber(schedule.wait_ms, 1);
@@ -171,6 +182,7 @@ async function loadInferenceTelemetry() {
     el.innerHTML = [
       `<div><label>Scheduler</label><strong>${wait}ms merge · max ${schedule.max_rows ?? '-'} rows · pending ${schedule.max_pending_requests ?? '-'} · deadline ${deadline}ms</strong></div>`,
       `<div><label>Shared Device</label><strong>${inferenceDeviceMetric(device)}</strong></div>`,
+      `<div><label>CUDA Memory</label><strong>${inferenceCudaMemoryMetric(cudaMemory)}</strong></div>`,
       `<div><label>Lifecycle</label><strong>${inferenceLifecycleMetric(lifecycle)}</strong></div>`,
       `<div><label>Reload</label><strong>${reloadState} · poll ${inferenceMetricNumber(reload.poll_ms, 0)}ms · quiet ${inferenceMetricNumber(reload.quiet_ms,0)}ms · wait ${inferenceMetricNumber(reload.wait_ms,0)}ms</strong></div>`,
       `<div><label>3P</label><strong>${inferenceModeMetric('3p', modes['3p'])}</strong></div>`,
