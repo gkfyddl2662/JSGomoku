@@ -1,5 +1,5 @@
 param(
-    [string]$RuntimeRoot = "$PSScriptRoot\..\..\Mortal_ROGS_Runtime",
+    [string]$RuntimeRoot = "",
     [string]$Mortal3PRoot = "",
     [string]$Mortal4PRoot = "",
     [switch]$SkipCompile,
@@ -9,6 +9,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+if (-not $RuntimeRoot) { $RuntimeRoot = Join-Path $ProjectRoot "_runtime" }
 $RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
 if (-not $Mortal3PRoot) { $Mortal3PRoot = Join-Path $RuntimeRoot "3p" }
 if (-not $Mortal4PRoot) { $Mortal4PRoot = Join-Path $RuntimeRoot "4p" }
