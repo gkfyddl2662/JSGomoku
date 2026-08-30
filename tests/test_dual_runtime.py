@@ -10,17 +10,19 @@ from app.settings import Settings, normalize_mode
 
 def make_settings(tmp_path: Path) -> Settings:
     project = tmp_path / "control"
-    sanma = tmp_path / "Mortal_Sanma"
-    yonma = tmp_path / "Mortal_4P"
+    runtime_root = tmp_path / "Mortal_ROGS_Runtime"
+    sanma = runtime_root / "3p"
+    yonma = runtime_root / "4p"
     project.mkdir()
-    sanma.mkdir()
-    yonma.mkdir()
+    sanma.mkdir(parents=True)
+    yonma.mkdir(parents=True)
     return Settings(
         project_root=project,
         mortal_3p_root=sanma,
         mortal_4p_root=yonma,
         host="127.0.0.1",
         port=8188,
+        runtime_root=runtime_root,
     )
 
 
@@ -38,17 +40,21 @@ def test_mode_aliases_and_rejection() -> None:
         normalize_mode("5p")
 
 
-def test_runtime_layouts_are_isolated(tmp_path: Path) -> None:
+def test_runtime_layouts_share_one_root_but_keep_abis_isolated(tmp_path: Path) -> None:
     s = make_settings(tmp_path)
     p3 = s.runtime("3p")
     p4 = s.runtime("4p")
 
     assert p3.players == 3
+    assert p3.root.parent == s.runtime_root
+    assert p3.root.name == "3p"
     assert p3.mortal_dir == s.mortal_3p_root / "Mortal" / "mortal"
     assert p3.config_file.name == "config.sanma.toml"
     assert p3.evaluate_script == "one_vs_two.py"
 
     assert p4.players == 4
+    assert p4.root.parent == s.runtime_root
+    assert p4.root.name == "4p"
     assert p4.mortal_dir == s.mortal_4p_root / "mortal"
     assert p4.config_file.name == "config.toml"
     assert p4.evaluate_script == "one_vs_three.py"
@@ -57,6 +63,8 @@ def test_runtime_layouts_are_isolated(tmp_path: Path) -> None:
     assert p3.data_dir != p4.data_dir
     assert p3.runs_dir != p4.runs_dir
     assert p3.python_executable != p4.python_executable
+    assert p3.python_executable.parent.parent == p3.root / ".venv"
+    assert p4.python_executable.parent.parent == p4.root / ".venv"
 
 
 def test_controller_routes_4p_evaluation_to_stock_mortal(tmp_path: Path) -> None:
@@ -80,10 +88,7 @@ def test_controller_routes_4p_evaluation_to_stock_mortal(tmp_path: Path) -> None
 def test_controller_routes_3p_evaluation_to_sanma_mortal(tmp_path: Path) -> None:
     s = make_settings(tmp_path)
     runtime = s.runtime("3p")
-    # On POSIX the 3P runtime intentionally falls back to the active Python
-    # interpreter when the project venv is absent. Never overwrite that binary.
-    if not runtime.python_executable.exists():
-        touch(runtime.python_executable)
+    touch(runtime.python_executable)
     touch(runtime.config_file)
     touch(runtime.mortal_dir / "one_vs_two.py")
 
