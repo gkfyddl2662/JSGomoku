@@ -204,17 +204,27 @@ class LoadedModel:
         self.dqn = dqn
         self.config = cfg
 
-        # This probe is intentionally part of construction. With torch.compile it
-        # forces graph compilation before the model becomes reachable over HTTP,
-        # avoiding AkagiOT's 5-second request timeout on the first game action.
+        # Do two batch sizes before publishing the model. torch.compile's default
+        # automatic-dynamic behavior learns the changing batch dimension on the
+        # second shape, so Akagi must not pay either cold compile/recompile cost
+        # inside its 5-second HTTP timeout.
         with self._infer_lock, torch.inference_mode(), self._amp_context():
-            obs = torch.zeros((1, self.contract.obs_channels, 34), dtype=torch.float32, device=self.device)
-            mask = torch.ones((1, self.contract.action_space), dtype=torch.bool, device=self.device)
-            q = self.dqn(self.brain(obs), mask)
-        if tuple(q.shape) != (1, self.contract.action_space):
-            raise ValueError(f"Checkpoint inference shape mismatch: {tuple(q.shape)}")
-        if not bool(torch.isfinite(q).all()):
-            raise ValueError("Checkpoint probe produced non-finite legal Q values")
+            for batch_size in (1, 2):
+                obs = torch.zeros(
+                    (batch_size, self.contract.obs_channels, 34),
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+                mask = torch.ones(
+                    (batch_size, self.contract.action_space),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                q = self.dqn(self.brain(obs), mask)
+                if tuple(q.shape) != (batch_size, self.contract.action_space):
+                    raise ValueError(f"Checkpoint inference shape mismatch: {tuple(q.shape)}")
+                if not bool(torch.isfinite(q).all()):
+                    raise ValueError("Checkpoint probe produced non-finite legal Q values")
 
     def _amp_context(self):
         if not self.use_amp or self.amp_dtype is None:
