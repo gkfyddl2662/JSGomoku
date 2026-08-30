@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .configuration import ConfigError, load_preset, merge_preset, read_toml, write_toml
+from .evaluation import evaluation_status
 from .gpu import system_status
 from .jobs import JobManager
 from .mortal import MortalController
@@ -18,7 +19,7 @@ from .settings import load_settings
 settings = load_settings()
 controller = MortalController(settings)
 jobs = JobManager()
-app = FastAPI(title="Mortal Sanma Control Center", version="0.1.0")
+app = FastAPI(title="Mortal ROGS Control Center", version="0.2.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
 
 
@@ -49,6 +50,14 @@ def api_system() -> dict[str, Any]:
 @app.get("/api/setup/status")
 def api_setup_status() -> dict[str, Any]:
     return controller.status()
+
+
+@app.get("/api/evaluation/backends")
+def api_evaluation_backends() -> dict[str, Any]:
+    try:
+        return evaluation_status(settings.project_root)
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @app.get("/api/config")
