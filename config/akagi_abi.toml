@@ -1,34 +1,51 @@
-# Current Akagi-NG deployment contract used by Mortal-ROGS exports.
-# Update this file only after reviewing the upstream loader/network changes and
-# rerunning both 3P/4P compatibility smoke tests.
+# Mortal-ROGS -> untouched Akagi-NG integration contract.
+#
+# Mortal-ROGS owns and loads every Mortal checkpoint. Akagi-NG is treated as an
+# external, separately downloaded client application and is never patched by
+# this project. Compatibility is defined by Akagi-NG's existing AkagiOT HTTP
+# client protocol, not by copying .pth files into Akagi-NG.
 
 [upstream]
 repository = "https://github.com/Xe-Persistent/Akagi-NG"
 branch = "master"
-tree_sha = "11c0ffc0d70bf8142585b92405b4412976c9e205"
-mortal_loader_path = "akagi_backend/akagi_ng/mjai_bot/engine/mortal.py"
-mortal_loader_sha = "b9923d9f7cc971610fdb93ef304843b37dba629f"
-network_path = "akagi_backend/akagi_ng/mjai_bot/network.py"
-network_sha = "cebe5fa4f30006c6bc431ae75c2d4e292539b9cc"
+commit_sha = "11c0ffc0d70bf8142585b92405b4412976c9e205"
+akagi_ot_client_path = "akagi_backend/akagi_ng/mjai_bot/engine/akagi_ot.py"
+akagi_ot_client_sha = "2493001440508be7301d366b9c9fae0a1a97d346"
+factory_path = "akagi_backend/akagi_ng/mjai_bot/engine/factory.py"
+factory_sha = "271674dd7dae1fd7240b5e65b2041f0613bbb578"
 constants_path = "akagi_backend/akagi_ng/schema/constants.py"
 constants_sha = "a045d1c11b98d99d709ef252e2f136ff5600aded"
 
-[checkpoint]
-required_keys = ["config", "mortal", "current_dqn"]
-model_version = 4
-norm_type = "BN"
+[protocol]
+name = "akagiot-v1"
+default_server = "http://127.0.0.1:8190"
+authorization_header = "Authorization"
+content_encoding = "gzip"
+request_fields = ["obs", "masks"]
+response_fields = ["actions", "q_out", "masks", "is_greedy"]
+connect_timeout_seconds = 2.0
+read_timeout_seconds = 4.0
 
 [mode.3p]
+endpoint = "/react_batch_3p"
 action_space = 44
-library = "libriichi3p"
-export_name = "mortal3p.pth"
+obs_channels = 1010
 
 [mode.4p]
+endpoint = "/react_batch"
 action_space = 46
-library = "libriichi"
-export_name = "mortal.pth"
+obs_channels = 1012
+
+[deployment]
+modify_akagi_ng = false
+copy_checkpoint_to_akagi_ng = false
+akagi_loads_mortal_checkpoint = false
+mortal_rogs_owns_models = true
+hot_reload_best_checkpoint = true
 
 [policy]
-strict_state_dict = true
+model_version = 4
+strict_state_dict_on_server = true
 require_finite_smoke_inference = true
 reject_version_5 = true
+require_vanilla_akagi_client_e2e = true
