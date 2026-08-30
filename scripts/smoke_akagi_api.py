@@ -208,10 +208,16 @@ def main() -> int:
         status, loaded_health = request_json(f"{base}/health")
         if status != 200:
             raise SystemExit("Health failed after initial model loads")
+        cuda_expected = args.device.strip().casefold().startswith("cuda")
         for mode in ("3p", "4p"):
             info = loaded_health["models"][mode]
             if not info["loaded"] or not info["current"] or info["last_error"] is not None:
                 raise SystemExit(f"{mode} model did not become current after load: {info}")
+            if cuda_expected:
+                if info.get("compiled") is not True:
+                    raise SystemExit(f"{mode} CUDA API model did not enable torch.compile: {info}")
+                if info.get("amp_dtype") != "bfloat16":
+                    raise SystemExit(f"{mode} CUDA API model did not enable BF16 AMP: {info}")
         if loaded_health.get("degraded"):
             raise SystemExit(f"Healthy loaded API unexpectedly degraded: {loaded_health}")
 
@@ -245,12 +251,19 @@ def main() -> int:
         if recovered_health.get("degraded") or not info["current"] or info["last_error"] is not None:
             raise SystemExit(f"3P slot did not recover after restoring checkpoint: {recovered_health}")
 
+        results["performance"] = {
+            "device": args.device,
+            "cuda_compile_required": cuda_expected,
+            "compiled": {mode: loaded_health["models"][mode].get("compiled") for mode in ("3p", "4p")},
+            "amp_dtype": {mode: loaded_health["models"][mode].get("amp_dtype") for mode in ("3p", "4p")},
+        }
         results["hot_reload"] = {
             "wrong_mode_rejected": True,
             "old_model_kept_serving": True,
             "health_degraded_on_reject": True,
             "automatic_recovery": True,
         }
+        print("MORTAL_AKAGI_API_PERFORMANCE_OK")
         print("MORTAL_AKAGI_API_HOT_RELOAD_OK")
         print("MORTAL_AKAGI_API_E2E_OK")
         print(json.dumps(results, ensure_ascii=False, indent=2))
