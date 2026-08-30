@@ -45,12 +45,13 @@ jobs:
           python scripts/patch_libriichi_unified_stage2.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3a.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3b.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_stage3c.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
         run: cargo check -p libriichi --no-default-features
 
-      - name: Verify Rust dual-mode transport and event contracts
+      - name: Verify Rust dual-mode transport and state contracts
         run: |
           grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
@@ -62,7 +63,11 @@ jobs:
           grep -q "scores: Vec<i32>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
           grep -q "tehais: Vec<Vec<Tile>>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
           grep -q "Nukidora" /tmp/mortal-unified/libriichi/src/mjai/event.rs
-          grep -q "MORTAL_ROGS_UNIFIED_EVENT_BOUNDARY_STAGE3B" /tmp/mortal-unified/libriichi/src/state/update.rs
+          grep -q "pub(super) num_players: u8" /tmp/mortal-unified/libriichi/src/state/player_state.rs
+          grep -q "pub can_nukidora: bool" /tmp/mortal-unified/libriichi/src/state/action.rs
+          grep -q "pub fn new_n" /tmp/mortal-unified/libriichi/src/rankings.rs
+          grep -q "MORTAL_ROGS_UNIFIED_PLAYER_STATE_STAGE3C" /tmp/mortal-unified/libriichi/src/state/update.rs
+          grep -q "nukidora state transition is not installed yet" /tmp/mortal-unified/libriichi/src/state/update.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
