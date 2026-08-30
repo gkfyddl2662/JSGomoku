@@ -42,18 +42,34 @@
     </section>
 
     <section class="panel">
-      <div class="panel-title"><span>EVALUATION</span><strong>Simulation Backends</strong></div>
+      <div class="panel-title"><span>EVALUATION</span><strong>MJX · 3P / 4P Backends</strong></div>
       <div id="evaluationBackends" class="metrics compact"></div>
       <div class="form-grid top-gap">
         <label>WSL 배포판 (선택)<input id="mjxDistro" placeholder="Ubuntu" /></label>
-        <label>MJX Linux 경로<input id="mjxLinuxRoot" value="~/mortal-rogs-mjx" /></label>
+        <label>MJX 4P Linux 경로<input id="mjxLinuxRoot" value="~/mortal-rogs-mjx" /></label>
       </div>
       <div class="button-row">
         <button onclick="setupMjx()">MJX 4P Runtime 설치</button>
         <button class="secondary" onclick="probeMjx()">MJX Runtime 검사</button>
         <button class="secondary" onclick="loadEvaluation()">Backend 새로고침</button>
       </div>
-      <div id="evaluationNote" class="subtle">4P는 MJX, 3P는 libriichi3p를 기본 평가 엔진으로 사용합니다.</div>
+
+      <div class="form-grid top-gap">
+        <label>MJX-Sanma 소스 경로<input id="mjxSanmaRoot" value="C:\\Mortal_ROGS\\mjx-sanma" /></label>
+        <label>패치 단계
+          <select id="mjxSanmaThrough">
+            <option value="1">Stage 1 · Rule + 108 tiles</option>
+            <option value="2">Stage 2 · Wall + Deal</option>
+            <option value="3" selected>Stage 3 · Nuki protocol</option>
+          </select>
+        </label>
+      </div>
+      <div class="button-row">
+        <button onclick="prepareMjxSanma()">MJX-Sanma 소스 준비</button>
+        <button onclick="patchMjxSanma()">선택 단계까지 패치</button>
+        <button class="secondary" onclick="auditMjxSanma()">Sanma Audit</button>
+      </div>
+      <div id="evaluationNote" class="subtle">4P는 MJX, 3P는 libriichi3p가 production 기본값입니다. MJX-Sanma는 parity gate 통과 전까지 experimental로 차단됩니다.</div>
     </section>
 
     <section class="panel command-panel">
