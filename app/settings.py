@@ -44,11 +44,20 @@ class Settings:
     runtime_root: Path | None = None
     mortal_unified_root: Path | None = None
 
+    def _effective_unified_root(self) -> Path | None:
+        if self.mortal_unified_root is not None:
+            return self.mortal_unified_root
+        # Allow a running Control Center to adopt the first one-click install
+        # immediately, without requiring a server restart.
+        default_unified = (self.project_root.parent / "Mortal_Unified").resolve()
+        return default_unified if default_unified.exists() else None
+
     def runtime(self, mode: str) -> MortalRuntime:
         normalized = normalize_mode(mode)
+        unified_root = self._effective_unified_root()
 
-        if self.mortal_unified_root is not None:
-            root = self.mortal_unified_root
+        if unified_root is not None:
+            root = unified_root
             mortal_dir = root / "mortal"
             python_executable = root / ".venv" / (
                 "Scripts/python.exe" if os.name == "nt" else "bin/python"
@@ -141,8 +150,9 @@ def load_settings() -> Settings:
         os.getenv("MORTAL_RUNTIME_ROOT", project_root / "_runtime")
     ).expanduser().resolve()
 
-    # A configured unified root wins. Otherwise, automatically adopt the
-    # sibling Mortal_Unified installation only after it actually exists.
+    # A configured unified root wins. Otherwise, runtime() dynamically adopts
+    # the sibling Mortal_Unified installation as soon as the first bootstrap
+    # creates it, so the Web UI does not need a restart.
     unified_env = os.getenv("MORTAL_UNIFIED_ROOT")
     default_unified = (project_root.parent / "Mortal_Unified").resolve()
     mortal_unified_root = (
