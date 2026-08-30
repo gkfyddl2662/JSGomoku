@@ -181,7 +181,7 @@ def apply(root: Path) -> None:
     original = path.read_text(encoding="utf-8")
     updated = normalize_stock_tests(original)
     if MARKER not in updated:
-        updated = updated.rstrip() + TESTS + "\n"
+        updated = updated.rstrip() + TESTS.rstrip() + "\n"
 
     if updated != original:
         backup = path.with_suffix(path.suffix + ".unified-stage3f.bak")
