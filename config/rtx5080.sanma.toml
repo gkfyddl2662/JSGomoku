@@ -1,0 +1,82 @@
+# RTX 5080 / Blackwell / 16 GB VRAM preset for Mortal Sanma v5.
+# This file is merged over the upstream config.sanma.toml.
+
+[control]
+version = 5
+online = false
+device = 'cuda'
+enable_cudnn_benchmark = true
+enable_amp = true
+enable_compile = true
+batch_size = 512
+opt_step_every = 1
+save_every = 400
+test_every = 20000
+submit_every = 400
+
+[dataset]
+file_batch_size = 48
+num_workers = 8
+enable_augmentation = true
+augmented_first = false
+prefetch_factor = 4
+persistent_workers = true
+pin_memory = true
+
+[optim]
+eps = 1e-8
+betas = [0.9, 0.999]
+weight_decay = 0.1
+max_grad_norm = 0
+
+[optim.scheduler]
+peak = 1e-4
+final = 1e-4
+warm_up_steps = 2000
+max_steps = 0
+
+[performance]
+amp_dtype = 'bfloat16'
+allow_tf32 = true
+matmul_precision = 'high'
+non_blocking_transfer = true
+
+[grp.control]
+num_players = 3
+device = 'cuda'
+enable_cudnn_benchmark = true
+batch_size = 2048
+save_every = 2000
+val_steps = 400
+dtype = 'float32'
+num_workers = 4
+prefetch_factor = 4
+persistent_workers = true
+pin_memory = true
+
+[grp.optim]
+lr = 1e-4
+
+[online]
+enable_compile = true
+history_window = 50
+rank_pts = [6, 0, -6]
+
+[online.server]
+capacity = 2000
+force_sequential = false
+
+[1v2]
+games_per_iter = 96
+iters = 10
+rank_pts = [6, 0, -6]
+
+[1v2.challenger]
+device = 'cuda'
+enable_amp = true
+enable_compile = true
+
+[1v2.champion]
+device = 'cuda'
+enable_amp = true
+enable_compile = true
