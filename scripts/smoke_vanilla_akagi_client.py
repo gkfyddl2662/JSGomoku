@@ -49,14 +49,7 @@ def wait_ready(proc: subprocess.Popen[str], base: str, api_key: str) -> dict:
 
 
 def install_package_shell(name: str, path: Path) -> types.ModuleType:
-    """Expose a package path without executing that package's __init__.py.
-
-    Akagi-NG's source-tree package initializers eagerly import its local Mortal and
-    state-tracker stack. The AkagiOT HTTP engine itself does not depend on those
-    components, and a packaged Akagi installation already provides its own native
-    libraries. For this read-only source integration smoke we therefore expose only
-    the package paths needed to import AkagiOT's untouched source modules.
-    """
+    """Expose a package path without executing that package's __init__.py."""
     module = types.ModuleType(name)
     module.__package__ = name
     module.__path__ = [str(path)]
@@ -67,13 +60,7 @@ def install_package_shell(name: str, path: Path) -> types.ModuleType:
 
 
 def load_vanilla_akagi_ot(backend: Path):
-    """Import AkagiOTClient/AkagiOTEngine without activating Akagi local models.
-
-    The imported class definitions still come from the untouched pinned Akagi-NG
-    checkout. Only eager package initializers and their unrelated local-engine/native
-    side effects are bypassed. This mirrors Mortal-ROGS's production boundary: Akagi
-    owns state/UI/networking, while Mortal-ROGS owns every Mortal checkpoint.
-    """
+    """Import untouched AkagiOT/EngineProvider without activating Akagi local Mortal."""
     akagi_pkg = backend / "akagi_ng"
     mjai_pkg = akagi_pkg / "mjai_bot"
     engine_pkg = mjai_pkg / "engine"
@@ -84,23 +71,17 @@ def load_vanilla_akagi_ot(backend: Path):
 
     sys.path.insert(0, str(backend))
     try:
-        # The root initializer is harmless and gives us Akagi's own version metadata.
         importlib.import_module("akagi_ng")
-
-        # Avoid mjai_bot/__init__.py -> StateTracker -> core.lib_loader and
-        # engine/__init__.py -> factory/provider -> local Mortal engine. Those are
-        # intentionally outside this API-only integration contract.
         install_package_shell("akagi_ng.mjai_bot", mjai_pkg)
         install_package_shell("akagi_ng.mjai_bot.engine", engine_pkg)
 
-        # Akagi's logger initializes files under the source checkout on import.
-        # Supply a process-local logger for the read-only integration smoke only;
-        # AkagiOT uses it solely for circuit-breaker status messages.
         logger_module = types.ModuleType("akagi_ng.mjai_bot.logger")
         logger_module.logger = logging.getLogger("akagi-ng-api-only-smoke")
         sys.modules[logger_module.__name__] = logger_module
 
         module = importlib.import_module("akagi_ng.mjai_bot.engine.akagi_ot")
+        provider_module = importlib.import_module("akagi_ng.mjai_bot.engine.provider")
+        base_module = importlib.import_module("akagi_ng.mjai_bot.engine.base")
         status_module = importlib.import_module("akagi_ng.mjai_bot.status")
 
         source = Path(module.__file__).resolve()
@@ -109,7 +90,14 @@ def load_vanilla_akagi_ot(backend: Path):
         if "libriichi" in sys.modules or "libriichi3p" in sys.modules:
             raise RuntimeError("API-only AkagiOT import unexpectedly activated a native libriichi module")
 
-        return module.AkagiOTClient, module.AkagiOTEngine, status_module.BotStatusContext, source
+        return (
+            module.AkagiOTClient,
+            module.AkagiOTEngine,
+            provider_module.EngineProvider,
+            base_module.BaseEngine,
+            status_module.BotStatusContext,
+            source,
+        )
     finally:
         try:
             sys.path.remove(str(backend))
@@ -173,9 +161,9 @@ def main() -> int:
     ]
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(project), str(runtime_root / "mortal"), env.get("PYTHONPATH", "")]
-    ).rstrip(os.pathsep)
+    env["PYTHONPATH"] = os.pathsep.join([str(project), str(runtime_root / "mortal"), env.get("PYTHONPATH", "")]).rstrip(
+        os.pathsep
+    )
     proc = subprocess.Popen(
         cmd,
         cwd=project,
@@ -194,13 +182,19 @@ def main() -> int:
         if not (backend / "akagi_ng" / "mjai_bot" / "engine" / "akagi_ot.py").is_file():
             raise SystemExit(f"Pinned Akagi-NG backend is incomplete: {backend}")
 
-        AkagiOTClient, AkagiOTEngine, BotStatusContext, source = load_vanilla_akagi_ot(backend)
+        AkagiOTClient, AkagiOTEngine, EngineProvider, BaseEngine, BotStatusContext, source = load_vanilla_akagi_ot(
+            backend
+        )
 
         client = AkagiOTClient(base, args.api_key)
         if client.session.headers.get("Authorization") != args.api_key:
             raise SystemExit("Vanilla AkagiOTClient Authorization header contract changed")
         if client.session.headers.get("Content-Encoding") != "gzip":
             raise SystemExit("Vanilla AkagiOTClient gzip request contract changed")
+        if client.timeout != (2.0, 4.0):
+            raise SystemExit(f"Pinned AkagiOT timeout contract changed: {client.timeout}")
+        if client._failure_threshold != 3 or client._circuit_recovery_period != 30.0:
+            raise SystemExit("Pinned AkagiOT circuit-breaker contract changed")
 
         results: dict[str, object] = {
             "akagi_sha": actual_sha,
@@ -210,6 +204,8 @@ def main() -> int:
             "native_modules_loaded": False,
             "modes": {},
         }
+        payload_3p = None
+        expected_3p = None
         for mode, is_3p, obs_channels, action_space, endpoint in (
             ("3p", True, 1010, 44, "/react_batch_3p"),
             ("4p", False, 1012, 46, "/react_batch"),
@@ -234,14 +230,90 @@ def main() -> int:
                 "client": "AkagiOTClient",
                 "engine": "AkagiOTEngine",
             }
+            if mode == "3p":
+                payload_3p = payload
+                expected_3p = expected_actions
+
+        assert payload_3p is not None and expected_3p is not None
+        obs_3p = np.asarray(payload_3p["obs"], dtype=np.float32)
+        masks_3p = np.asarray(payload_3p["masks"], dtype=np.bool_)
+
+        dead_port = free_port()
+        circuit_status = BotStatusContext()
+        circuit_client = AkagiOTClient(f"http://127.0.0.1:{dead_port}", args.api_key)
+        circuit_client.timeout = (0.05, 0.05)
+        for attempt in range(3):
+            try:
+                circuit_client.predict(True, payload_3p["obs"], payload_3p["masks"], circuit_status)
+            except RuntimeError as exc:
+                if "AkagiOT request failed" not in str(exc):
+                    raise SystemExit(f"Unexpected AkagiOT failure {attempt + 1}: {exc}") from exc
+            else:
+                raise SystemExit("Dead AkagiOT endpoint unexpectedly succeeded")
+        if not circuit_client.circuit_open or circuit_client._failures != 3:
+            raise SystemExit("Pinned AkagiOT circuit breaker did not open after three failures")
+
+        skipped_at = time.perf_counter()
+        try:
+            circuit_client.predict(True, payload_3p["obs"], payload_3p["masks"], circuit_status)
+        except RuntimeError as exc:
+            if "Circuit Breaker is OPEN" not in str(exc):
+                raise SystemExit(f"Open AkagiOT breaker returned wrong error: {exc}") from exc
+        else:
+            raise SystemExit("Open AkagiOT circuit breaker did not skip the request")
+        if (time.perf_counter() - skipped_at) > 0.2:
+            raise SystemExit("Open AkagiOT circuit breaker did not fail fast")
+
+        class FakeLocalEngine(BaseEngine):
+            def __init__(self, status):
+                super().__init__(status=status, is_3p=True, version=4, name="FakeLocal", is_oracle=False)
+                self.engine_type = "mortal"
+
+            def react_batch(self, obs, masks, invisible_obs=None):
+                body = {
+                    "actions": expected_3p,
+                    "q_out": [[0.0] * 44 for _ in expected_3p],
+                    "masks": masks.tolist(),
+                    "is_greedy": [True] * len(expected_3p),
+                }
+                return body["actions"], body["q_out"], body["masks"], body["is_greedy"]
+
+            def fork(self, status=None):
+                return FakeLocalEngine(status or self.status)
+
+        provider_status = BotStatusContext()
+        online_engine = AkagiOTEngine(provider_status, is_3p=True, client=circuit_client)
+        provider = EngineProvider(provider_status, online_engine, FakeLocalEngine(provider_status), is_3p=True)
+        actions, q_out, returned_masks, is_greedy = provider.react_batch(obs_3p, masks_3p)
+        if actions != expected_3p or not provider.fallback_active or provider.active_engine is not provider.local_engine:
+            raise SystemExit("Pinned EngineProvider did not fall back after AkagiOT circuit failure")
+
+        circuit_client.url = base
+        circuit_client._last_failure_time = time.time() - circuit_client._circuit_recovery_period - 1.0
+        recovered = circuit_client.predict(True, payload_3p["obs"], payload_3p["masks"], circuit_status)
+        assert_mode_response("3p-circuit-recovery", recovered, actions=44, expected_actions=expected_3p)
+        if circuit_client.circuit_open or circuit_client._failures != 0:
+            raise SystemExit("Pinned AkagiOT circuit breaker did not reset after successful recovery probe")
 
         after_status = git_text(akagi_root, "status", "--porcelain")
         if after_status:
             raise SystemExit(f"Vanilla Akagi-NG checkout was modified by integration smoke:\n{after_status}")
 
+        results["resilience"] = {
+            "connect_timeout_s": 2.0,
+            "read_timeout_s": 4.0,
+            "failure_threshold": 3,
+            "recovery_period_s": 30.0,
+            "circuit_opened": True,
+            "open_circuit_skipped_io": True,
+            "provider_local_fallback": True,
+            "half_open_probe_recovered": True,
+        }
         print("MORTAL_VANILLA_AKAGI_API_ONLY_IMPORT_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_3P_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_4P_OK")
+        print("MORTAL_VANILLA_AKAGI_PROVIDER_FALLBACK_OK")
+        print("MORTAL_VANILLA_AKAGI_CIRCUIT_RECOVERY_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_E2E_OK")
         print(json.dumps(results, ensure_ascii=False, indent=2))
         return 0
@@ -257,7 +329,7 @@ def main() -> int:
             tail = proc.stdout.read().strip()
             if tail:
                 print("--- Mortal inference API output ---")
-                print(tail[-4000:])
+                print(tail[-5000:])
 
 
 if __name__ == "__main__":

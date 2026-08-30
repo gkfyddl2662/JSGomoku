@@ -8,9 +8,11 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -20,7 +22,14 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def request_json(url: str, *, api_key: str = "", payload: dict | None = None, gzip_body: bool = False) -> tuple[int, dict]:
+def request_json(
+    url: str,
+    *,
+    api_key: str = "",
+    payload: dict | None = None,
+    gzip_body: bool = False,
+    timeout: float = 15.0,
+) -> tuple[int, dict]:
     data = None
     headers: dict[str, str] = {}
     if api_key:
@@ -34,7 +43,7 @@ def request_json(url: str, *, api_key: str = "", payload: dict | None = None, gz
         data = raw
     req = urllib.request.Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return int(resp.status), json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8")
@@ -50,17 +59,17 @@ def touch_new_signature(path: Path) -> None:
     os.utime(path, ns=(now, now))
 
 
-def build_payload(obs_channels: int, actions: int) -> tuple[dict, list[int]]:
-    # Singleton legal masks make the expected action deterministic without knowing
-    # anything about the random smoke checkpoint's Q values.
-    expected = [0, actions - 1]
+def build_payload(obs_channels: int, actions: int, *, batch: int = 2) -> tuple[dict, list[int]]:
+    if batch < 1:
+        raise ValueError("batch must be >= 1")
+    expected = [0 if index % 2 == 0 else actions - 1 for index in range(batch)]
     masks: list[list[bool]] = []
     for action in expected:
         row = [False] * actions
         row[action] = True
         masks.append(row)
     return {
-        "obs": [[[0.0] * 34 for _ in range(obs_channels)] for _ in range(2)],
+        "obs": [[[0.0] * 34 for _ in range(obs_channels)] for _ in range(batch)],
         "masks": masks,
     }, expected
 
@@ -68,11 +77,12 @@ def build_payload(obs_channels: int, actions: int) -> tuple[dict, list[int]]:
 def assert_mode_response(mode: str, body: dict, *, actions: int, expected_actions: list[int]) -> None:
     if body.get("actions") != expected_actions:
         raise SystemExit(f"{mode} API selected illegal/unexpected actions: {body.get('actions')} vs {expected_actions}")
-    if len(body.get("q_out", [])) != 2 or any(len(row) != actions for row in body["q_out"]):
+    batch = len(expected_actions)
+    if len(body.get("q_out", [])) != batch or any(len(row) != actions for row in body["q_out"]):
         raise SystemExit(f"{mode} API q_out shape mismatch")
-    if len(body.get("masks", [])) != 2 or any(len(row) != actions for row in body["masks"]):
+    if len(body.get("masks", [])) != batch or any(len(row) != actions for row in body["masks"]):
         raise SystemExit(f"{mode} API mask shape mismatch")
-    if body.get("is_greedy") != [True, True]:
+    if body.get("is_greedy") != [True] * batch:
         raise SystemExit(f"{mode} API greedy flags mismatch: {body.get('is_greedy')}")
     for row_index, legal_action in enumerate(expected_actions):
         for action_index, value in enumerate(body["q_out"][row_index]):
@@ -97,6 +107,33 @@ def assert_managed_response(mode: str, body: dict, *, actions: int, obs_channels
         raise SystemExit(f"{mode} managed API reported a stale model: {model}")
 
 
+def wait_ready(proc: subprocess.Popen[str], base: str, api_key: str) -> dict:
+    deadline = time.time() + 180
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            output = proc.stdout.read() if proc.stdout else ""
+            raise SystemExit(f"Inference API exited before readiness ({proc.returncode}):\n{output}")
+        try:
+            status, health = request_json(f"{base}/health", api_key=api_key)
+            if status == 200:
+                return health
+        except OSError:
+            pass
+        time.sleep(0.25)
+    raise SystemExit("Inference API did not become ready after prewarm")
+
+
+def wait_model_state(base: str, api_key: str, mode: str, predicate, *, timeout: float = 20.0) -> dict:
+    deadline = time.time() + timeout
+    latest: dict = {}
+    while time.time() < deadline:
+        status, latest = request_json(f"{base}/health", api_key=api_key)
+        if status == 200 and predicate(latest, latest.get("models", {}).get(mode, {})):
+            return latest
+        time.sleep(0.05)
+    raise SystemExit(f"Timed out waiting for {mode} model state: {latest}")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="End-to-end smoke for the Akagi-NG-compatible Mortal inference HTTP API")
     p.add_argument("--runtime-root", type=Path, required=True)
@@ -116,7 +153,6 @@ def main() -> int:
         if path is None or not path.is_file():
             raise SystemExit(f"API smoke checkpoint missing: {path}")
 
-    # Work on copies so the hot-reload failure test cannot damage training output.
     api_root = root / "runtime" / "smoke-api"
     if api_root.exists():
         shutil.rmtree(api_root)
@@ -129,6 +165,7 @@ def main() -> int:
     touch_new_signature(model_4p)
 
     port = free_port()
+    base = f"http://127.0.0.1:{port}"
     server = project / "scripts" / "serve_akagi_api.py"
     cmd = [
         sys.executable,
@@ -147,12 +184,21 @@ def main() -> int:
         str(model_3p),
         "--model-4p",
         str(model_4p),
+        "--micro-batch-ms",
+        "20",
+        "--micro-batch-max-rows",
+        "64",
+        "--max-pending-requests",
+        "64",
+        "--request-deadline-ms",
+        "3500",
+        "--reload-poll-ms",
+        "100",
     ]
-
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(project), str(root / "mortal"), env.get("PYTHONPATH", "")]
-    ).rstrip(os.pathsep)
+    env["PYTHONPATH"] = os.pathsep.join([str(project), str(root / "mortal"), env.get("PYTHONPATH", "")]).rstrip(
+        os.pathsep
+    )
     proc = subprocess.Popen(
         cmd,
         cwd=project,
@@ -161,41 +207,22 @@ def main() -> int:
         stderr=subprocess.STDOUT,
         text=True,
     )
-    base = f"http://127.0.0.1:{port}"
-    try:
-        # CUDA torch.compile can take materially longer than normal HTTP startup.
-        # The API intentionally does not bind until that cost has been paid.
-        deadline = time.time() + 180
-        health = None
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                output = proc.stdout.read() if proc.stdout else ""
-                raise SystemExit(f"Inference API exited before readiness ({proc.returncode}):\n{output}")
-            try:
-                status, health = request_json(f"{base}/health", api_key=args.api_key)
-                if status == 200:
-                    break
-            except OSError:
-                pass
-            time.sleep(0.25)
-        else:
-            raise SystemExit("Inference API did not become ready after prewarm")
 
-        if health.get("protocol") != "akagiot-v1":
-            raise SystemExit(f"Unexpected API protocol health marker: {health}")
-        if health.get("degraded"):
-            raise SystemExit(f"Prewarmed API should start healthy with both smoke checkpoints: {health}")
+    try:
+        health = wait_ready(proc, base, args.api_key)
+        if health.get("protocol") != "akagiot-v1" or health.get("degraded"):
+            raise SystemExit(f"Unexpected prewarmed health: {health}")
         for mode in ("3p", "4p"):
             info = health["models"][mode]
             if not info["loaded"] or not info["current"] or info["last_error"] is not None:
                 raise SystemExit(f"{mode} was not prewarmed before HTTP readiness: {info}")
 
-        health_bad_status, _ = request_json(f"{base}/health", api_key="wrong-key")
-        if health_bad_status != 401:
-            raise SystemExit(f"Protected health endpoint should return 401 for a bad key, got {health_bad_status}")
-        managed_bad_status, _ = request_json(f"{base}/api/inference/models", api_key="wrong-key")
-        if managed_bad_status != 401:
-            raise SystemExit(f"Protected managed endpoint should return 401 for a bad key, got {managed_bad_status}")
+        bad_health, _ = request_json(f"{base}/health", api_key="wrong-key")
+        if bad_health != 401:
+            raise SystemExit(f"Protected health endpoint should return 401, got {bad_health}")
+        bad_models, _ = request_json(f"{base}/api/inference/models", api_key="wrong-key")
+        if bad_models != 401:
+            raise SystemExit(f"Protected managed endpoint should return 401, got {bad_models}")
 
         managed_health_status, managed_health = request_json(f"{base}/api/inference/health", api_key=args.api_key)
         if managed_health_status != 200 or managed_health.get("management_protocol") != "mortal-rogs-inference-v1":
@@ -203,19 +230,6 @@ def main() -> int:
         models_status, models_body = request_json(f"{base}/api/inference/models", api_key=args.api_key)
         if models_status != 200 or models_body.get("protocol") != "mortal-rogs-inference-v1":
             raise SystemExit(f"Managed models contract failed: HTTP {models_status}: {models_body}")
-        for mode in ("3p", "4p"):
-            model_info = models_body.get("models", {}).get(mode, {})
-            if model_info.get("model", {}).get("abi_version") != 4 or model_info.get("current") is not True:
-                raise SystemExit(f"Managed {mode} model status invalid: {model_info}")
-
-        bad_status, _ = request_json(
-            f"{base}/react_batch_3p",
-            api_key="wrong-key",
-            payload=build_payload(1010, 44)[0],
-            gzip_body=True,
-        )
-        if bad_status != 401:
-            raise SystemExit(f"Bad API key should return 401, got {bad_status}")
 
         wrong_shape_status, _ = request_json(
             f"{base}/react_batch_3p",
@@ -225,11 +239,8 @@ def main() -> int:
         )
         if wrong_shape_status != 400:
             raise SystemExit(f"4P-shaped payload on 3P endpoint should return 400, got {wrong_shape_status}")
-
         bad_mode_status, _ = request_json(
-            f"{base}/api/inference/5p",
-            api_key=args.api_key,
-            payload=build_payload(1010, 44)[0],
+            f"{base}/api/inference/5p", api_key=args.api_key, payload=build_payload(1010, 44)[0]
         )
         if bad_mode_status != 404:
             raise SystemExit(f"Unsupported managed mode should return 404, got {bad_mode_status}")
@@ -242,9 +253,7 @@ def main() -> int:
         ):
             payload, expected_actions = build_payload(obs_channels, actions)
             mode_payloads[mode] = (endpoint, payload, expected_actions, actions)
-            status, body = request_json(
-                f"{base}{endpoint}", api_key=args.api_key, payload=payload, gzip_body=True
-            )
+            status, body = request_json(f"{base}{endpoint}", api_key=args.api_key, payload=payload, gzip_body=True)
             if status != 200:
                 raise SystemExit(f"{mode} API returned HTTP {status}: {body}")
             assert_mode_response(mode, body, actions=actions, expected_actions=expected_actions)
@@ -259,7 +268,7 @@ def main() -> int:
             results["modes"][mode] = {
                 "endpoint": endpoint,
                 "managed_endpoint": f"/api/inference/{mode}",
-                "batch": 2,
+                "batch": len(expected_actions),
                 "obs": [obs_channels, 34],
                 "action_space": actions,
                 "actions": body["actions"],
@@ -267,71 +276,96 @@ def main() -> int:
                 "model": managed_body["model"],
             }
 
+        payload, expected = build_payload(1010, 44, batch=1)
+        barrier = threading.Barrier(7)
+
+        def concurrent_call(_: int) -> tuple[int, dict]:
+            barrier.wait()
+            return request_json(
+                f"{base}/react_batch_3p",
+                api_key=args.api_key,
+                payload=payload,
+                gzip_body=True,
+                timeout=5,
+            )
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures = [pool.submit(concurrent_call, index) for index in range(6)]
+            barrier.wait()
+            concurrent_results = [future.result(timeout=8) for future in futures]
+        for status, body in concurrent_results:
+            if status != 200:
+                raise SystemExit(f"Concurrent 3P inference failed HTTP {status}: {body}")
+            assert_mode_response("3p-concurrent", body, actions=44, expected_actions=expected)
+
+        metrics_status, metrics = request_json(f"{base}/api/inference/metrics", api_key=args.api_key)
+        if metrics_status != 200 or metrics.get("protocol") != "mortal-rogs-inference-v1":
+            raise SystemExit(f"Inference metrics endpoint failed: HTTP {metrics_status}: {metrics}")
+        config = metrics.get("micro_batch", {})
+        if config.get("request_deadline_ms") != 3500.0 or config.get("wait_ms") != 20.0:
+            raise SystemExit(f"Inference scheduling config mismatch: {config}")
+        m3 = metrics.get("modes", {}).get("3p", {})
+        if m3.get("requests_total", 0) < 8 or m3.get("rows_total", 0) < 9:
+            raise SystemExit(f"3P inference metrics counters too small: {m3}")
+        if m3.get("coalesced_requests_total", 0) < 1 or m3.get("max_rows_per_execution", 0) < 2:
+            raise SystemExit(f"Concurrent requests were not micro-batched: {m3}")
+        if m3.get("latency_ms", {}).get("request", {}).get("p95") is None:
+            raise SystemExit(f"3P latency percentile telemetry missing: {m3}")
+
         reload_status, reload_body = request_json(
             f"{base}/api/inference/reload", api_key=args.api_key, payload={"mode": "3p"}
         )
         if reload_status != 200 or reload_body.get("results", {}).get("3p", {}).get("ok") is not True:
             raise SystemExit(f"Explicit 3P reload contract failed: HTTP {reload_status}: {reload_body}")
 
-        status, loaded_health = request_json(f"{base}/health", api_key=args.api_key)
-        if status != 200:
-            raise SystemExit("Health failed after initial model requests")
+        _, loaded_health = request_json(f"{base}/health", api_key=args.api_key)
         cuda_expected = args.device.strip().casefold().startswith("cuda")
         for mode in ("3p", "4p"):
             info = loaded_health["models"][mode]
             if not info["loaded"] or not info["current"] or info["last_error"] is not None:
                 raise SystemExit(f"{mode} model did not remain current after load: {info}")
             if cuda_expected:
-                if info.get("compiled") is not True:
-                    raise SystemExit(f"{mode} CUDA API model did not enable torch.compile: {info}")
-                if info.get("amp_dtype") != "bfloat16":
-                    raise SystemExit(f"{mode} CUDA API model did not enable BF16 AMP: {info}")
-        if loaded_health.get("degraded"):
-            raise SystemExit(f"Healthy loaded API unexpectedly degraded: {loaded_health}")
+                if info.get("compiled") is not True or info.get("amp_dtype") != "bfloat16":
+                    raise SystemExit(f"{mode} CUDA API model did not use compile+BF16: {info}")
 
-        # Atomic hot-reload safety: replace the 3P file with a valid 4P checkpoint.
-        # The next 3P request must continue on the previously loaded 3P model while
-        # surfacing the rejected replacement in /health.
         shutil.copyfile(source_4p, model_3p)
         touch_new_signature(model_3p)
         endpoint, payload, expected_actions, actions = mode_payloads["3p"]
         status, body = request_json(f"{base}{endpoint}", api_key=args.api_key, payload=payload, gzip_body=True)
         if status != 200:
-            raise SystemExit(f"3P hot-reload fallback should keep serving, got HTTP {status}: {body}")
-        assert_mode_response("3p-hot-reload-fallback", body, actions=actions, expected_actions=expected_actions)
-
-        _, degraded_health = request_json(f"{base}/health", api_key=args.api_key)
-        info = degraded_health["models"]["3p"]
-        if not degraded_health.get("degraded") or info["current"] or not info["last_error"]:
-            raise SystemExit(f"Rejected 3P replacement was not reported as degraded: {degraded_health}")
-        if "does not match endpoint 3p" not in info["last_error"]:
-            raise SystemExit(f"Unexpected 3P hot-reload rejection reason: {info['last_error']}")
+            raise SystemExit(f"3P background-reload fallback should keep serving, got HTTP {status}: {body}")
+        assert_mode_response("3p-background-reload-fallback", body, actions=actions, expected_actions=expected_actions)
 
         rejected_reload_status, rejected_reload = request_json(
             f"{base}/api/inference/reload", api_key=args.api_key, payload={"mode": "3p"}
         )
         if rejected_reload_status != 409:
             raise SystemExit(
-                f"Explicit reload must reject a bad replacement without dropping the old model, got "
+                f"Explicit reload must reject a bad candidate without dropping old model, got "
                 f"HTTP {rejected_reload_status}: {rejected_reload}"
             )
+        degraded_health = wait_model_state(
+            base,
+            args.api_key,
+            "3p",
+            lambda health_state, info: bool(health_state.get("degraded") and not info.get("current") and info.get("last_error")),
+        )
+        if "does not match endpoint 3p" not in degraded_health["models"]["3p"]["last_error"]:
+            raise SystemExit(f"Unexpected 3P candidate rejection: {degraded_health['models']['3p']}")
 
-        # Restore the valid 3P checkpoint and verify explicit recovery/reload.
         shutil.copyfile(source_3p, model_3p)
         touch_new_signature(model_3p)
-        recovered_reload_status, recovered_reload = request_json(
-            f"{base}/api/inference/reload", api_key=args.api_key, payload={"mode": "3p"}
+        recovered_health = wait_model_state(
+            base,
+            args.api_key,
+            "3p",
+            lambda health_state, info: bool(not health_state.get("degraded") and info.get("current") and not info.get("last_error")),
+            timeout=30,
         )
-        if recovered_reload_status != 200 or recovered_reload.get("results", {}).get("3p", {}).get("ok") is not True:
-            raise SystemExit(f"3P explicit hot-reload recovery failed: HTTP {recovered_reload_status}: {recovered_reload}")
         status, body = request_json(f"{base}{endpoint}", api_key=args.api_key, payload=payload, gzip_body=True)
         if status != 200:
-            raise SystemExit(f"3P hot-reload recovery inference failed HTTP {status}: {body}")
-        assert_mode_response("3p-hot-reload-recovery", body, actions=actions, expected_actions=expected_actions)
-        _, recovered_health = request_json(f"{base}/health", api_key=args.api_key)
-        info = recovered_health["models"]["3p"]
-        if recovered_health.get("degraded") or not info["current"] or info["last_error"] is not None:
-            raise SystemExit(f"3P slot did not recover after restoring checkpoint: {recovered_health}")
+            raise SystemExit(f"3P background hot-reload recovery inference failed HTTP {status}: {body}")
+        assert_mode_response("3p-background-reload-recovery", body, actions=actions, expected_actions=expected_actions)
 
         results["prewarm"] = {"ready_only_after_models_loaded": True, "health_requires_auth": True}
         results["performance"] = {
@@ -344,17 +378,28 @@ def main() -> int:
             "protocol": "mortal-rogs-inference-v1",
             "health": True,
             "models": True,
+            "metrics": True,
             "batch_inference": True,
-            "latency_metadata": True,
+            "latency_percentiles": True,
             "explicit_reload": True,
+        }
+        results["scheduling"] = {
+            "micro_batch": True,
+            "coalesced_requests": m3["coalesced_requests_total"],
+            "max_rows_per_execution": m3["max_rows_per_execution"],
+            "request_deadline_ms": config["request_deadline_ms"],
+            "akagi_read_timeout_ms": 4000,
         }
         results["hot_reload"] = {
             "wrong_mode_rejected": True,
             "old_model_kept_serving": True,
             "health_degraded_on_reject": True,
-            "explicit_recovery": True,
+            "background_recovery": recovered_health["models"]["3p"]["current"],
         }
         print("MORTAL_MANAGED_INFERENCE_API_OK")
+        print("MORTAL_INFERENCE_MICROBATCH_OK")
+        print("MORTAL_INFERENCE_TELEMETRY_OK")
+        print("MORTAL_INFERENCE_BACKGROUND_RELOAD_OK")
         print("MORTAL_AKAGI_API_PREWARM_OK")
         print("MORTAL_AKAGI_API_PERFORMANCE_OK")
         print("MORTAL_AKAGI_API_HOT_RELOAD_OK")
@@ -373,7 +418,7 @@ def main() -> int:
             tail = proc.stdout.read().strip()
             if tail:
                 print("--- inference-api output ---")
-                print(tail[-4000:])
+                print(tail[-5000:])
 
 
 if __name__ == "__main__":

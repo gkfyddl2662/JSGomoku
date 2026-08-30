@@ -15,8 +15,17 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
-from serving.inference import InferenceService, contract_for
+from serving.inference import contract_for
+from serving.resilient import (
+    InferenceBusyError,
+    InferenceDeadlineExceeded,
+    ResilientInferenceService,
+)
+
+
+AKAGI_READ_TIMEOUT_MS = 4000.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +40,34 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--api-key", default=os.getenv("MORTAL_INFERENCE_API_KEY", ""))
     p.add_argument("--model-3p", type=Path, default=None)
     p.add_argument("--model-4p", type=Path, default=None)
+    p.add_argument(
+        "--micro-batch-ms",
+        type=float,
+        default=float(os.getenv("MORTAL_INFERENCE_MICRO_BATCH_MS", "1.0")),
+        help="Maximum coalescing window for concurrent same-mode requests.",
+    )
+    p.add_argument(
+        "--micro-batch-max-rows",
+        type=int,
+        default=int(os.getenv("MORTAL_INFERENCE_MICRO_BATCH_MAX_ROWS", "64")),
+    )
+    p.add_argument(
+        "--max-pending-requests",
+        type=int,
+        default=int(os.getenv("MORTAL_INFERENCE_MAX_PENDING_REQUESTS", "128")),
+    )
+    p.add_argument(
+        "--request-deadline-ms",
+        type=float,
+        default=float(os.getenv("MORTAL_INFERENCE_REQUEST_DEADLINE_MS", "3500")),
+        help="Server-side deadline. Must stay below pinned AkagiOT's 4s read timeout.",
+    )
+    p.add_argument(
+        "--reload-poll-ms",
+        type=float,
+        default=float(os.getenv("MORTAL_INFERENCE_RELOAD_POLL_MS", "500")),
+        help="Background checkpoint change polling interval.",
+    )
     return p.parse_args()
 
 
@@ -60,24 +97,24 @@ def _decode_payload(raw: bytes, encoding: str | None) -> dict[str, Any]:
 
 def _model_identity(info: dict[str, Any]) -> dict[str, Any]:
     path = Path(str(info["path"]))
-    signature = None
-    if path.is_file():
-        stat = path.stat()
-        signature = f"{stat.st_mtime_ns}:{stat.st_size}"
     return {
         "name": path.name,
         "path": str(path),
-        "checkpoint_signature": signature,
+        # Identity is the checkpoint actually loaded by the GPU model, not merely
+        # the current file on disk. During background hot-reload these can differ.
+        "checkpoint_signature": info.get("loaded_signature"),
+        "candidate_signature": info.get("candidate_signature"),
         "abi_version": 4,
         "device": info.get("device"),
         "compiled": info.get("compiled"),
         "amp_dtype": info.get("amp_dtype"),
         "current": info.get("current"),
+        "reloading": info.get("reloading"),
     }
 
 
-def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
-    app = FastAPI(title="Mortal-ROGS Inference API", version="1.2.0")
+def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI:
+    app = FastAPI(title="Mortal-ROGS Inference API", version="1.3.0")
     expected_key = api_key.strip()
 
     def authorize(request: Request) -> None:
@@ -96,7 +133,13 @@ def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
         payload = _decode_payload(await request.body(), request.headers.get("Content-Encoding"))
         started = time.perf_counter()
         try:
-            response = service.infer(contract.mode, payload["obs"], payload["masks"])
+            # Do not block uvicorn's event loop on CUDA work or queue waiting. This
+            # also allows concurrent HTTP requests to be coalesced by DynamicBatcher.
+            response = await run_in_threadpool(service.infer, contract.mode, payload["obs"], payload["masks"])
+        except (InferenceBusyError, InferenceDeadlineExceeded) as exc:
+            # Pinned AkagiOT reads for 4s and falls back/circuit-breaks on errors.
+            # Return a deterministic 503 before that client timeout instead of hanging.
+            raise HTTPException(503, str(exc)) from exc
         except FileNotFoundError as exc:
             raise HTTPException(503, str(exc)) from exc
         except (ValueError, TypeError) as exc:
@@ -123,6 +166,10 @@ def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
         if len(response.get("actions", [])) == 1:
             response["selected_action"] = response["actions"][0]
         return response
+
+    @app.on_event("shutdown")
+    def shutdown_service() -> None:
+        service.close()
 
     @app.get("/health")
     def health(request: Request) -> dict[str, Any]:
@@ -160,6 +207,11 @@ def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
             "models": models,
         }
 
+    @app.get("/api/inference/metrics")
+    def managed_metrics(request: Request) -> dict[str, Any]:
+        authorize(request)
+        return service.metrics()
+
     @app.post("/api/inference/reload")
     async def managed_reload(request: Request) -> dict[str, Any]:
         authorize(request)
@@ -177,17 +229,16 @@ def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
 
         results: dict[str, Any] = {}
         for mode in modes:
-            slot = service.slots[mode]
-            try:
-                slot.get()
-            except Exception as exc:
-                results[mode] = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "status": slot.status()}
-                continue
-            info = slot.status()
-            ok = bool(info["loaded"] and info["current"] and info["last_error"] is None)
-            results[mode] = {"ok": ok, "status": info, "model": _model_identity(info)}
+            # Candidate loading/strict-check/torch.compile runs off the event loop,
+            # while inference keeps using the already published model.
+            result = await run_in_threadpool(service.reload, mode)
+            if result.get("ok"):
+                info = result["status"]
+                results[mode] = {"ok": True, "status": info, "model": _model_identity(info)}
+            else:
+                results[mode] = result
 
-        ok = all(result["ok"] for result in results.values())
+        ok = all(bool(result.get("ok")) for result in results.values())
         if not ok:
             raise HTTPException(409, detail={"ok": False, "results": results})
         return {"ok": True, "protocol": "mortal-rogs-inference-v1", "results": results}
@@ -209,28 +260,50 @@ def main() -> int:
         raise SystemExit("--port must be between 1 and 65535")
     if not _is_loopback(args.host) and not args.api_key.strip():
         raise SystemExit("Refusing to expose Mortal inference beyond loopback without --api-key")
+    if args.micro_batch_ms < 0:
+        raise SystemExit("--micro-batch-ms must be >= 0")
+    if args.micro_batch_max_rows < 1:
+        raise SystemExit("--micro-batch-max-rows must be >= 1")
+    if args.max_pending_requests < 1:
+        raise SystemExit("--max-pending-requests must be >= 1")
+    if not 0 < args.request_deadline_ms < AKAGI_READ_TIMEOUT_MS:
+        raise SystemExit(
+            f"--request-deadline-ms must be >0 and <{AKAGI_READ_TIMEOUT_MS:.0f}ms "
+            "to fail before pinned AkagiOT's read timeout"
+        )
+    if args.reload_poll_ms < 50:
+        raise SystemExit("--reload-poll-ms must be >= 50")
 
-    service = InferenceService(
+    service = ResilientInferenceService(
         args.runtime_root,
         device=args.device,
         model_3p=args.model_3p,
         model_4p=args.model_4p,
+        micro_batch_ms=args.micro_batch_ms,
+        micro_batch_max_rows=args.micro_batch_max_rows,
+        max_pending_requests=args.max_pending_requests,
+        request_deadline_ms=args.request_deadline_ms,
+        reload_poll_ms=args.reload_poll_ms,
     )
 
-    # Load, strict-validate, compile (when requested), and execute one real forward
-    # pass before uvicorn binds the socket. AkagiOT uses a 5-second request timeout;
-    # it must never be the process that pays the first torch.compile cost.
+    # Load, strict-validate, compile (when requested), and execute real forwards
+    # before uvicorn binds. Akagi must never pay the first torch.compile cost.
     print("MORTAL_AKAGI_API_WARMUP_BEGIN", flush=True)
     try:
         warmup = service.warmup()
     except Exception as exc:
+        service.close()
         raise SystemExit(f"Mortal Akagi API warmup failed: {type(exc).__name__}: {exc}") from exc
+    service.start_background()
     print("MORTAL_AKAGI_API_WARMUP_OK " + json.dumps(warmup, ensure_ascii=False), flush=True)
 
     app = create_app(service, args.api_key)
     print(
         f"MORTAL_AKAGI_API_START root={service.runtime_root} host={args.host} port={args.port} "
-        f"device={args.device} auth={'on' if args.api_key.strip() else 'off'}",
+        f"device={args.device} auth={'on' if args.api_key.strip() else 'off'} "
+        f"micro_batch_ms={args.micro_batch_ms} max_rows={args.micro_batch_max_rows} "
+        f"pending={args.max_pending_requests} deadline_ms={args.request_deadline_ms} "
+        f"reload_poll_ms={args.reload_poll_ms}",
         flush=True,
     )
     uvicorn.run(app, host=args.host, port=args.port, reload=False, access_log=False)
