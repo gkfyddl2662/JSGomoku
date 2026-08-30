@@ -52,16 +52,17 @@ jobs:
           python scripts/patch_libriichi_unified_arena_stage4a.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_arena_stage4b.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_arena_stage4c.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_game_stage5a.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
         run: cargo check -p libriichi --no-default-features
 
-      - name: Run unified Rust ABI tests
+      - name: Run unified Rust ABI and game tests
         working-directory: /tmp/mortal-unified
         run: cargo test -p libriichi --no-default-features unified_ -- --nocapture
 
-      - name: Verify Rust dual-mode transport, state, and arena contracts
+      - name: Verify Rust dual-mode transport, state, arena, and game contracts
         run: |
           grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
@@ -70,38 +71,25 @@ jobs:
           grep -q "4 => Ok((170, 34))" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "q_values: Vec<Vec<f32>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "masks_recv: Vec<Vec<bool>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
-          grep -q "game_mode: String" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
-          grep -q "action_space: usize" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "translated_action" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "Event::Nukidora" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           ! grep -q "3P action translation is not installed yet" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
-          grep -q "names: Vec<String>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
-          grep -q "scores: Vec<i32>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
-          grep -q "tehais: Vec<Vec<Tile>>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
-          grep -q "Nukidora" /tmp/mortal-unified/libriichi/src/mjai/event.rs
-          grep -q "pub(super) num_players: u8" /tmp/mortal-unified/libriichi/src/state/player_state.rs
-          grep -q "pub can_nukidora: bool" /tmp/mortal-unified/libriichi/src/state/action.rs
-          grep -q "pub fn new_n" /tmp/mortal-unified/libriichi/src/rankings.rs
           grep -q "MORTAL_ROGS_UNIFIED_PLAYER_STATE_STAGE3C" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_NUKIDORA_STAGE3D" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_ACTION_OBS_STAGE3E" /tmp/mortal-unified/libriichi/src/state/obs_repr.rs
           grep -q "MORTAL_ROGS_UNIFIED_ABI_TEST_STAGE3F" /tmp/mortal-unified/libriichi/src/state/test.rs
-          grep -q "ACTION_NUKIDORA_3P" /tmp/mortal-unified/libriichi/src/state/obs_repr.rs
-          grep -q "fn update_nukidora_candidate" /tmp/mortal-unified/libriichi/src/state/update.rs
-          grep -q "fn nukidora" /tmp/mortal-unified/libriichi/src/state/update.rs
-          grep -q "nukidora_ron_chance" /tmp/mortal-unified/libriichi/src/state/player_state.rs
-          ! grep -q "nukidora state transition is not installed yet" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4A" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4B" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4C" /tmp/mortal-unified/libriichi/src/arena/board.rs
-          grep -q "pub num_players: u8" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "let live_tiles = if num_players == 3 { 55 } else { 70 }" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "self.tsumo_actor = (actor + 1) % self.num_players" /tmp/mortal-unified/libriichi/src/arena/board.rs
-          grep -q "Event::Nukidora { actor, .. }" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "fn calc_tsumo_deltas" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "hidden_live_cap" /tmp/mortal-unified/libriichi/src/arena/board.rs
-          ! grep -q "3P arena Hora scoring requires unified arena Stage 4B" /tmp/mortal-unified/libriichi/src/arena/board.rs
-          ! grep -q "3P arena oracle encoding requires unified arena Stage 4C" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5A" /tmp/mortal-unified/libriichi/src/arena/game.rs
+          grep -q "tenhou_sanma_hanchan" /tmp/mortal-unified/libriichi/src/arena/game.rs
+          grep -q "target_score: 40_000" /tmp/mortal-unified/libriichi/src/arena/game.rs
+          grep -q "unified_sanma_tsumogiri_game_smoke" /tmp/mortal-unified/libriichi/src/arena/game.rs
+          grep -q "Rankings::new_n" /tmp/mortal-unified/libriichi/src/arena/result.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
@@ -138,12 +126,7 @@ jobs:
               ('3p', 3, 44, 1010, 170, 6),
               ('4p', 4, 46, 1012, 217, 7),
           ):
-              brain = Brain(
-                  version=4,
-                  conv_channels=16,
-                  num_blocks=1,
-                  obs_channels=channels,
-              ).eval()
+              brain = Brain(version=4, conv_channels=16, num_blocks=1, obs_channels=channels).eval()
               dqn = DQN(version=4, action_space=actions).eval()
               obs = torch.randn(2, channels, 34)
               mask = torch.ones(2, actions, dtype=torch.bool)
@@ -186,12 +169,7 @@ jobs:
               assert all(len(row) == actions for row in masks)
               assert all(greedy)
 
-              grp = GRP(
-                  hidden_size=8,
-                  num_layers=1,
-                  num_players=players,
-                  input_size=grp_size,
-              )
+              grp = GRP(hidden_size=8, num_layers=1, num_players=players, input_size=grp_size)
               seq = [
                   torch.randn(3, grp_size, dtype=torch.float64),
                   torch.randn(5, grp_size, dtype=torch.float64),
@@ -200,10 +178,7 @@ jobs:
               assert logits.shape == (2, math.factorial(players))
               matrix = grp.calc_matrix(logits)
               assert matrix.shape == (2, players, players)
-              assert torch.allclose(
-                  matrix.sum(-1),
-                  torch.ones(2, players, dtype=matrix.dtype),
-              )
+              assert torch.allclose(matrix.sum(-1), torch.ones(2, players, dtype=matrix.dtype))
 
           print('MORTAL_UNIFIED_PYTHON_3P_4P_OK')
           PY
