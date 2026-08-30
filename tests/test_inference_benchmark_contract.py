@@ -121,6 +121,7 @@ def test_control_center_exposes_benchmark_sweep_without_leaking_api_key_in_proce
     ui = (PROJECT_ROOT / "static" / "inference.js").read_text(encoding="utf-8")
     script = (PROJECT_ROOT / "scripts" / "benchmark_inference_api.py").read_text(encoding="utf-8")
     server = (PROJECT_ROOT / "scripts" / "serve_akagi_api.py").read_text(encoding="utf-8")
+    coordination = (PROJECT_ROOT / "serving" / "coordination.py").read_text(encoding="utf-8")
 
     assert '@router.post("/api/inference/benchmark/start")' in router
     assert '@router.get("/api/inference/benchmark/latest")' in router
@@ -137,7 +138,8 @@ def test_control_center_exposes_benchmark_sweep_without_leaking_api_key_in_proce
 
     assert '@app.post("/api/inference/tuning")' in server
     assert 'set(payload) - {"micro_batch_ms"}' in server
-    assert "batcher._condition" in server
+    assert "set_micro_batch_wait" in server
+    assert "batcher._condition" in coordination
     assert '"models_reloaded": False' in server
 
     assert "startInferenceBenchmark" in ui
