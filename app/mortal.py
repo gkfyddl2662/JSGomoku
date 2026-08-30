@@ -143,6 +143,57 @@ class MortalController:
                 "--allow-blockers",
             ], self.s.project_root, env
 
+        if kind == "promote_gated":
+            source_value = args.get("source")
+            destination_value = args.get("destination")
+            if not isinstance(source_value, str) or not source_value.strip():
+                raise ValueError("A candidate checkpoint relative path is required")
+            if not isinstance(destination_value, str) or not destination_value.strip():
+                raise ValueError("A destination checkpoint relative path is required")
+            source = (self.s.models_dir / source_value).resolve()
+            destination = (self.s.models_dir / destination_value).resolve()
+            self._ensure_under(source, self.s.models_dir)
+            self._ensure_under(destination, self.s.models_dir)
+            if not source.is_file() or source.suffix != ".pth":
+                raise ValueError(f"Candidate checkpoint must be an existing .pth file: {source}")
+            if destination.suffix != ".pth":
+                raise ValueError("Promotion destination must end with .pth")
+
+            paired = self._resolve_user_path(args.get("paired_results"), must_exist=True)
+            if paired.suffix.casefold() not in {".jsonl", ".json"}:
+                raise ValueError("Paired evaluation results must be JSON/JSONL")
+            akagi_root = self._resolve_user_path(args.get("akagi_root"), must_exist=True)
+            mode = str(args.get("mode", "3p")).casefold()
+            if mode not in {"3p", "4p"}:
+                raise ValueError("Promotion mode must be 3p or 4p")
+            profile = str(args.get("profile", "")).strip()
+            if not profile:
+                raise ValueError("A rating profile is required")
+
+            report_dir = self.s.runs_dir / "promotion"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            report = report_dir / f"{source.stem}-{mode}-{profile}.json"
+            script = self.s.project_root / "scripts" / "promote_if_passed.py"
+            cmd = [
+                py,
+                str(script),
+                "--candidate",
+                str(source),
+                "--destination",
+                str(destination),
+                "--paired-results",
+                str(paired),
+                "--profile",
+                profile,
+                "--mode",
+                mode,
+                "--akagi-root",
+                str(akagi_root),
+                "--report",
+                str(report),
+            ]
+            return cmd, self.s.project_root, env
+
         if kind == "convert":
             source = self._resolve_user_path(args.get("source"), must_exist=True)
             output = self._resolve_user_path(args.get("output"), must_exist=False)
@@ -192,17 +243,6 @@ class MortalController:
                 "mtime": st.st_mtime,
             })
         return sorted(rows, key=lambda x: x["mtime"], reverse=True)
-
-    def promote_checkpoint(self, source: str, destination: str = "best_sanma.pth") -> dict[str, str]:
-        src = (self.s.models_dir / source).resolve()
-        dst = (self.s.models_dir / destination).resolve()
-        self._ensure_under(src, self.s.models_dir)
-        self._ensure_under(dst, self.s.models_dir)
-        if not src.exists() or src.suffix != ".pth" or dst.suffix != ".pth":
-            raise ValueError("Checkpoint must be an existing .pth file")
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        return {"source": str(src), "destination": str(dst)}
 
     def _resolve_user_path(self, value: Any, must_exist: bool) -> Path:
         if not isinstance(value, str) or not value.strip():
