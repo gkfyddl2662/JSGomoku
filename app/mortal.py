@@ -92,6 +92,124 @@ class MortalController:
             self._require_runtime_ready_for_command(runtime, kind)
             return table[kind], md, env
 
+        if kind == "train_ablation":
+            self._require_runtime_ready_for_command(runtime, "train")
+            variant = str(args.get("variant", "rogs")).casefold().strip()
+            if variant not in {"mortal", "rogs", "rogs-global"}:
+                raise ValueError("Training ablation variant must be mortal, rogs, or rogs-global")
+            seed = int(args.get("seed", 0x9017))
+            if seed < 0:
+                raise ValueError("Training ablation seed must be non-negative")
+            script = self.s.project_root / "scripts" / "run_training_ablation.py"
+            if not script.is_file():
+                raise ValueError(f"Training ablation runner is missing: {script}")
+            cmd = [
+                py,
+                str(script),
+                "--runtime-root",
+                str(runtime.root),
+                "--mode",
+                mode,
+                "--variant",
+                variant,
+                "--seed",
+                str(seed),
+            ]
+            if bool(args.get("fresh", False)):
+                cmd.append("--fresh")
+            elif bool(args.get("resume", False)):
+                cmd.append("--resume")
+            if bool(args.get("prepare_only", False)):
+                cmd.append("--prepare-only")
+            return cmd, self.s.project_root, env
+
+        if kind == "model_compare":
+            self._require_runtime_ready_for_command(runtime, "evaluate")
+            candidate_value = args.get("candidate")
+            baseline_value = args.get("baseline")
+            if not isinstance(candidate_value, str) or not candidate_value.strip():
+                raise ValueError("A candidate checkpoint relative path is required")
+            if not isinstance(baseline_value, str) or not baseline_value.strip():
+                raise ValueError("A baseline checkpoint relative path is required")
+            candidate = (runtime.models_dir / candidate_value).resolve()
+            baseline = (runtime.models_dir / baseline_value).resolve()
+            self._ensure_under(candidate, runtime.models_dir)
+            self._ensure_under(baseline, runtime.models_dir)
+            if not candidate.is_file() or candidate.suffix.casefold() != ".pth":
+                raise ValueError(f"Candidate checkpoint must be an existing .pth file: {candidate}")
+            if not baseline.is_file() or baseline.suffix.casefold() != ".pth":
+                raise ValueError(f"Baseline checkpoint must be an existing .pth file: {baseline}")
+            if candidate == baseline:
+                raise ValueError("Candidate and baseline checkpoints must be different files")
+
+            seed_start = int(args.get("seed_start", 10000))
+            seed_count = int(args.get("seed_count", 100))
+            if seed_start < 0:
+                raise ValueError("Comparison seed_start must be non-negative")
+            if seed_count <= 0:
+                raise ValueError("Comparison seed_count must be positive")
+            seed_key_raw = args.get("seed_key", "0xD5DFAA4CEF265CD7")
+            seed_key = int(str(seed_key_raw), 0) if isinstance(seed_key_raw, str) else int(seed_key_raw)
+            if seed_key < 0:
+                raise ValueError("Comparison seed_key must be non-negative")
+
+            script = self.s.project_root / "scripts" / "run_model_comparison.py"
+            if not script.is_file():
+                raise ValueError(f"Model comparison runner is missing: {script}")
+            cmd = [
+                py,
+                str(script),
+                "--runtime-root",
+                str(runtime.root),
+                "--mode",
+                mode,
+                "--candidate",
+                str(candidate.relative_to(runtime.models_dir)),
+                "--baseline",
+                str(baseline.relative_to(runtime.models_dir)),
+                "--seed-start",
+                str(seed_start),
+                "--seed-count",
+                str(seed_count),
+                "--seed-key",
+                hex(seed_key),
+            ]
+            name = str(args.get("name", "")).strip()
+            if name:
+                cmd.extend(["--name", name])
+            candidate_name = str(args.get("candidate_name", "")).strip()
+            if candidate_name:
+                cmd.extend(["--candidate-name", candidate_name])
+            baseline_name = str(args.get("baseline_name", "")).strip()
+            if baseline_name:
+                cmd.extend(["--baseline-name", baseline_name])
+            device = str(args.get("device", "")).strip()
+            if device:
+                cmd.extend(["--device", device])
+            profile = str(args.get("profile", "")).strip()
+            if profile:
+                cmd.extend(["--profile", profile])
+            room = str(args.get("room", "")).strip()
+            if room:
+                cmd.extend(["--room", room])
+            rank = str(args.get("rank", "")).strip()
+            if rank:
+                cmd.extend(["--rank", rank])
+            round_kind = str(args.get("round_kind", "")).strip()
+            if round_kind:
+                cmd.extend(["--round-kind", round_kind])
+            if args.get("enable_compile") is True:
+                cmd.append("--compile")
+            elif args.get("enable_compile") is False:
+                cmd.append("--no-compile")
+            if args.get("enable_amp") is True:
+                cmd.append("--amp")
+            elif args.get("enable_amp") is False:
+                cmd.append("--no-amp")
+            if bool(args.get("fresh", False)):
+                cmd.append("--fresh")
+            return cmd, self.s.project_root, env
+
         if kind == "patch":
             if runtime.unified:
                 script = self.s.project_root / "scripts" / "patch_mortal_unified_all.py"
