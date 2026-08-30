@@ -35,7 +35,7 @@
         <div class="panel-title"><span>Mortal</span><strong>Environment</strong></div>
         <div id="setupChecks" class="check-grid"></div>
         <div class="button-row">
-          <button onclick="startJob('patch')">RTX 5080 패치 적용</button>
+          <button onclick="startJob('patch')">RTX 5080 + ROGS 패치</button>
           <button class="secondary" onclick="applyPreset()">5080 프리셋 적용</button>
         </div>
       </article>
@@ -108,7 +108,29 @@
       <article class="panel">
         <div class="panel-title"><span>CHECKPOINTS</span><strong>모델 관리</strong></div>
         <div id="checkpoints" class="list"></div>
+        <div class="subtle top-gap">체크포인트는 직접 Best로 복사되지 않습니다. 후보를 선택한 뒤 아래 Promotion Gate를 통과해야 합니다.</div>
       </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span>PROMOTION</span><strong>Rating + Akagi ABI Gate</strong></div>
+      <div class="form-grid">
+        <label>Candidate (models 기준 상대경로)<input id="promotionCandidate" placeholder="rogs_3p/candidate.pth" /></label>
+        <label>Mode
+          <select id="promotionMode" onchange="syncPromotionDestination()">
+            <option value="3p">3P · mortal3p.pth</option>
+            <option value="4p">4P · mortal.pth</option>
+          </select>
+        </label>
+        <label>Destination (models 기준 상대경로)<input id="promotionDestination" value="rogs_3p/best_mortal3p.pth" /></label>
+        <label>Rating profile<input id="promotionProfile" value="mahjongsoul" /></label>
+        <label>Paired 평가 JSONL<input id="promotionResults" placeholder="C:\\Mortal_ROGS\\runs\\eval\\paired.jsonl" /></label>
+        <label>Akagi-NG 루트<input id="promotionAkagiRoot" value="C:\\Akagi-NG" /></label>
+      </div>
+      <div class="button-row top-gap">
+        <button onclick="runGatedPromotion()">통계 + Akagi 검사 후 승격</button>
+      </div>
+      <div class="subtle">승격 순서: paired Rating EV/평균순위/라스율 bootstrap → Akagi-NG pinned source SHA → Mortal v4 strict state_dict → 44/46 action inference → 원자적 Best 교체.</div>
     </section>
 
     <section class="panel">
