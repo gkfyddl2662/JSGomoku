@@ -1,6 +1,7 @@
 param(
-    [string]$Mortal3PRoot = "$PSScriptRoot\..\..\Mortal_Sanma",
-    [string]$Mortal4PRoot = "$PSScriptRoot\..\..\Mortal_4P",
+    [string]$RuntimeRoot = "$PSScriptRoot\..\..\Mortal_ROGS_Runtime",
+    [string]$Mortal3PRoot = "",
+    [string]$Mortal4PRoot = "",
     [switch]$SkipCompile,
     [switch]$SkipTrainingStep,
     [switch]$SkipWebUI
@@ -8,9 +9,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+$RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
+if (-not $Mortal3PRoot) { $Mortal3PRoot = Join-Path $RuntimeRoot "3p" }
+if (-not $Mortal4PRoot) { $Mortal4PRoot = Join-Path $RuntimeRoot "4p" }
 $Mortal3PRoot = [System.IO.Path]::GetFullPath($Mortal3PRoot)
 $Mortal4PRoot = [System.IO.Path]::GetFullPath($Mortal4PRoot)
-$Py3 = "$ProjectRoot\.venv\Scripts\python.exe"
+$Py3 = "$Mortal3PRoot\.venv\Scripts\python.exe"
 $Py4 = "$Mortal4PRoot\.venv\Scripts\python.exe"
 $Probe = "$ProjectRoot\scripts\smoke_runtime.py"
 
@@ -23,10 +27,10 @@ function Assert-File([string]$Path, [string]$Label) {
 function Invoke-RuntimeSmoke(
     [string]$Mode,
     [string]$Python,
-    [string]$RuntimeRoot
+    [string]$RuntimePath
 ) {
     Assert-File $Python "$Mode Python"
-    $probeArgs = @($Probe, "--mode", $Mode, "--runtime-root", $RuntimeRoot)
+    $probeArgs = @($Probe, "--mode", $Mode, "--runtime-root", $RuntimePath)
     if ($SkipCompile) { $probeArgs += "--skip-compile" }
     if ($SkipTrainingStep) { $probeArgs += "--skip-training-step" }
 
@@ -38,13 +42,15 @@ function Invoke-RuntimeSmoke(
     }
 }
 
+Write-Host "Unified runtime root: $RuntimeRoot"
 Assert-File $Probe "Runtime smoke probe"
-Invoke-RuntimeSmoke -Mode "3p" -Python $Py3 -RuntimeRoot $Mortal3PRoot
-Invoke-RuntimeSmoke -Mode "4p" -Python $Py4 -RuntimeRoot $Mortal4PRoot
+Invoke-RuntimeSmoke -Mode "3p" -Python $Py3 -RuntimePath $Mortal3PRoot
+Invoke-RuntimeSmoke -Mode "4p" -Python $Py4 -RuntimePath $Mortal4PRoot
 
 if (-not $SkipWebUI) {
     Write-Host ""
     Write-Host "=== Control Center API routing smoke ===" -ForegroundColor Cyan
+    $env:MORTAL_RUNTIME_ROOT = $RuntimeRoot
     $env:MORTAL_3P_ROOT = $Mortal3PRoot
     $env:MORTAL_4P_ROOT = $Mortal4PRoot
     $env:PYTHONPATH = $ProjectRoot
