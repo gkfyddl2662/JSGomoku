@@ -50,6 +50,7 @@ jobs:
           python scripts/patch_libriichi_unified_stage3e_fixed.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3f.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_arena_stage4a.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_arena_stage4b.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
@@ -89,10 +90,13 @@ jobs:
           grep -q "nukidora_ron_chance" /tmp/mortal-unified/libriichi/src/state/player_state.rs
           ! grep -q "nukidora state transition is not installed yet" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4A" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4B" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "pub num_players: u8" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "let live_tiles = if num_players == 3 { 55 } else { 70 }" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "self.tsumo_actor = (actor + 1) % self.num_players" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "Event::Nukidora { actor, .. }" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "fn calc_tsumo_deltas" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          ! grep -q "3P arena Hora scoring requires unified arena Stage 4B" /tmp/mortal-unified/libriichi/src/arena/board.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
