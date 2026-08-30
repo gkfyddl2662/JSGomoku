@@ -69,17 +69,24 @@ def compose_rogs_objective(
     behavior_cloning_loss: Tensor | None = None,
     cql_loss: Tensor | None = None,
     teacher_temperature: float = 1.5,
-    regret_clip: float = 12.0,
+    regret_clip: float | None = 12.0,
 ) -> ROGSObjectiveResult:
     """Compose one optimizer-ready scalar without changing Mortal parameters."""
 
+    if legal_mask.dtype != torch.bool:
+        legal_mask = legal_mask.to(torch.bool)
+    if not legal_mask.any(dim=-1).all():
+        raise ValueError("Every ROGS sample must have at least one legal action")
+
     components: dict[str, Tensor] = {}
     components["value"] = value_loss(value_pred, value_target)
+    target = regret_target
+    if regret_clip is not None:
+        target = target.clamp(-float(regret_clip), float(regret_clip))
     components["regret"] = regret_regression_loss(
         advantage,
         action_index,
-        regret_target,
-        clip=regret_clip,
+        target,
     )
 
     if oracle_q is not None and weights.oracle != 0:
@@ -101,8 +108,11 @@ def compose_rogs_objective(
     if cql_loss is not None and weights.cql != 0:
         components["cql"] = cql_loss
 
-    # Entropy is a bonus, therefore it is subtracted from the minimization loss.
-    components["entropy"] = entropy_bonus(student_q, legal_mask)
+    # Entropy expects a probability distribution, never raw Q values. Illegal
+    # actions stay exactly zero after masking to avoid NaNs from -inf logits.
+    policy_logits = student_q.masked_fill(~legal_mask, -torch.inf)
+    policy = torch.softmax(policy_logits, dim=-1)
+    components["entropy"] = entropy_bonus(policy, legal_mask)
 
     total = components["value"] * weights.value
     total = total + components["regret"] * weights.regret
