@@ -13,6 +13,10 @@ if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 $CanonicalSha = "0cff2b52982be5b1163aa9a62fb01f03ce91e0d2"
 $RepoUrl = "https://github.com/Equim-chan/Mortal.git"
+$ManagedMarkerName = ".mortal-rogs-unified-runtime.json"
+$ManagedMarker = Join-Path $InstallRoot $ManagedMarkerName
+$ManagedResetRequired = $false
+$ReuseManagedPatchedTree = $false
 
 function Refresh-RustPath {
     $cargoBin = Join-Path $HOME ".cargo\bin"
@@ -57,6 +61,34 @@ function Ensure-RustToolchain {
     }
 }
 
+function Read-ManagedMarker {
+    if (-not (Test-Path $ManagedMarker)) { return $null }
+    try {
+        $marker = Get-Content -LiteralPath $ManagedMarker -Raw | ConvertFrom-Json
+    } catch {
+        throw "Managed runtime marker is unreadable: $ManagedMarker"
+    }
+    if ([int]$marker.schema -ne 1) {
+        throw "Unsupported managed runtime marker schema in $ManagedMarker"
+    }
+    if ([string]$marker.canonical_sha -ne $CanonicalSha) {
+        throw "Managed runtime marker canonical SHA mismatch. Expected $CanonicalSha."
+    }
+    return $marker
+}
+
+function Write-ManagedMarker {
+    $payload = [ordered]@{
+        schema = 1
+        canonical_sha = $CanonicalSha
+        repo_url = $RepoUrl
+        project_root = $ProjectRoot
+        updated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+    } | ConvertTo-Json
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($ManagedMarker, $payload + [Environment]::NewLine, $utf8NoBom)
+}
+
 foreach ($cmd in @("git", "python")) {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
         throw "Required command not found: $cmd"
@@ -72,19 +104,44 @@ if (-not (Test-Path $InstallRoot)) {
     if (-not (Test-Path (Join-Path $InstallRoot ".git"))) {
         throw "InstallRoot exists but is not a Git clone: $InstallRoot"
     }
-    $dirty = & git -C $InstallRoot status --porcelain
+    $dirty = @(& git -C $InstallRoot status --porcelain)
     if ($LASTEXITCODE -ne 0) { throw "git status failed for $InstallRoot" }
-    if ($dirty) {
-        throw "Unified runtime clone has local changes. Preserve them or use a fresh InstallRoot before bootstrap."
+    if ($dirty.Count -gt 0) {
+        $marker = Read-ManagedMarker
+        if ($null -eq $marker) {
+            throw "Unified runtime clone has local changes but no managed marker. Preserve them or use a fresh InstallRoot before bootstrap."
+        }
+        if ($SkipPatch) {
+            $ReuseManagedPatchedTree = $true
+            Write-Host "[1/8] Reusing managed patched Mortal tree (-SkipPatch): $InstallRoot"
+        } else {
+            $ManagedResetRequired = $true
+            Write-Host "[1/8] Managed runtime detected; canonical source will be refreshed and patches reapplied."
+        }
+    } else {
+        Write-Host "[1/8] Reusing clean Mortal clone: $InstallRoot"
     }
-    Write-Host "[1/8] Reusing clean Mortal clone: $InstallRoot"
 }
 
 Write-Host "[2/8] Pinning canonical Mortal $CanonicalSha..."
 & git -C $InstallRoot fetch origin
 if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
-& git -C $InstallRoot checkout --detach $CanonicalSha
-if ($LASTEXITCODE -ne 0) { throw "git checkout $CanonicalSha failed" }
+
+if ($ReuseManagedPatchedTree) {
+    $actualSha = (& git -C $InstallRoot rev-parse HEAD).Trim()
+    if ($actualSha -ne $CanonicalSha) {
+        throw "Managed patched runtime HEAD mismatch: expected $CanonicalSha, got $actualSha. Rerun without -SkipPatch to refresh it."
+    }
+} elseif ($ManagedResetRequired) {
+    & git -C $InstallRoot reset --hard $CanonicalSha
+    if ($LASTEXITCODE -ne 0) { throw "git reset --hard $CanonicalSha failed" }
+    & git -C $InstallRoot clean -fd -e ".venv/" -e "runtime/" -e $ManagedMarkerName
+    if ($LASTEXITCODE -ne 0) { throw "git clean of managed runtime failed" }
+} else {
+    & git -C $InstallRoot checkout --detach $CanonicalSha
+    if ($LASTEXITCODE -ne 0) { throw "git checkout $CanonicalSha failed" }
+}
+
 $actualSha = (& git -C $InstallRoot rev-parse HEAD).Trim()
 if ($actualSha -ne $CanonicalSha) { throw "Canonical SHA mismatch: $actualSha" }
 
@@ -280,8 +337,11 @@ print('MORTAL_UNIFIED_RUNTIME_OK')
 & $Py -c $VerifyScript
 if ($LASTEXITCODE -ne 0) { throw "Unified runtime ABI verification failed" }
 
+Write-ManagedMarker
+
 Write-Host ""
 Write-Host "MORTAL_UNIFIED_BOOTSTRAP_OK root=$InstallRoot python=$Py"
+Write-Host "Managed marker: $ManagedMarker"
 Write-Host "3P config: $InstallRoot\mortal\config.3p.toml"
 Write-Host "4P config: $InstallRoot\mortal\config.4p.toml"
 Write-Host "One Python env: $VenvRoot"
