@@ -71,8 +71,11 @@ jobs:
           foreach ($pattern in @(
             'smoke_unified_runtime\.py',
             'smoke_unified_gameplay\.py',
+            'smoke_unified_training\.py',
             'smoke_unified_evaluator\.py',
+            'SkipRealDataTraining',
             'SkipEvaluator',
+            'require-trained-checkpoints',
             'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
             'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK',
             'triton-windows>=3\.6,<3\.7',
@@ -111,8 +114,17 @@ jobs:
           if (-not (Select-String -Path scripts/patch_mortal_unified_eval_stage8c.py -Pattern 'action_space=ACTION_SPACE' -Quiet)) {
             throw 'Unified 4P evaluator must pass the explicit action-space ABI to MortalEngine'
           }
-          if (-not (Select-String -Path scripts/smoke_unified_evaluator.py -Pattern 'MORTAL_UNIFIED_EVALUATOR_E2E_OK' -Quiet)) {
-            throw 'Missing strict checkpoint/evaluator E2E success marker'
+          if (-not (Select-String -Path scripts/smoke_unified_training.py -Pattern 'MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK' -Quiet)) {
+            throw 'Missing real-data mini-training E2E success marker'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_training.py -Pattern 'GameplayLoader' -Quiet)) {
+            throw 'Real-data training smoke must consume native GameplayLoader data'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_evaluator.py -Pattern 'MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK' -Quiet)) {
+            throw 'Evaluator smoke must expose trained-checkpoint E2E success marker'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_evaluator.py -Pattern 'require-trained-checkpoints' -Quiet)) {
+            throw 'Evaluator smoke must support requiring real-data trained checkpoints'
           }
           if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
             throw 'Missing Python unified runtime smoke success marker'
