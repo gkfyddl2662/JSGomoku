@@ -64,10 +64,12 @@ def _runtime_model_module(mortal_dir: Path) -> ModuleType:
 def resolve_checkpoint_path(runtime_root: Path, mode: str, explicit: Path | None = None) -> Path:
     root = runtime_root.expanduser().resolve()
     contract = contract_for(mode)
+    models_dir = root / "runtime" / contract.mode / "models"
+
     if explicit is not None:
         candidate = explicit.expanduser()
         if not candidate.is_absolute():
-            candidate = root / "runtime" / contract.mode / "models" / candidate
+            candidate = models_dir / candidate
         return candidate.resolve()
 
     config_path = root / "mortal" / f"config.{contract.mode}.toml"
@@ -76,9 +78,12 @@ def resolve_checkpoint_path(runtime_root: Path, mode: str, explicit: Path | None
             cfg = tomllib.load(f)
         configured = cfg.get("control", {}).get("best_state_file")
         if isinstance(configured, str) and configured.strip():
-            return Path(configured).expanduser().resolve()
+            candidate = Path(configured).expanduser()
+            if not candidate.is_absolute():
+                candidate = models_dir / candidate
+            return candidate.resolve()
 
-    return (root / "runtime" / contract.mode / "models" / "best_mortal.pth").resolve()
+    return (models_dir / "best_mortal.pth").resolve()
 
 
 def _validate_checkpoint_config(cfg: dict[str, Any], contract: ModeContract) -> tuple[int, int]:
@@ -113,6 +118,7 @@ class LoadedModel:
     def __init__(self, mode: str, model_path: Path, mortal_dir: Path, device: str) -> None:
         self.contract = contract_for(mode)
         self.path = model_path.resolve()
+        self._infer_lock = threading.RLock()
 
         import torch
 
@@ -152,7 +158,7 @@ class LoadedModel:
         self.config = cfg
 
         # Probe the exact endpoint ABI before publishing this model into the slot.
-        with torch.inference_mode():
+        with self._infer_lock, torch.inference_mode():
             obs = torch.zeros((1, self.contract.obs_channels, 34), dtype=torch.float32, device=self.device)
             mask = torch.ones((1, self.contract.action_space), dtype=torch.bool, device=self.device)
             q = self.dqn(self.brain(obs), mask)
@@ -178,7 +184,9 @@ class LoadedModel:
         if not bool(masks_t.any(dim=1).all()):
             raise ValueError("Every inference row must contain at least one legal action")
 
-        with torch.inference_mode():
+        # Uvicorn normally serializes this synchronous GPU work in one event loop,
+        # but keep the model itself safe when embedded in tests or multi-threaded hosts.
+        with self._infer_lock, torch.inference_mode():
             q = self.dqn(self.brain(obs_t), masks_t)
         if tuple(q.shape) != (obs_t.shape[0], self.contract.action_space):
             raise RuntimeError(f"Unexpected Q output shape: {tuple(q.shape)}")
@@ -217,6 +225,7 @@ class ModelSlot:
     def get(self) -> LoadedModel:
         with self._lock:
             if not self.path.is_file():
+                self._last_error = f"FileNotFoundError: {self.contract.mode} API model not found: {self.path}"
                 if self._loaded is not None:
                     return self._loaded
                 raise FileNotFoundError(f"{self.contract.mode} API model not found: {self.path}")
@@ -280,8 +289,13 @@ class InferenceService:
         return self.slots[contract.mode].get().infer(obs, masks)
 
     def health(self) -> dict[str, Any]:
+        models = {mode: slot.status() for mode, slot in self.slots.items()}
+        degraded = any((not info["exists"]) or info["last_error"] is not None for info in models.values())
         return {
             "ok": True,
+            "degraded": degraded,
+            "protocol": "akagiot-v1",
             "runtime_root": str(self.runtime_root),
-            "models": {mode: slot.status() for mode, slot in self.slots.items()},
+            "endpoints": {"3p": "/react_batch_3p", "4p": "/react_batch"},
+            "models": models,
         }
