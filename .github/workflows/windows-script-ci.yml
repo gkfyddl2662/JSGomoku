@@ -25,7 +25,8 @@ jobs:
           foreach ($path in @(
             'scripts/windows_msvc.ps1',
             'scripts/bootstrap_unified_runtime.ps1',
-            'scripts/smoke_unified_windows.ps1'
+            'scripts/smoke_unified_windows.ps1',
+            'scripts/setup_and_smoke_unified_windows.ps1'
           )) {
             $tokens = $null
             $errors = $null
@@ -81,4 +82,18 @@ jobs:
           }
           if (-not (Select-String -Path static/app.js -Pattern 'install_rust_if_missing:true' -Quiet)) {
             throw 'Web UI bootstrap must request one-click native prerequisite installation'
+          }
+
+      - name: Verify one-command setup and smoke launcher
+        shell: pwsh
+        run: |
+          foreach ($pattern in @(
+            'bootstrap_unified_runtime\.ps1',
+            'smoke_unified_windows\.ps1',
+            'InstallRustIfMissing',
+            'MORTAL_ROGS_UNIFIED_WINDOWS_READY'
+          )) {
+            if (-not (Select-String -Path scripts/setup_and_smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing one-command launcher contract: $pattern"
+            }
           }
