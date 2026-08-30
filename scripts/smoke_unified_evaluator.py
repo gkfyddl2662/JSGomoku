@@ -18,6 +18,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Strict-save/load and evaluator E2E for unified 3P/4P Mortal v4 checkpoints.")
     ap.add_argument("--runtime-root", type=Path, required=True)
     ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--trained-checkpoint-root", type=Path, default=None)
+    ap.add_argument("--require-trained-checkpoints", action="store_true")
     args = ap.parse_args()
 
     root = args.runtime_root.expanduser().resolve()
@@ -40,6 +42,11 @@ def main() -> int:
     if smoke_root.exists():
         shutil.rmtree(smoke_root)
     smoke_root.mkdir(parents=True, exist_ok=True)
+    trained_root = (
+        args.trained_checkpoint_root.expanduser().resolve()
+        if args.trained_checkpoint_root is not None
+        else root / "runtime" / "smoke-training"
+    )
     results: dict[str, object] = {}
 
     example_cfg = mortal_dir / "config.example.toml"
@@ -47,31 +54,43 @@ def main() -> int:
         fail(f"missing Mortal example config: {example_cfg}")
 
     for mode, c in contracts.items():
-        source_cfg = mortal_dir / f"config.{mode}.toml"
-        cfg_source = source_cfg if source_cfg.is_file() else example_cfg
-        cfg = copy.deepcopy(toml.load(cfg_source))
-        cfg.setdefault("control", {})["version"] = 4
-        cfg["control"]["enable_compile"] = False
-        cfg.setdefault("game", {})["mode"] = mode
-        cfg["game"]["num_players"] = 3 if mode == "3p" else 4
-        cfg["game"]["action_space"] = c["actions"]
-        cfg["game"]["obs_channels"] = c["obs"]
-        cfg.setdefault("resnet", {})["conv_channels"] = 16
-        cfg["resnet"]["num_blocks"] = 1
+        trained_checkpoint = trained_root / f"smoke-trained-{mode}.pth"
+        if trained_checkpoint.is_file():
+            checkpoint = trained_checkpoint
+            state = torch.load(checkpoint, weights_only=True, map_location="cpu")
+            checkpoint_source = "real-data-mini-training"
+            if "smoke_training" not in state:
+                fail(f"{mode} trained checkpoint is missing smoke_training metadata")
+        else:
+            if args.require_trained_checkpoints:
+                fail(f"required trained checkpoint is missing: {trained_checkpoint}")
+            source_cfg = mortal_dir / f"config.{mode}.toml"
+            cfg_source = source_cfg if source_cfg.is_file() else example_cfg
+            cfg = copy.deepcopy(toml.load(cfg_source))
+            cfg.setdefault("control", {})["version"] = 4
+            cfg["control"]["enable_compile"] = False
+            cfg.setdefault("game", {})["mode"] = mode
+            cfg["game"]["num_players"] = 3 if mode == "3p" else 4
+            cfg["game"]["action_space"] = c["actions"]
+            cfg["game"]["obs_channels"] = c["obs"]
+            cfg.setdefault("resnet", {})["conv_channels"] = 16
+            cfg["resnet"]["num_blocks"] = 1
 
-        brain = Brain(version=4, conv_channels=16, num_blocks=1, obs_channels=c["obs"]).eval()
-        dqn = DQN(version=4, action_space=c["actions"]).eval()
-        checkpoint = smoke_root / f"smoke-{mode}.pth"
-        torch.save(
-            {
-                "config": cfg,
-                "mortal": brain.state_dict(),
-                "current_dqn": dqn.state_dict(),
-            },
-            checkpoint,
-        )
+            brain = Brain(version=4, conv_channels=16, num_blocks=1, obs_channels=c["obs"]).eval()
+            dqn = DQN(version=4, action_space=c["actions"]).eval()
+            checkpoint = smoke_root / f"smoke-{mode}.pth"
+            torch.save(
+                {
+                    "config": cfg,
+                    "mortal": brain.state_dict(),
+                    "current_dqn": dqn.state_dict(),
+                },
+                checkpoint,
+            )
+            state = torch.load(checkpoint, weights_only=True, map_location="cpu")
+            checkpoint_source = "generated-fallback"
+            del brain, dqn
 
-        state = torch.load(checkpoint, weights_only=True, map_location="cpu")
         state_cfg = state["config"]
         if int(state_cfg["control"]["version"]) != 4:
             fail(f"{mode} checkpoint version is not v4")
@@ -81,11 +100,21 @@ def main() -> int:
             fail(f"{mode} checkpoint action-space mismatch")
         if int(state_cfg["game"]["obs_channels"]) != c["obs"]:
             fail(f"{mode} checkpoint obs-channel mismatch")
-        brain2 = Brain(version=4, conv_channels=16, num_blocks=1, obs_channels=c["obs"]).eval()
+
+        conv_channels = int(state_cfg["resnet"]["conv_channels"])
+        num_blocks = int(state_cfg["resnet"]["num_blocks"])
+        brain2 = Brain(
+            version=4,
+            conv_channels=conv_channels,
+            num_blocks=num_blocks,
+            obs_channels=c["obs"],
+        ).eval()
         dqn2 = DQN(version=4, action_space=c["actions"]).eval()
         brain2.load_state_dict(state["mortal"], strict=True)
         dqn2.load_state_dict(state["current_dqn"], strict=True)
 
+        cfg = copy.deepcopy(state_cfg)
+        cfg.setdefault("control", {})["enable_compile"] = False
         section = cfg.setdefault(c["section"], {})
         section["games_per_iter"] = c["games"]
         section["iters"] = 1
@@ -129,16 +158,19 @@ def main() -> int:
 
         results[mode] = {
             "checkpoint": str(checkpoint),
+            "checkpoint_source": checkpoint_source,
             "strict_load": True,
             "evaluator": c["evaluator"],
             "games": c["games"],
             "logs": len(logs),
             "stdout_tail": proc.stdout.strip().splitlines()[-3:],
         }
-        del brain, dqn, brain2, dqn2, state
+        del brain2, dqn2, state
 
     print("MORTAL_UNIFIED_CHECKPOINT_EVAL_E2E_OK")
     print("MORTAL_UNIFIED_EVALUATOR_E2E_OK")
+    if args.require_trained_checkpoints:
+        print("MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK")
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
 
