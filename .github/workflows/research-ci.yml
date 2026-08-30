@@ -31,6 +31,7 @@ jobs:
         run: |
           pytest -q \
             tests/test_configuration.py \
+            tests/test_dual_runtime.py \
             tests/test_rating.py \
             tests/test_evaluation_backends.py \
             tests/test_evaluation_gating.py \
@@ -58,7 +59,7 @@ jobs:
             tests/test_objective.py \
             tests/test_mortal_hook.py
 
-  mortal-patch:
+  mortal-sanma-patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +78,30 @@ jobs:
           grep -q "enable_behavior_cloning=not online" /tmp/mortal-sanma/Mortal/mortal/train.py
           grep -q "loss/rogs_total" /tmp/mortal-sanma/Mortal/mortal/train.py
           git -C /tmp/mortal-sanma diff --check
+
+  mortal-yonma-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Clone stock Mortal 4P upstream
+        run: git clone --depth 1 https://github.com/Equim-chan/Mortal.git /tmp/mortal-4p
+      - name: Apply RTX 5080 and ROGS patch pipeline
+        run: python scripts/patch_mortal_4p.py --root /tmp/mortal-4p
+      - name: Compile patched 4P trainer
+        run: |
+          python -m py_compile /tmp/mortal-4p/mortal/train.py
+          python -m py_compile /tmp/mortal-4p/mortal/train_grp.py
+          python -m py_compile /tmp/mortal-4p/mortal/model.py
+      - name: Verify 4P ABI and ROGS postconditions
+        run: |
+          grep -q "compute_mortal_rogs_batch" /tmp/mortal-4p/mortal/train.py
+          grep -q "enable_behavior_cloning=not online" /tmp/mortal-4p/mortal/train.py
+          grep -q "loss/rogs_total" /tmp/mortal-4p/mortal/train.py
+          grep -q "version = config\['control'\]\['version'\]" /tmp/mortal-4p/mortal/train.py
+          git -C /tmp/mortal-4p diff --check
 
   mjx-sanma-patch:
     runs-on: ubuntu-latest
