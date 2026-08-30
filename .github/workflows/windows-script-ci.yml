@@ -70,6 +70,9 @@ jobs:
           }
           foreach ($pattern in @(
             'smoke_unified_runtime\.py',
+            'smoke_unified_gameplay\.py',
+            'smoke_unified_evaluator\.py',
+            'SkipEvaluator',
             'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
             'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK',
             'triton-windows>=3\.6,<3\.7',
@@ -99,6 +102,9 @@ jobs:
           }
           if (-not (Select-String -Path scripts/patch_libriichi_unified_dataset_stage8b.py -Pattern 'UNIFIED_GAMEPLAY_ABI' -Quiet)) {
             throw 'Unified dataset Stage 8B must expose an installed gameplay ABI marker'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_evaluator.py -Pattern 'MORTAL_UNIFIED_EVALUATOR_E2E_OK' -Quiet)) {
+            throw 'Missing strict checkpoint/evaluator E2E success marker'
           }
           if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
             throw 'Missing Python unified runtime smoke success marker'
