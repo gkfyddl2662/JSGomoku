@@ -56,12 +56,14 @@ def test_vanilla_akagi_client_smoke_is_read_only_and_resilient() -> None:
 def test_managed_inference_api_preserves_akagiot_compatibility() -> None:
     source = (PROJECT_ROOT / "scripts" / "serve_akagi_api.py").read_text(encoding="utf-8")
     serving = (PROJECT_ROOT / "serving" / "resilient.py").read_text(encoding="utf-8")
+    coordination = (PROJECT_ROOT / "serving" / "coordination.py").read_text(encoding="utf-8")
 
     assert '@app.post("/react_batch")' in source
     assert '@app.post("/react_batch_3p")' in source
     assert '@app.get("/api/inference/health")' in source
     assert '@app.get("/api/inference/models")' in source
     assert '@app.get("/api/inference/metrics")' in source
+    assert '@app.post("/api/inference/drain")' in source
     assert '@app.post("/api/inference/reload")' in source
     assert '@app.post("/api/inference/{mode}")' in source
     assert '"latency_ms"' in source
@@ -72,13 +74,19 @@ def test_managed_inference_api_preserves_akagiot_compatibility() -> None:
     assert 'default=float(os.getenv("MORTAL_INFERENCE_REQUEST_DEADLINE_MS", "3500"))' in source
     assert "run_in_threadpool(service.infer" in source
     assert "InferenceBusyError" in source
+    assert "InferenceDrainingError" in source
     assert "DynamicBatcher" in serving
     assert "ModeTelemetry" in serving
-    assert "mortal-rogs-model-watcher-{mode}" in serving
+    assert "DeviceExecutionCoordinator" in coordination
+    assert "RequestLifecycle" in coordination
+    assert '"policy": "fair-fifo"' in coordination
+    assert "max_device_executions" in source
+    assert "drain_timeout_ms" in source
 
 
 def test_control_center_can_manage_reload_telemetry_and_scheduler_without_exposing_model_ownership_to_akagi() -> None:
     backend = (PROJECT_ROOT / "app" / "main.py").read_text(encoding="utf-8")
+    jobs = (PROJECT_ROOT / "app" / "jobs.py").read_text(encoding="utf-8")
     page = (PROJECT_ROOT / "static" / "index.html").read_text(encoding="utf-8")
     ui = (PROJECT_ROOT / "static" / "inference.js").read_text(encoding="utf-8")
 
@@ -118,6 +126,19 @@ def test_control_center_can_manage_reload_telemetry_and_scheduler_without_exposi
     assert "body.request_deadline_ms >= 4000" in ui
     assert "window.startInferenceApi = startInferenceApi" in ui
 
-    combined = "\n".join((backend, page, ui))
+    # Inference jobs get a graceful signal first; only timeout falls back to hard kill.
+    assert 'job.kind == "inference_api"' in jobs
+    assert "signal.CTRL_BREAK_EVENT" in jobs
+    assert 'start_new_session=os.name != "nt"' in jobs
+    assert "wait_timeout = 8.0 if graceful_inference else 5.0" in jobs
+
+    # Operators can see single-GPU contention and drain state in the Control Center.
+    assert "Shared Device" in ui
+    assert "Lifecycle" in ui
+    assert "contended_acquisitions_total" in ui
+    assert "rejected_during_drain_total" in ui
+    assert "peak_active_executions" in ui
+
+    combined = "\n".join((backend, jobs, page, ui))
     assert "copy_checkpoint_to_akagi" not in combined
     assert "torch.load" not in ui
