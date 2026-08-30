@@ -1,5 +1,5 @@
 param(
-    [string]$RuntimeRoot = "$PSScriptRoot\..\..\Mortal_ROGS_Runtime",
+    [string]$RuntimeRoot = "",
     [string]$Legacy3PRoot = "$PSScriptRoot\..\..\Mortal_Sanma",
     [switch]$InstallRustIfMissing,
     [switch]$Bootstrap4P,
@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+if (-not $RuntimeRoot) { $RuntimeRoot = Join-Path $ProjectRoot "_runtime" }
 $RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
 $Legacy3PRoot = [System.IO.Path]::GetFullPath($Legacy3PRoot)
 $Dest3P = Join-Path $RuntimeRoot "3p"
@@ -21,7 +22,7 @@ if (-not (Test-Path $Dest3P)) {
     if (-not (Test-Path $Legacy3PRoot)) {
         throw "Neither unified 3P runtime nor legacy 3P runtime exists: $Legacy3PRoot"
     }
-    Write-Host "Moving existing 3P runtime into unified root..." -ForegroundColor Cyan
+    Write-Host "Moving existing 3P runtime into unified project runtime..." -ForegroundColor Cyan
     Move-Item -LiteralPath $Legacy3PRoot -Destination $Dest3P
 } elseif (Test-Path $Legacy3PRoot) {
     Write-Host "Unified 3P runtime already exists; legacy directory left untouched: $Legacy3PRoot" -ForegroundColor Yellow
@@ -47,7 +48,7 @@ if ($patched) {
 }
 
 # Recreate the Python environment inside 3p/.venv. A virtualenv is not moved
-# from the project root because Windows venv launchers can contain absolute paths.
+# from the old project root because Windows venv launchers can contain absolute paths.
 Write-Host "Rebuilding isolated 3P venv at $Dest3P\.venv..." -ForegroundColor Cyan
 & powershell.exe @args
 if ($LASTEXITCODE -ne 0) {
@@ -75,7 +76,7 @@ Write-Host ""
 Write-Host "UNIFIED_RUNTIME_MIGRATION_OK root=$RuntimeRoot" -ForegroundColor Green
 Write-Host "3P: $Dest3P"
 Write-Host "4P: $Dest4P"
-Write-Host "Legacy project .venv was intentionally left untouched and can be removed later after smoke validation."
+Write-Host "The old project .venv is intentionally left untouched until smoke validation passes."
 
 if (-not $SkipSmoke -and (Test-Path "$Dest4P\.venv\Scripts\python.exe")) {
     Write-Host ""
