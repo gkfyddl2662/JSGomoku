@@ -51,7 +51,7 @@ def _decode_payload(raw: bytes, encoding: str | None) -> dict[str, Any]:
 
 
 def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
-    app = FastAPI(title="Mortal-ROGS Akagi Inference API", version="1.0.0")
+    app = FastAPI(title="Mortal-ROGS Akagi Inference API", version="1.1.0")
     expected_key = api_key.strip()
 
     def authorize(request: Request) -> None:
@@ -105,10 +105,22 @@ def main() -> int:
         model_3p=args.model_3p,
         model_4p=args.model_4p,
     )
+
+    # Load, strict-validate, compile (when requested), and execute one real forward
+    # pass before uvicorn binds the socket. AkagiOT uses a 5-second request timeout;
+    # it must never be the process that pays the first torch.compile cost.
+    print("MORTAL_AKAGI_API_WARMUP_BEGIN", flush=True)
+    try:
+        warmup = service.warmup()
+    except Exception as exc:
+        raise SystemExit(f"Mortal Akagi API warmup failed: {type(exc).__name__}: {exc}") from exc
+    print("MORTAL_AKAGI_API_WARMUP_OK " + json.dumps(warmup, ensure_ascii=False), flush=True)
+
     app = create_app(service, args.api_key)
     print(
         f"MORTAL_AKAGI_API_START root={service.runtime_root} host={args.host} port={args.port} "
-        f"device={args.device} auth={'on' if args.api_key.strip() else 'off'}"
+        f"device={args.device} auth={'on' if args.api_key.strip() else 'off'}",
+        flush=True,
     )
     uvicorn.run(app, host=args.host, port=args.port, reload=False, access_log=False)
     return 0
