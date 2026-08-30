@@ -13,6 +13,12 @@
       <h1>Mortal ROGS Control Center</h1>
     </div>
     <div class="top-actions">
+      <label>Game Mode
+        <select id="gameMode" onchange="changeGameMode()">
+          <option value="3p" selected>3P · Sanma</option>
+          <option value="4p">4P · Yonma</option>
+        </select>
+      </label>
       <span id="setupBadge" class="badge">checking</span>
       <button class="ghost" onclick="refreshAll()">새로고침</button>
     </div>
@@ -32,12 +38,15 @@
       </article>
 
       <article class="panel">
-        <div class="panel-title"><span>Mortal</span><strong>Environment</strong></div>
+        <div class="panel-title"><span>Mortal</span><strong id="runtimeTitle">3P Environment</strong></div>
+        <div id="runtimePath" class="subtle"></div>
         <div id="setupChecks" class="check-grid"></div>
         <div class="button-row">
+          <button onclick="bootstrapRuntime()">선택 Runtime 설치/구성</button>
           <button onclick="startJob('patch')">RTX 5080 + ROGS 패치</button>
           <button class="secondary" onclick="applyPreset()">5080 프리셋 적용</button>
         </div>
+        <div class="subtle top-gap">3P와 4P는 서로 다른 Python venv/libriichi를 사용합니다. 동일 venv에 두 엔진을 설치하지 않습니다.</div>
       </article>
     </section>
 
@@ -61,6 +70,7 @@
             <option value="1">Stage 1 · Rule + 108 tiles</option>
             <option value="2">Stage 2 · Wall + Deal</option>
             <option value="3" selected>Stage 3 · Nuki protocol</option>
+            <option value="4">Stage 4 · State/Game Flow</option>
           </select>
         </label>
       </div>
@@ -73,7 +83,7 @@
     </section>
 
     <section class="panel command-panel">
-      <div class="panel-title"><span>PIPELINE</span><strong>학습 제어</strong></div>
+      <div class="panel-title"><span>PIPELINE</span><strong id="pipelineTitle">3P 학습 제어</strong></div>
       <div class="pipeline">
         <button onclick="startJob('train_grp')"><small>01</small>GRP 학습</button>
         <button onclick="setOnline(false).then(()=>startJob('train'))"><small>02</small>Offline Mortal</button>
@@ -85,28 +95,31 @@
         <span>Training mode</span>
         <button class="mini" onclick="setOnline(false)">Offline</button>
         <button class="mini" onclick="setOnline(true)">Online self-play</button>
-        <a href="http://127.0.0.1:6006" target="_blank" rel="noreferrer">TensorBoard 열기 ↗</a>
+        <a id="tensorboardLink" href="http://127.0.0.1:6006" target="_blank" rel="noreferrer">TensorBoard 열기 ↗</a>
       </div>
     </section>
 
     <section class="two-col">
       <article class="panel">
-        <div class="panel-title"><span>DATA</span><strong>데이터 파이프라인</strong></div>
+        <div class="panel-title"><span>DATA</span><strong id="dataTitle">3P 데이터 파이프라인</strong></div>
         <div id="dataStats" class="metrics compact"></div>
-        <div class="form-grid">
-          <label>Tenhou GZ 입력 폴더<input id="tenhouSource" placeholder="D:\\tenhou_gz" /></label>
-          <label>변환 XML/JSON 출력 폴더<input id="tenhouOutput" placeholder="D:\\tenhou_json" /></label>
+        <div id="sanmaDataTools">
+          <div class="form-grid">
+            <label>Tenhou GZ 입력 폴더<input id="tenhouSource" placeholder="D:\\tenhou_gz" /></label>
+            <label>변환 XML/JSON 출력 폴더<input id="tenhouOutput" placeholder="D:\\tenhou_json" /></label>
+          </div>
+          <button onclick="startTenhou()">Tenhou 데이터 추출</button>
+          <div class="form-grid top-gap">
+            <label>변환 입력 폴더<input id="convertSource" placeholder="D:\\tenhou_json" /></label>
+            <label>Mortal JSONL 출력 폴더<input id="convertOutput" placeholder="C:\\Mortal_Sanma\\data" /></label>
+          </div>
+          <button onclick="startConvert()">MJAI JSONL 변환</button>
         </div>
-        <button onclick="startTenhou()">Tenhou 데이터 추출</button>
-        <div class="form-grid top-gap">
-          <label>변환 입력 폴더<input id="convertSource" placeholder="D:\\tenhou_json" /></label>
-          <label>Mortal JSONL 출력 폴더<input id="convertOutput" placeholder="C:\\Mortal_Sanma\\data" /></label>
-        </div>
-        <button onclick="startConvert()">MJAI JSONL 변환</button>
+        <div id="yonmaDataNote" class="subtle" hidden>4P stock Mortal은 native <code>*.json.gz</code> 로그를 <code>dataset.globs</code>에서 직접 읽습니다. Config의 dataset 경로를 4P 데이터셋에 지정하세요.</div>
       </article>
 
       <article class="panel">
-        <div class="panel-title"><span>CHECKPOINTS</span><strong>모델 관리</strong></div>
+        <div class="panel-title"><span>CHECKPOINTS</span><strong id="checkpointTitle">3P 모델 관리</strong></div>
         <div id="checkpoints" class="list"></div>
         <div class="subtle top-gap">체크포인트는 직접 Best로 복사되지 않습니다. 후보를 선택한 뒤 아래 Promotion Gate를 통과해야 합니다.</div>
       </article>
@@ -115,7 +128,7 @@
     <section class="panel">
       <div class="panel-title"><span>PROMOTION</span><strong>Rating + Akagi ABI Gate</strong></div>
       <div class="form-grid">
-        <label>Candidate (models 기준 상대경로)<input id="promotionCandidate" placeholder="rogs_3p/candidate.pth" /></label>
+        <label>Candidate (선택 Runtime models 기준 상대경로)<input id="promotionCandidate" placeholder="rogs_3p/candidate.pth" /></label>
         <label>Mode
           <select id="promotionMode" onchange="syncPromotionDestination()">
             <option value="3p">3P · mortal3p.pth</option>
@@ -134,7 +147,7 @@
     </section>
 
     <section class="panel">
-      <div class="panel-title"><span>CONFIG</span><strong>Mortal config</strong></div>
+      <div class="panel-title"><span>CONFIG</span><strong id="configTitle">3P Mortal config</strong></div>
       <div class="config-toolbar">
         <button class="secondary" onclick="loadConfig()">다시 읽기</button>
         <button onclick="saveConfig()">저장</button>
