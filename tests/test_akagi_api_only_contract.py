@@ -57,11 +57,8 @@ def test_managed_inference_api_preserves_akagiot_compatibility() -> None:
     source = (PROJECT_ROOT / "scripts" / "serve_akagi_api.py").read_text(encoding="utf-8")
     serving = (PROJECT_ROOT / "serving" / "resilient.py").read_text(encoding="utf-8")
 
-    # Pinned AkagiOT compatibility endpoints remain unchanged.
     assert '@app.post("/react_batch")' in source
     assert '@app.post("/react_batch_3p")' in source
-
-    # Mortal-ROGS owns the richer management/inference contract.
     assert '@app.get("/api/inference/health")' in source
     assert '@app.get("/api/inference/models")' in source
     assert '@app.get("/api/inference/metrics")' in source
@@ -71,8 +68,6 @@ def test_managed_inference_api_preserves_akagiot_compatibility() -> None:
     assert '"abi_version": 4' in source
     assert '"mortal-rogs-inference-v1"' in source
 
-    # Pinned Akagi has a 4s read timeout. Mortal-ROGS must fail fast before that,
-    # rather than making Akagi wait for checkpoint compilation or a saturated queue.
     assert "AKAGI_READ_TIMEOUT_MS = 4000.0" in source
     assert 'default=float(os.getenv("MORTAL_INFERENCE_REQUEST_DEADLINE_MS", "3500"))' in source
     assert "run_in_threadpool(service.infer" in source
@@ -82,7 +77,7 @@ def test_managed_inference_api_preserves_akagiot_compatibility() -> None:
     assert "mortal-rogs-model-watcher-{mode}" in serving
 
 
-def test_control_center_can_manage_reload_and_telemetry_without_exposing_model_ownership_to_akagi() -> None:
+def test_control_center_can_manage_reload_telemetry_and_scheduler_without_exposing_model_ownership_to_akagi() -> None:
     backend = (PROJECT_ROOT / "app" / "main.py").read_text(encoding="utf-8")
     page = (PROJECT_ROOT / "static" / "index.html").read_text(encoding="utf-8")
     ui = (PROJECT_ROOT / "static" / "inference.js").read_text(encoding="utf-8")
@@ -97,6 +92,31 @@ def test_control_center_can_manage_reload_and_telemetry_without_exposing_model_o
     assert "coalesced_requests_total" in ui
     assert "busy_rejections_total" in ui
     assert "timeouts_total" in ui
+
+    # Control Center owns serving tuning and enforces Akagi's 4s read timeout boundary.
+    assert "micro_batch_ms: float = Field(default=1.0" in backend
+    assert "micro_batch_max_rows: int = Field(default=64" in backend
+    assert "max_pending_requests: int = Field(default=128" in backend
+    assert "request_deadline_ms: float = Field(default=3500.0, gt=0.0, lt=4000.0)" in backend
+    assert "reload_poll_ms: float = Field(default=500.0" in backend
+    for flag in (
+        '"--micro-batch-ms"',
+        '"--micro-batch-max-rows"',
+        '"--max-pending-requests"',
+        '"--request-deadline-ms"',
+        '"--reload-poll-ms"',
+    ):
+        assert flag in backend
+    for element_id in (
+        "inferenceMicroBatchMs",
+        "inferenceMaxRows",
+        "inferenceMaxPending",
+        "inferenceDeadlineMs",
+        "inferenceReloadPollMs",
+    ):
+        assert element_id in ui
+    assert "body.request_deadline_ms >= 4000" in ui
+    assert "window.startInferenceApi = startInferenceApi" in ui
 
     combined = "\n".join((backend, page, ui))
     assert "copy_checkpoint_to_akagi" not in combined

@@ -21,13 +21,24 @@ from .settings import load_settings, normalize_mode
 settings = load_settings()
 controller = MortalController(settings)
 jobs = JobManager()
-app = FastAPI(title="Mortal ROGS Control Center", version="0.7.0")
+app = FastAPI(title="Mortal ROGS Control Center", version="0.8.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
 
 # The inference server is a separate process. Remember the most recently launched
 # bind target, API key and job so the Control Center can manage its full lifecycle
 # without ever handing Mortal checkpoint files to Akagi-NG.
-_inference_target: dict[str, Any] = {"host": "127.0.0.1", "port": 8190, "api_key": ""}
+_inference_target: dict[str, Any] = {
+    "host": "127.0.0.1",
+    "port": 8190,
+    "api_key": "",
+    "serving": {
+        "micro_batch_ms": 1.0,
+        "micro_batch_max_rows": 64,
+        "max_pending_requests": 128,
+        "request_deadline_ms": 3500.0,
+        "reload_poll_ms": 500.0,
+    },
+}
 _inference_job_id: str | None = None
 
 
@@ -45,6 +56,11 @@ class InferenceBody(BaseModel):
     port: int = Field(default=8190, ge=1, le=65535)
     api_key: str = "mortal-rogs-local"
     device: str = "auto"
+    micro_batch_ms: float = Field(default=1.0, ge=0.0, le=100.0)
+    micro_batch_max_rows: int = Field(default=64, ge=1, le=4096)
+    max_pending_requests: int = Field(default=128, ge=1, le=4096)
+    request_deadline_ms: float = Field(default=3500.0, gt=0.0, lt=4000.0)
+    reload_poll_ms: float = Field(default=500.0, ge=50.0, le=60000.0)
 
 
 class InferenceReloadBody(BaseModel):
@@ -180,6 +196,7 @@ def api_inference_status() -> dict[str, Any]:
         "server_url": f"http://{host}:{port}",
         "live": live,
         "job": _inference_job_snapshot(),
+        "requested_serving": dict(_inference_target.get("serving", {})),
         "endpoints": {
             "3p": "/react_batch_3p",
             "4p": "/react_batch",
@@ -232,6 +249,16 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
         str(body.port),
         "--device",
         body.device.strip() or "auto",
+        "--micro-batch-ms",
+        str(body.micro_batch_ms),
+        "--micro-batch-max-rows",
+        str(body.micro_batch_max_rows),
+        "--max-pending-requests",
+        str(body.max_pending_requests),
+        "--request-deadline-ms",
+        str(body.request_deadline_ms),
+        "--reload-poll-ms",
+        str(body.reload_poll_ms),
     ]
     if body.api_key:
         cmd.extend(["--api-key", body.api_key])
@@ -240,6 +267,13 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
         _inference_target["host"] = host
         _inference_target["port"] = body.port
         _inference_target["api_key"] = body.api_key
+        _inference_target["serving"] = {
+            "micro_batch_ms": body.micro_batch_ms,
+            "micro_batch_max_rows": body.micro_batch_max_rows,
+            "max_pending_requests": body.max_pending_requests,
+            "request_deadline_ms": body.request_deadline_ms,
+            "reload_poll_ms": body.reload_poll_ms,
+        }
         _inference_job_id = job.id
         return job.snapshot()
     except Exception as exc:
