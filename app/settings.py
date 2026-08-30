@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,38 +35,32 @@ class Settings:
     mortal_4p_root: Path
     host: str
     port: int
+    runtime_root: Path | None = None
 
     def runtime(self, mode: str) -> MortalRuntime:
         normalized = normalize_mode(mode)
+        root = self.mortal_3p_root if normalized == "3p" else self.mortal_4p_root
+        python_executable = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
         if normalized == "3p":
-            mortal_dir = self.mortal_3p_root / "Mortal" / "mortal"
-            config_file = mortal_dir / "config.sanma.toml"
-            python_executable = self.project_root / ".venv" / "Scripts" / "python.exe"
-            if os.name != "nt":
-                python_executable = self.project_root / ".venv" / "bin" / "python"
-            if not python_executable.exists():
-                python_executable = Path(sys.executable)
+            mortal_dir = root / "Mortal" / "mortal"
             return MortalRuntime(
                 mode="3p",
                 players=3,
-                root=self.mortal_3p_root,
+                root=root,
                 mortal_dir=mortal_dir,
-                config_file=config_file,
+                config_file=mortal_dir / "config.sanma.toml",
                 python_executable=python_executable,
                 evaluate_script="one_vs_two.py",
             )
 
-        mortal_dir = self.mortal_4p_root / "mortal"
-        config_file = mortal_dir / "config.toml"
-        python_executable = self.mortal_4p_root / ".venv" / "Scripts" / "python.exe"
-        if os.name != "nt":
-            python_executable = self.mortal_4p_root / ".venv" / "bin" / "python"
+        mortal_dir = root / "mortal"
         return MortalRuntime(
             mode="4p",
             players=4,
-            root=self.mortal_4p_root,
+            root=root,
             mortal_dir=mortal_dir,
-            config_file=config_file,
+            config_file=mortal_dir / "config.toml",
             python_executable=python_executable,
             evaluate_script="one_vs_three.py",
         )
@@ -116,12 +109,19 @@ def normalize_mode(mode: str | None) -> str:
 
 def load_settings() -> Settings:
     project_root = Path(__file__).resolve().parents[1]
-    default_3p = project_root.parent / "Mortal_Sanma"
-    default_4p = project_root.parent / "Mortal_4P"
+    runtime_root = Path(
+        os.getenv("MORTAL_RUNTIME_ROOT", project_root.parent / "Mortal_ROGS_Runtime")
+    ).expanduser().resolve()
 
+    # Individual roots remain supported for existing installations, but fresh
+    # installs live together under MORTAL_RUNTIME_ROOT/{3p,4p}.
     legacy_3p = os.getenv("MORTAL_SANMA_ROOT")
-    mortal_3p_root = Path(os.getenv("MORTAL_3P_ROOT", legacy_3p or default_3p)).expanduser().resolve()
-    mortal_4p_root = Path(os.getenv("MORTAL_4P_ROOT", default_4p)).expanduser().resolve()
+    mortal_3p_root = Path(
+        os.getenv("MORTAL_3P_ROOT", legacy_3p or runtime_root / "3p")
+    ).expanduser().resolve()
+    mortal_4p_root = Path(
+        os.getenv("MORTAL_4P_ROOT", runtime_root / "4p")
+    ).expanduser().resolve()
 
     host = os.getenv("MORTAL_WEBUI_HOST", "127.0.0.1")
     port = int(os.getenv("MORTAL_WEBUI_PORT", "8188"))
@@ -131,4 +131,5 @@ def load_settings() -> Settings:
         mortal_4p_root=mortal_4p_root,
         host=host,
         port=port,
+        runtime_root=runtime_root,
     )
