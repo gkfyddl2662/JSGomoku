@@ -41,6 +41,21 @@ jobs:
             tests/test_paired_promotion.py
       - name: JavaScript syntax
         run: node --check static/app.js
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in @('scripts/bootstrap.ps1', 'scripts/bootstrap_runtime.ps1', 'scripts/smoke_windows.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "PowerShell parse errors in $path"
+              $errors | ForEach-Object { Write-Host $_.Message }
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
 
   torch-objective:
     runs-on: ubuntu-latest
