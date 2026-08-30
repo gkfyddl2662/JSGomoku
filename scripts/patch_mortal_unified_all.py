@@ -23,6 +23,7 @@ RUST_STAGES = (
     "patch_libriichi_unified_game_stage5b.py",
     "patch_libriichi_unified_grp_stage6a.py",
     "patch_libriichi_unified_stat_stage7a.py",
+    "patch_libriichi_unified_dataset_stage8b.py",
     "patch_libriichi_unified_python_packaging.py",
 )
 
@@ -66,6 +67,7 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
     if not python_only:
         consts = (root / "libriichi/src/consts.rs").read_text(encoding="utf-8")
         stat = (root / "libriichi/src/stat.rs").read_text(encoding="utf-8")
+        gameplay = (root / "libriichi/src/dataset/gameplay.rs").read_text(encoding="utf-8")
         pyproject = (root / "libriichi/pyproject.toml").read_text(encoding="utf-8")
         if (
             "ACTION_SPACE_3P: usize = 44" not in consts
@@ -78,6 +80,8 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
             raise RuntimeError("unified 3P oracle ABI stage postcondition failed")
         if "MORTAL_ROGS_UNIFIED_STAT_STAGE7A" not in stat:
             raise RuntimeError("unified statistics stage postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_DATASET_STAGE8B" not in gameplay:
+            raise RuntimeError("unified gameplay dataset Stage 8B postcondition failed")
         if 'module-name = "libriichi"' not in pyproject:
             raise RuntimeError("unified libriichi Python module-name postcondition failed")
 
