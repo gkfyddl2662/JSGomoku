@@ -36,13 +36,44 @@ function Get-GitText {
     return (($output | Out-String).Trim())
 }
 
+function Ensure-ManagedGitExcludes {
+    if (-not (Test-Path (Join-Path $InstallRoot ".git"))) { return }
+
+    $excludePath = Join-Path $InstallRoot ".git\info\exclude"
+    $excludeDir = Split-Path $excludePath -Parent
+    if (-not (Test-Path $excludeDir)) {
+        New-Item -ItemType Directory -Force -Path $excludeDir | Out-Null
+    }
+
+    $existing = @()
+    if (Test-Path $excludePath) {
+        $existing = @(Get-Content -LiteralPath $excludePath -ErrorAction Stop)
+    }
+
+    $managedPatterns = @(
+        ".venv/",
+        "runtime/",
+        ".mortal-rogs-unified-runtime.json"
+    )
+    $missing = @($managedPatterns | Where-Object { $existing -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        Add-Content -LiteralPath $excludePath -Value $missing -Encoding UTF8
+    }
+}
+
 function Repair-PartialUnifiedBootstrap {
     if (-not (Test-Path $InstallRoot)) { return }
     if (-not (Test-Path (Join-Path $InstallRoot ".git"))) { return }
+
+    Ensure-ManagedGitExcludes
+
     if (Test-Path $ManagedMarker) { return }
 
     $dirtyText = Get-GitText -GitArgs @("-C", $InstallRoot, "status", "--porcelain=v1", "--untracked-files=all")
-    if ([string]::IsNullOrWhiteSpace($dirtyText)) { return }
+    if ([string]::IsNullOrWhiteSpace($dirtyText)) {
+        Write-Host "Existing .venv/runtime data detected but source tree is clean; continuing bootstrap."
+        return
+    }
 
     $head = Get-GitText -GitArgs @("-C", $InstallRoot, "rev-parse", "HEAD")
     if ($head -ne $CanonicalSha) {
@@ -67,9 +98,9 @@ function Repair-PartialUnifiedBootstrap {
     $looksManaged = (Test-Path $venvPython) -and ($hasRustMarker -or $hasModelMarker -or $hasPackagingMarker)
 
     if (-not $looksManaged) {
-        Write-Host "Unmarked dirty files detected:" -ForegroundColor Yellow
+        Write-Host "Unmarked source changes detected:" -ForegroundColor Yellow
         Write-Host $dirtyText
-        throw "Local changes are not recognized as a partial Mortal-ROGS bootstrap. Preserve them manually before rerunning: $InstallRoot"
+        throw "Local source changes are not recognized as a partial Mortal-ROGS bootstrap. Preserve them manually before rerunning: $InstallRoot"
     }
 
     Write-Host "Detected failed/partial Mortal-ROGS bootstrap. Restoring canonical source while preserving .venv and runtime data..."
@@ -78,6 +109,7 @@ function Repair-PartialUnifiedBootstrap {
     & git -C $InstallRoot clean -fd -e ".venv/" -e "runtime/"
     if ($LASTEXITCODE -ne 0) { throw "Failed to clean partial unified runtime" }
 
+    Ensure-ManagedGitExcludes
     $remaining = Get-GitText -GitArgs @("-C", $InstallRoot, "status", "--porcelain=v1", "--untracked-files=all")
     if (-not [string]::IsNullOrWhiteSpace($remaining)) {
         throw "Partial recovery left unexpected source changes:`n$remaining"
