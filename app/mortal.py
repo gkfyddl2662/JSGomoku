@@ -53,6 +53,32 @@ class MortalController:
             script = self.s.project_root / "scripts" / "patch_mortal.py"
             return [py, str(script), "--root", str(self.s.mortal_root)], self.s.project_root, {}
 
+        if kind == "mjx_setup":
+            if os.name != "nt":
+                raise ValueError("MJX WSL bootstrap is only used from a Windows host")
+            script = self.s.project_root / "scripts" / "setup_mjx_eval_wsl.ps1"
+            if not script.exists():
+                raise ValueError(f"MJX setup script not found: {script}")
+            distro = str(args.get("distro", "")).strip()
+            linux_root = str(args.get("linux_root", "~/mortal-rogs-mjx")).strip() or "~/mortal-rogs-mjx"
+            cmd = [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-LinuxRoot",
+                linux_root,
+            ]
+            if distro:
+                cmd.extend(["-Distro", distro])
+            return cmd, self.s.project_root, {}
+
+        if kind == "mjx_probe":
+            script = self.s.project_root / "scripts" / "check_mjx_runtime.py"
+            return [py, str(script)], self.s.project_root, {}
+
         if kind == "convert":
             source = self._resolve_user_path(args.get("source"), must_exist=True)
             output = self._resolve_user_path(args.get("output"), must_exist=False)
