@@ -74,7 +74,8 @@ def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
             raise HTTPException(500, f"Mortal inference failed: {type(exc).__name__}: {exc}") from exc
 
     @app.get("/health")
-    def health() -> dict[str, Any]:
+    def health(request: Request) -> dict[str, Any]:
+        authorize(request)
         return service.health()
 
     @app.post("/react_batch")
