@@ -204,7 +204,9 @@ class LoadedModel:
         self.dqn = dqn
         self.config = cfg
 
-        # Probe the exact endpoint ABI before publishing this model into the slot.
+        # This probe is intentionally part of construction. With torch.compile it
+        # forces graph compilation before the model becomes reachable over HTTP,
+        # avoiding AkagiOT's 5-second request timeout on the first game action.
         with self._infer_lock, torch.inference_mode(), self._amp_context():
             obs = torch.zeros((1, self.contract.obs_channels, 34), dtype=torch.float32, device=self.device)
             mask = torch.ones((1, self.contract.action_space), dtype=torch.bool, device=self.device)
@@ -339,6 +341,28 @@ class InferenceService:
             "3p": ModelSlot("3p", resolve_checkpoint_path(self.runtime_root, "3p", model_3p), mortal_dir, device),
             "4p": ModelSlot("4p", resolve_checkpoint_path(self.runtime_root, "4p", model_4p), mortal_dir, device),
         }
+
+    def warmup(self) -> dict[str, Any]:
+        results: dict[str, Any] = {}
+        loaded_count = 0
+        for mode, slot in self.slots.items():
+            try:
+                model = slot.get()
+            except Exception as exc:
+                results[mode] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                continue
+            loaded_count += 1
+            results[mode] = {
+                "ok": True,
+                "device": str(model.device),
+                "compiled": model.compiled,
+                "amp_dtype": model.amp_dtype_name if model.use_amp else None,
+            }
+
+        if loaded_count == 0:
+            details = "; ".join(f"{mode}: {info['error']}" for mode, info in results.items())
+            raise RuntimeError(f"No Mortal API model could be prewarmed: {details}")
+        return {"ok": True, "loaded": loaded_count, "modes": results}
 
     def infer(self, mode: str, obs: Any, masks: Any) -> dict[str, Any]:
         contract = contract_for(mode)
