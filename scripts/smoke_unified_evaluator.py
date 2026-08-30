@@ -22,12 +22,17 @@ def main() -> int:
     ap.add_argument("--require-trained-checkpoints", action="store_true")
     args = ap.parse_args()
 
+    project_root = Path(__file__).resolve().parents[1]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
     root = args.runtime_root.expanduser().resolve()
     mortal_dir = root / "mortal"
     sys.path.insert(0, str(mortal_dir))
 
     import toml
     import torch
+    from evaluation.paired import load_paired_records
     from model import Brain, DQN
 
     device = torch.device(args.device)
@@ -52,6 +57,10 @@ def main() -> int:
     example_cfg = mortal_dir / "config.example.toml"
     if not example_cfg.is_file():
         fail(f"missing Mortal example config: {example_cfg}")
+
+    paired_script = project_root / "scripts" / "build_paired_evaluation.py"
+    if not paired_script.is_file():
+        fail(f"paired evaluation builder is missing: {paired_script}")
 
     for mode, c in contracts.items():
         trained_checkpoint = trained_root / f"smoke-trained-{mode}.pth"
@@ -156,6 +165,60 @@ def main() -> int:
         if len(logs) != c["games"]:
             fail(f"{mode} evaluator expected {c['games']} logs, got {len(logs)} in {log_dir}")
 
+        # Feed real native duplicate logs through the exact paired-evaluation
+        # bridge. Using the same directory on both sides gives an invariant
+        # zero-delta comparison while still exercising filename seed/seat
+        # matching, MJAI score reconstruction, JSONL compatibility, and the
+        # Mortal-docs-style strength summary for both 3P and 4P.
+        paired_output = smoke_root / f"paired-{mode}.jsonl"
+        pair_proc = subprocess.run(
+            [
+                sys.executable,
+                str(paired_script),
+                "--candidate-dir",
+                str(log_dir),
+                "--baseline-dir",
+                str(log_dir),
+                "--mode",
+                mode,
+                "--output",
+                str(paired_output),
+                "--candidate-name",
+                f"smoke-{mode}-candidate",
+                "--baseline-name",
+                f"smoke-{mode}-baseline",
+                "--room",
+                "smoke",
+                "--rank",
+                "smoke",
+            ],
+            cwd=project_root,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        if pair_proc.returncode != 0:
+            fail(
+                f"{mode} paired evaluation builder failed with exit {pair_proc.returncode}\n"
+                f"STDOUT:\n{pair_proc.stdout}\nSTDERR:\n{pair_proc.stderr}"
+            )
+        paired_rows = load_paired_records(paired_output)
+        if len(paired_rows) != c["games"]:
+            fail(f"{mode} paired evaluation expected {c['games']} rows, got {len(paired_rows)}")
+        for row in paired_rows:
+            if row.candidate != row.baseline:
+                fail(f"{mode} identical-log paired comparison produced non-zero side drift: {row}")
+
+        summary_json = paired_output.with_suffix(".summary.json")
+        summary_md = paired_output.with_suffix(".summary.md")
+        if not summary_json.is_file() or not summary_md.is_file():
+            fail(f"{mode} strength summary outputs are missing")
+        strength = json.loads(summary_json.read_text(encoding="utf-8"))
+        deltas = strength.get("candidate_minus_baseline", {})
+        for metric in ("avg_rank", "avg_rank_pt", "avg_game_delta_score", "tobi_rate"):
+            if float(deltas.get(metric, float("nan"))) != 0.0:
+                fail(f"{mode} identical-log strength metric {metric} is not zero: {deltas}")
+
         results[mode] = {
             "checkpoint": str(checkpoint),
             "checkpoint_source": checkpoint_source,
@@ -163,12 +226,16 @@ def main() -> int:
             "evaluator": c["evaluator"],
             "games": c["games"],
             "logs": len(logs),
+            "paired_rows": len(paired_rows),
+            "paired_output": str(paired_output),
+            "strength_summary": str(summary_json),
             "stdout_tail": proc.stdout.strip().splitlines()[-3:],
         }
         del brain2, dqn2, state
 
     print("MORTAL_UNIFIED_CHECKPOINT_EVAL_E2E_OK")
     print("MORTAL_UNIFIED_EVALUATOR_E2E_OK")
+    print("MORTAL_UNIFIED_PAIRED_STRENGTH_E2E_OK")
     if args.require_trained_checkpoints:
         print("MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK")
     print(json.dumps(results, ensure_ascii=False, indent=2))
