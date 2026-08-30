@@ -1,0 +1,77 @@
+name: Windows Script CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse unified Windows scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in @(
+            'scripts/windows_msvc.ps1',
+            'scripts/bootstrap_unified_runtime.ps1',
+            'scripts/smoke_unified_windows.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "PowerShell parse errors in $path"
+              $errors | ForEach-Object { Write-Host $_.Message }
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Verify MSVC bootstrap contract
+        shell: pwsh
+        run: |
+          foreach ($pattern in @(
+            'Ensure-MortalRogsMsvcBuildEnvironment',
+            'Test-MortalRogsRustMsvcLink',
+            'MSVC_LINK_PROBE_OK',
+            'Microsoft\.VisualStudio\.2022\.BuildTools',
+            'Microsoft\.VisualStudio\.Workload\.VCTools'
+          )) {
+            if (-not (Select-String -Path scripts/windows_msvc.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing windows_msvc contract: $pattern"
+            }
+          }
+          foreach ($pattern in @(
+            'InstallBuildToolsIfMissing',
+            'windows_msvc\.ps1',
+            'Ensure-MortalRogsMsvcBuildEnvironment',
+            'MORTAL_UNIFIED_BOOTSTRAP_OK'
+          )) {
+            if (-not (Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing bootstrap contract: $pattern"
+            }
+          }
+          foreach ($pattern in @(
+            'MORTAL_UNIFIED_RUNTIME_SMOKE_OK',
+            'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
+            'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK'
+          )) {
+            if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing smoke contract: $pattern"
+            }
+          }
