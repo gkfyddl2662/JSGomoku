@@ -143,3 +143,21 @@ def test_settings_adopts_sibling_unified_runtime_after_first_install(tmp_path: P
     assert p3.python_executable == p4.python_executable
     assert p3.config_file.name == "config.3p.toml"
     assert p4.config_file.name == "config.4p.toml"
+
+
+def test_stage2_patches_full_dataloader_reward_path_without_new_stage() -> None:
+    root = Path(__file__).resolve().parents[1]
+    stage2 = (root / "scripts" / "patch_mortal_unified_stage2.py").read_text(encoding="utf-8")
+    aggregator = (root / "scripts" / "patch_mortal_unified_all.py").read_text(encoding="utf-8")
+    smoke = (root / "scripts" / "smoke_unified_training.py").read_text(encoding="utf-8")
+
+    assert 'DATALOADER_SHA = "17b79ef3f6cd836e4c7b1e2da442f6ef28e083fe"' in stage2
+    assert 'REWARD_SHA = "c44772c48551a866c53cd58bddb7330bfa900d02"' in stage2
+    assert "MORTAL_ROGS_UNIFIED_DATALOADER_STAGE2" in stage2
+    assert "MORTAL_ROGS_UNIFIED_REWARD_STAGE2" in stage2
+    assert "network_cfg['num_players'] = num_players" in stage2
+    assert "torch.zeros((1, self.num_players)" in stage2
+    assert "pts[:self.num_players]" in stage2
+    assert "MORTAL_ROGS_UNIFIED_DATALOADER_STAGE2" in aggregator
+    assert "hard-coded 4P reward final ranking remains" in aggregator
+    assert "MORTAL_UNIFIED_FULL_DATALOADER_REWARD_E2E_OK" in smoke
