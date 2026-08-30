@@ -1,0 +1,64 @@
+name: Akagi API Contract CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AKAGI_NG_SHA: 11c0ffc0d70bf8142585b92405b4412976c9e205
+
+jobs:
+  api-only-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install contract test dependencies
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Compile serving and compatibility tooling
+        run: |
+          python -m py_compile \
+            serving/inference.py \
+            scripts/serve_akagi_api.py \
+            scripts/smoke_akagi_api.py \
+            scripts/smoke_vanilla_akagi_client.py \
+            scripts/check_mortal_api_checkpoint.py \
+            scripts/export_akagi_mortal.py \
+            scripts/check_akagi_compat.py \
+            scripts/check_akagi_compat_dual.py
+
+      - name: Enforce API-only architecture
+        run: python -m pytest -q tests/test_akagi_api_only_contract.py
+
+      - name: Verify pinned untouched AkagiOT client source
+        run: |
+          git clone https://github.com/Xe-Persistent/Akagi-NG.git /tmp/akagi-ng-contract
+          git -C /tmp/akagi-ng-contract checkout "$AKAGI_NG_SHA"
+          test "$(git -C /tmp/akagi-ng-contract rev-parse HEAD)" = "$AKAGI_NG_SHA"
+          CLIENT=/tmp/akagi-ng-contract/akagi_backend/akagi_ng/mjai_bot/engine/akagi_ot.py
+          grep -q 'endpoint = "/react_batch_3p" if is_3p else "/react_batch"' "$CLIENT"
+          grep -q '"Authorization": self.api_key' "$CLIENT"
+          grep -q '"Content-Encoding": "gzip"' "$CLIENT"
+          grep -q 'return r_json\["actions"\], r_json\["q_out"\], r_json\["masks"\], r_json\["is_greedy"\]' "$CLIENT"
+          test -z "$(git -C /tmp/akagi-ng-contract status --porcelain)"
+
+      - name: Reject direct Akagi checkpoint deployment regressions
+        run: |
+          ! grep -R -n --exclude='*.md' --exclude='akagi_abi.toml' -- '--akagi-root' app serving training evaluation scripts tests
+          grep -q '^modify_akagi_ng = false$' config/akagi_abi.toml
+          grep -q '^copy_checkpoint_to_akagi_ng = false$' config/akagi_abi.toml
+          grep -q '^akagi_loads_mortal_checkpoint = false$' config/akagi_abi.toml
+          grep -q 'MORTAL_VANILLA_AKAGI_CLIENT_E2E_OK' scripts/smoke_vanilla_akagi_client.py
