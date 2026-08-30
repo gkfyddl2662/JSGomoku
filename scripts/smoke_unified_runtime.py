@@ -77,7 +77,13 @@ def main() -> int:
                 f"Unsupported Windows Triton {triton_version} for pinned PyTorch {torch.__version__}; "
                 "expected Triton 3.6.x (install triton-windows>=3.6,<3.7)."
             )
+        try:
+            import torch._inductor.config as inductor_config
+            inductor_config.triton.descriptive_names = False
+        except Exception as exc:
+            fail(f"Unable to configure short Windows Triton kernel names: {exc}")
         print(f"TRITON_WINDOWS_OK version={triton_version}")
+        print("TORCHINDUCTOR_WINDOWS_SHORT_NAMES_OK")
 
     device = torch.device("cuda:0")
     torch.cuda.reset_peak_memory_stats(device)
