@@ -37,6 +37,73 @@ def _percentile(values: deque[float], percentile: float) -> float | None:
     return round(ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction, 3)
 
 
+def _bytes_to_mib(value: int | float) -> float:
+    return round(float(value) / (1024.0 * 1024.0), 3)
+
+
+def cuda_memory_snapshot() -> dict[str, Any]:
+    """Return process allocator and device free-memory counters without requiring torch in contract CI."""
+    try:
+        import torch
+    except Exception as exc:
+        return {"available": False, "reason": f"torch unavailable: {type(exc).__name__}", "devices": []}
+
+    try:
+        if not torch.cuda.is_available():
+            return {"available": False, "reason": "CUDA unavailable", "devices": []}
+
+        devices: list[dict[str, Any]] = []
+        for index in range(torch.cuda.device_count()):
+            free_bytes, total_bytes = torch.cuda.mem_get_info(index)
+            reserved_bytes = torch.cuda.memory_reserved(index)
+            devices.append(
+                {
+                    "index": index,
+                    "name": torch.cuda.get_device_name(index),
+                    "allocated_mib": _bytes_to_mib(torch.cuda.memory_allocated(index)),
+                    "reserved_mib": _bytes_to_mib(reserved_bytes),
+                    "peak_allocated_mib": _bytes_to_mib(torch.cuda.max_memory_allocated(index)),
+                    "peak_reserved_mib": _bytes_to_mib(torch.cuda.max_memory_reserved(index)),
+                    "free_mib": _bytes_to_mib(free_bytes),
+                    "total_mib": _bytes_to_mib(total_bytes),
+                    "reserved_pct_total": round(float(reserved_bytes) / float(total_bytes) * 100.0, 3)
+                    if total_bytes
+                    else None,
+                }
+            )
+        return {"available": True, "reason": None, "devices": devices}
+    except Exception as exc:
+        return {"available": False, "reason": f"{type(exc).__name__}: {exc}", "devices": []}
+
+
+def _clear_cuda_cache_after_oom(exc: BaseException) -> bool:
+    """Best-effort cache release after a failed hot-reload; never alters the published model."""
+    try:
+        import torch
+    except Exception:
+        return False
+
+    oom_types = tuple(
+        cls
+        for cls in (
+            getattr(torch, "OutOfMemoryError", None),
+            getattr(getattr(torch, "cuda", None), "OutOfMemoryError", None),
+        )
+        if isinstance(cls, type)
+    )
+    message = str(exc).casefold()
+    is_oom = (bool(oom_types) and isinstance(exc, oom_types)) or ("cuda" in message and "out of memory" in message)
+    if not is_oom:
+        return False
+    try:
+        if not torch.cuda.is_available():
+            return False
+        torch.cuda.empty_cache()
+        return True
+    except Exception:
+        return False
+
+
 class ModeTelemetry:
     def __init__(self, mode: str, *, recent_samples: int = 1024) -> None:
         self.mode = contract_for(mode).mode
@@ -537,7 +604,11 @@ class ResilientInferenceService:
         try:
             slot.reload(raise_on_failure=True, force=force)
         except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "status": slot.status()}
+            cache_cleared = _clear_cuda_cache_after_oom(exc)
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "status": slot.status()}
+            if cache_cleared:
+                result["cuda_cache_cleared"] = True
+            return result
         info = slot.status()
         ok = bool(info["loaded"] and info["current"] and info["last_error"] is None)
         return {"ok": ok, "status": info}
@@ -560,6 +631,7 @@ class ResilientInferenceService:
                 "background": bool(self._watchers) and all(thread.is_alive() for thread in self._watchers.values()),
                 "workers": {mode: thread.is_alive() for mode, thread in self._watchers.items()},
             },
+            "cuda_memory": cuda_memory_snapshot(),
             "modes": {mode: telemetry.snapshot() for mode, telemetry in self.telemetry.items()},
         }
 
