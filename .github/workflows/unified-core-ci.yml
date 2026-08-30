@@ -43,6 +43,7 @@ jobs:
           python scripts/patch_libriichi_unified_stage1.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage2.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3a.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_stage3b.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
@@ -60,6 +61,7 @@ jobs:
           grep -q "scores: Vec<i32>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
           grep -q "tehais: Vec<Vec<Tile>>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
           grep -q "Nukidora" /tmp/mortal-unified/libriichi/src/mjai/event.rs
+          grep -q "MORTAL_ROGS_UNIFIED_EVENT_BOUNDARY_STAGE3B" /tmp/mortal-unified/libriichi/src/state/update.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
