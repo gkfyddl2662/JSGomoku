@@ -5,6 +5,7 @@ from pathlib import Path
 
 MARKER = "MORTAL_ROGS_UNIFIED_DATASET_STAGE8B"
 REQUIRES = "MORTAL_ROGS_UNIFIED_ACTION_OBS_STAGE3E"
+ABI_VERSION = 2
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -29,17 +30,14 @@ def patch_gameplay(text: str) -> str:
         "        let label_opt = match *next {\n",
         "dataset mode detection",
     )
-
     text = replace_once(
         text,
-        "            Event::Reach { .. } => Some(37),\n"
-        "            Event::Chi {\n",
+        "            Event::Reach { .. } => Some(37),\n            Event::Chi {\n",
         "            Event::Reach { .. } => Some(37),\n"
         "            Event::Nukidora { actor, .. } if is_sanma && actor == self.player_id => Some(38),\n"
         "            Event::Chi {\n",
         "dataset nukidora label",
     )
-
     text = replace_once(
         text,
         "            Event::Pon { actor, .. } if actor == self.player_id => Some(41),\n",
@@ -49,59 +47,55 @@ def patch_gameplay(text: str) -> str:
         "dataset pon label",
     )
 
-    for event in ("Daiminkan", "Kakan", "Ankan"):
-        if event == "Daiminkan":
-            old = (
-                "            Event::Daiminkan { actor, pai, .. } if actor == self.player_id => {\n"
-                "                if config.always_include_kan_select {\n"
-                "                    kan_select = Some(pai.deaka().as_usize());\n"
-                "                }\n"
-                "                Some(42)\n"
-                "            }\n"
-            )
-            new = (
-                "            Event::Daiminkan { actor, pai, .. } if actor == self.player_id => {\n"
-                "                if config.always_include_kan_select {\n"
-                "                    kan_select = Some(pai.deaka().as_usize());\n"
-                "                }\n"
-                "                Some(if is_sanma { 40 } else { 42 })\n"
-                "            }\n"
-            )
-        elif event == "Kakan":
-            old = (
-                "            Event::Kakan { pai, .. } => {\n"
-                "                if config.always_include_kan_select || state.kakan_candidates().len() > 1 {\n"
-                "                    kan_select = Some(pai.deaka().as_usize());\n"
-                "                }\n"
-                "                Some(42)\n"
-                "            }\n"
-            )
-            new = (
-                "            Event::Kakan { pai, .. } => {\n"
-                "                if config.always_include_kan_select || state.kakan_candidates().len() > 1 {\n"
-                "                    kan_select = Some(pai.deaka().as_usize());\n"
-                "                }\n"
-                "                Some(if is_sanma { 40 } else { 42 })\n"
-                "            }\n"
-            )
-        else:
-            old = (
-                "            Event::Ankan { consumed, .. } => {\n"
-                "                if config.always_include_kan_select || state.ankan_candidates().len() > 1 {\n"
-                "                    kan_select = Some(consumed[0].deaka().as_usize());\n"
-                "                }\n"
-                "                Some(42)\n"
-                "            }\n"
-            )
-            new = (
-                "            Event::Ankan { consumed, .. } => {\n"
-                "                if config.always_include_kan_select || state.ankan_candidates().len() > 1 {\n"
-                "                    kan_select = Some(consumed[0].deaka().as_usize());\n"
-                "                }\n"
-                "                Some(if is_sanma { 40 } else { 42 })\n"
-                "            }\n"
-            )
-        text = replace_once(text, old, new, f"dataset {event} label")
+    kan_replacements = (
+        (
+            "            Event::Daiminkan { actor, pai, .. } if actor == self.player_id => {\n"
+            "                if config.always_include_kan_select {\n"
+            "                    kan_select = Some(pai.deaka().as_usize());\n"
+            "                }\n"
+            "                Some(42)\n"
+            "            }\n",
+            "            Event::Daiminkan { actor, pai, .. } if actor == self.player_id => {\n"
+            "                if config.always_include_kan_select {\n"
+            "                    kan_select = Some(pai.deaka().as_usize());\n"
+            "                }\n"
+            "                Some(if is_sanma { 40 } else { 42 })\n"
+            "            }\n",
+            "dataset daiminkan label",
+        ),
+        (
+            "            Event::Kakan { pai, .. } => {\n"
+            "                if config.always_include_kan_select || state.kakan_candidates().len() > 1 {\n"
+            "                    kan_select = Some(pai.deaka().as_usize());\n"
+            "                }\n"
+            "                Some(42)\n"
+            "            }\n",
+            "            Event::Kakan { pai, .. } => {\n"
+            "                if config.always_include_kan_select || state.kakan_candidates().len() > 1 {\n"
+            "                    kan_select = Some(pai.deaka().as_usize());\n"
+            "                }\n"
+            "                Some(if is_sanma { 40 } else { 42 })\n"
+            "            }\n",
+            "dataset kakan label",
+        ),
+        (
+            "            Event::Ankan { consumed, .. } => {\n"
+            "                if config.always_include_kan_select || state.ankan_candidates().len() > 1 {\n"
+            "                    kan_select = Some(consumed[0].deaka().as_usize());\n"
+            "                }\n"
+            "                Some(42)\n"
+            "            }\n",
+            "            Event::Ankan { consumed, .. } => {\n"
+            "                if config.always_include_kan_select || state.ankan_candidates().len() > 1 {\n"
+            "                    kan_select = Some(consumed[0].deaka().as_usize());\n"
+            "                }\n"
+            "                Some(if is_sanma { 40 } else { 42 })\n"
+            "            }\n",
+            "dataset ankan label",
+        ),
+    )
+    for old, new, label in kan_replacements:
+        text = replace_once(text, old, new, label)
 
     text = replace_once(
         text,
@@ -111,40 +105,54 @@ def patch_gameplay(text: str) -> str:
         "            }\n",
         "dataset ryukyoku label",
     )
-
     text = replace_once(
         text,
         "                                ret = Some(43);\n",
         "                                ret = Some(if is_sanma { 41 } else { 43 });\n",
         "dataset agari label",
     )
-
     text = replace_once(
         text,
         "                        ret = Some(45);\n",
         "                        ret = Some(if is_sanma { 43 } else { 45 });\n",
         "dataset pass label",
     )
-
     return text
+
+
+def patch_dataset_mod(text: str) -> str:
+    marker = f"// {MARKER} ABI={ABI_VERSION}"
+    if marker in text:
+        return text
+    text = marker + "\n" + text
+    return replace_once(
+        text,
+        "    m.add_class::<Grp>()?;\n    add_submodule(py, prefix, super_mod, &m)\n",
+        f"    m.add_class::<Grp>()?;\n    m.add(\"UNIFIED_GAMEPLAY_ABI\", {ABI_VERSION}u8)?;\n"
+        "    add_submodule(py, prefix, super_mod, &m)\n",
+        "dataset Python ABI marker",
+    )
 
 
 def apply(root: Path) -> None:
     root = root.expanduser().resolve()
     consts = root / "libriichi/src/consts.rs"
     gameplay = root / "libriichi/src/dataset/gameplay.rs"
+    dataset_mod = root / "libriichi/src/dataset/mod.rs"
     if not consts.is_file() or REQUIRES not in consts.read_text(encoding="utf-8"):
         raise RuntimeError("Stage 8B requires unified action/observation Stage 3E")
-    if not gameplay.is_file():
-        raise RuntimeError(f"missing gameplay dataset source: {gameplay}")
+    for path in (gameplay, dataset_mod):
+        if not path.is_file():
+            raise RuntimeError(f"missing dataset source: {path}")
 
-    original = gameplay.read_text(encoding="utf-8")
-    updated = patch_gameplay(original)
-    if updated != original:
-        gameplay.write_text(updated, encoding="utf-8")
-        print(f"patched: {gameplay}")
-    else:
-        print(f"unchanged: {gameplay}")
+    for path, transform in ((gameplay, patch_gameplay), (dataset_mod, patch_dataset_mod)):
+        original = path.read_text(encoding="utf-8")
+        updated = transform(original)
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+            print(f"patched: {path}")
+        else:
+            print(f"unchanged: {path}")
 
     post = gameplay.read_text(encoding="utf-8")
     required = (
@@ -160,7 +168,10 @@ def apply(root: Path) -> None:
     missing = [token for token in required if token not in post]
     if missing:
         raise RuntimeError(f"Stage 8B postconditions failed: {missing}")
-    print("MORTAL_UNIFIED_DATASET_STAGE8B_OK")
+    mod_post = dataset_mod.read_text(encoding="utf-8")
+    if f'm.add("UNIFIED_GAMEPLAY_ABI", {ABI_VERSION}u8)?;' not in mod_post:
+        raise RuntimeError("Stage 8B Python ABI marker postcondition failed")
+    print(f"MORTAL_UNIFIED_DATASET_STAGE8B_OK abi={ABI_VERSION}")
 
 
 def main() -> None:
