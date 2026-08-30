@@ -36,6 +36,13 @@ def compare_profile_health(profile: dict[str, Any], health: dict[str, Any] | Non
             "drift": ["offline"],
         }
     errors = verify_health(health, profile.get("serving", {}))
+    expected_device = str((profile.get("target", {}) or {}).get("device", "")).strip()
+    if expected_device and expected_device.casefold() != "auto":
+        for mode in ("3p", "4p"):
+            actual = str((health.get("models", {}).get(mode, {}) or {}).get("device", "")).strip()
+            if actual != expected_device:
+                errors.append(f"device:{mode}")
+    errors = list(dict.fromkeys(errors))
     return {
         "verified": True,
         "matches": not errors,
