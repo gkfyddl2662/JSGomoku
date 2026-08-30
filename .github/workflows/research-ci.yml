@@ -41,7 +41,9 @@ jobs:
             tests/test_evaluation_gating.py \
             tests/test_paired_promotion.py
       - name: JavaScript syntax
-        run: node --check static/app.js
+        run: |
+          node --check static/app.js
+          node --check static/experiments.js
       - name: PowerShell syntax
         shell: pwsh
         run: |
@@ -207,9 +209,9 @@ jobs:
         run: python scripts/patch_mortal_4p.py --root /tmp/mortal-4p
       - name: Compile patched 4P trainer
         run: |
+          python -m py_compile /tmp/mortal-4p/mortal/model.py
           python -m py_compile /tmp/mortal-4p/mortal/train.py
           python -m py_compile /tmp/mortal-4p/mortal/train_grp.py
-          python -m py_compile /tmp/mortal-4p/mortal/model.py
       - name: Verify 4P ABI and ROGS postconditions
         run: |
           grep -q "compute_mortal_rogs_batch" /tmp/mortal-4p/mortal/train.py
