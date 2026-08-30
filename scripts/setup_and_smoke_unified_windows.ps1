@@ -23,10 +23,15 @@ foreach ($path in @($Bootstrap, $Smoke)) {
     }
 }
 
-function Get-GitText([string[]]$Args) {
-    $output = & git @Args 2>&1
+function Get-GitText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$GitArgs
+    )
+
+    $output = & git @GitArgs 2>&1
     if ($LASTEXITCODE -ne 0) {
-        throw "git command failed: git $($Args -join ' ')`n$($output | Out-String)"
+        throw "git command failed: git $($GitArgs -join ' ')`n$($output | Out-String)"
     }
     return (($output | Out-String).Trim())
 }
@@ -36,15 +41,15 @@ function Repair-PartialUnifiedBootstrap {
     if (-not (Test-Path (Join-Path $InstallRoot ".git"))) { return }
     if (Test-Path $ManagedMarker) { return }
 
-    $dirtyText = Get-GitText @("-C", $InstallRoot, "status", "--porcelain=v1", "--untracked-files=all")
+    $dirtyText = Get-GitText -GitArgs @("-C", $InstallRoot, "status", "--porcelain=v1", "--untracked-files=all")
     if ([string]::IsNullOrWhiteSpace($dirtyText)) { return }
 
-    $head = Get-GitText @("-C", $InstallRoot, "rev-parse", "HEAD")
+    $head = Get-GitText -GitArgs @("-C", $InstallRoot, "rev-parse", "HEAD")
     if ($head -ne $CanonicalSha) {
         throw "Unmarked dirty runtime is not at the pinned canonical SHA. Preserve it manually before rerunning: $InstallRoot"
     }
 
-    $origin = Get-GitText @("-C", $InstallRoot, "config", "--get", "remote.origin.url")
+    $origin = Get-GitText -GitArgs @("-C", $InstallRoot, "config", "--get", "remote.origin.url")
     $originNormalized = $origin.TrimEnd('/')
     $canonicalNormalized = $CanonicalRepo.TrimEnd('/')
     if ($originNormalized -ne $canonicalNormalized) {
@@ -73,7 +78,7 @@ function Repair-PartialUnifiedBootstrap {
     & git -C $InstallRoot clean -fd -e ".venv/" -e "runtime/"
     if ($LASTEXITCODE -ne 0) { throw "Failed to clean partial unified runtime" }
 
-    $remaining = Get-GitText @("-C", $InstallRoot, "status", "--porcelain=v1", "--untracked-files=all")
+    $remaining = Get-GitText -GitArgs @("-C", $InstallRoot, "status", "--porcelain=v1", "--untracked-files=all")
     if (-not [string]::IsNullOrWhiteSpace($remaining)) {
         throw "Partial recovery left unexpected source changes:`n$remaining"
     }
