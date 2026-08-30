@@ -55,10 +55,12 @@ def main() -> int:
 
     project = Path(__file__).resolve().parents[1]
     root = args.runtime_root.expanduser().resolve()
-    model_3p = (args.model_3p or root / "runtime" / "smoke-training" / "smoke-trained-3p.pth").resolve()
-    model_4p = (args.model_4p or root / "runtime" / "smoke-training" / "smoke-trained-4p.pth").resolve()
+    smoke_3p = root / "runtime" / "smoke-training" / "smoke-trained-3p.pth"
+    smoke_4p = root / "runtime" / "smoke-training" / "smoke-trained-4p.pth"
+    model_3p = args.model_3p.resolve() if args.model_3p else smoke_3p.resolve() if smoke_3p.is_file() else None
+    model_4p = args.model_4p.resolve() if args.model_4p else smoke_4p.resolve() if smoke_4p.is_file() else None
     for path in (model_3p, model_4p):
-        if not path.is_file():
+        if path is not None and not path.is_file():
             raise SystemExit(f"API smoke checkpoint missing: {path}")
 
     port = free_port()
@@ -76,11 +78,12 @@ def main() -> int:
         args.device,
         "--api-key",
         args.api_key,
-        "--model-3p",
-        str(model_3p),
-        "--model-4p",
-        str(model_4p),
     ]
+    if model_3p is not None:
+        cmd.extend(["--model-3p", str(model_3p)])
+    if model_4p is not None:
+        cmd.extend(["--model-4p", str(model_4p)])
+
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join(
         [str(project), str(root / "mortal"), env.get("PYTHONPATH", "")]
