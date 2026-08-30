@@ -14,6 +14,7 @@ $Bootstrap = Join-Path $ProjectRoot "scripts\bootstrap_runtime.ps1"
 $LibriichiStage1 = Join-Path $ProjectRoot "scripts\patch_libriichi_unified_stage1.py"
 $LibriichiStage2 = Join-Path $ProjectRoot "scripts\patch_libriichi_unified_stage2.py"
 $LibriichiStage3A = Join-Path $ProjectRoot "scripts\patch_libriichi_unified_stage3a.py"
+$LibriichiStage3B = Join-Path $ProjectRoot "scripts\patch_libriichi_unified_stage3b.py"
 $ModelStage1 = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage1.py"
 $TrainerStage2 = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage2.py"
 $SharedPatch = Join-Path $ProjectRoot "scripts\patch_mortal_4p.py"
@@ -50,10 +51,12 @@ python $LibriichiStage2 --root $CoreRoot
 if ($LASTEXITCODE -ne 0) { throw "unified libriichi Stage 2 failed" }
 python $LibriichiStage3A --root $CoreRoot
 if ($LASTEXITCODE -ne 0) { throw "unified libriichi Stage 3A failed" }
+python $LibriichiStage3B --root $CoreRoot
+if ($LASTEXITCODE -ne 0) { throw "unified libriichi Stage 3B failed" }
 
 # Reuse the proven Windows/PyTorch/Rust bootstrap, but do not apply the old
 # mode-specific patch pipeline. The single crate now accepts runtime-sized
-# 44/46 action vectors and shared 3P/4P MJAI event shapes before one build.
+# 44/46 action vectors and shared 3P/4P MJAI events before one build.
 Write-Host "[4/7] Building the single Python/Rust runtime..." -ForegroundColor Cyan
 $args = @(
     "-NoProfile",
@@ -90,7 +93,8 @@ $Engine = Join-Path $CoreRoot "mortal\engine.py"
 $Consts = Join-Path $CoreRoot "libriichi\src\consts.rs"
 $Agent = Join-Path $CoreRoot "libriichi\src\agent\mortal.rs"
 $Event = Join-Path $CoreRoot "libriichi\src\mjai\event.rs"
-foreach ($path in @($Model, $Train, $Engine, $Consts, $Agent, $Event)) {
+$Update = Join-Path $CoreRoot "libriichi\src\state\update.rs"
+foreach ($path in @($Model, $Train, $Engine, $Consts, $Agent, $Event, $Update)) {
     if (-not (Test-Path $path -PathType Leaf)) { throw "Missing unified-core file: $path" }
 }
 if (-not (Select-String -Path $Model -Pattern "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" -Quiet)) { throw "Unified model marker missing" }
@@ -99,6 +103,7 @@ if (-not (Select-String -Path $Engine -Pattern "MORTAL_ROGS_UNIFIED_ENGINE_STAGE
 if (-not (Select-String -Path $Consts -Pattern "MORTAL_ROGS_UNIFIED_LIBRIICHI_STAGE1" -Quiet)) { throw "Unified libriichi marker missing" }
 if (-not (Select-String -Path $Agent -Pattern "MORTAL_ROGS_UNIFIED_AGENT_STAGE2" -Quiet)) { throw "Unified agent marker missing" }
 if (-not (Select-String -Path $Event -Pattern "MORTAL_ROGS_UNIFIED_EVENT_STAGE3A" -Quiet)) { throw "Unified event marker missing" }
+if (-not (Select-String -Path $Update -Pattern "MORTAL_ROGS_UNIFIED_EVENT_BOUNDARY_STAGE3B" -Quiet)) { throw "Unified event boundary marker missing" }
 
 Write-Host "[7/7] Probing the installed single libriichi module..." -ForegroundColor Cyan
 if (-not $SkipRustBuild) {
@@ -125,13 +130,13 @@ print('MORTAL_UNIFIED_LIBRIICHI_CONTRACT_OK')
 }
 
 Write-Host ""
-Write-Host "MORTAL_UNIFIED_CORE_STAGE3A_OK root=$CoreRoot" -ForegroundColor Green
+Write-Host "MORTAL_UNIFIED_CORE_STAGE3B_OK root=$CoreRoot" -ForegroundColor Green
 Write-Host "One Mortal source tree: $CoreRoot"
 Write-Host "One Python environment: $Py"
 Write-Host "One libriichi module: dual-mode shape/action contract ready"
 Write-Host "One Rust Mortal agent: runtime-sized 44/46 action vectors ready"
-Write-Host "Shared MJAI event format: 3P/4P + nukidora schema ready"
+Write-Host "Shared MJAI event format/boundaries: 3P/4P schema ready"
 Write-Host "4P game engine: ready"
 Write-Host "3P model/trainer dimensions: ready"
-Write-Host "3P PlayerState/arena/action translation: pending Stage 3B+" -ForegroundColor Yellow
+Write-Host "3P PlayerState semantics/action translation: pending Stage 3C+" -ForegroundColor Yellow
 Write-Host "Do not replace the current user runtime until 3P game parity passes." -ForegroundColor Yellow
