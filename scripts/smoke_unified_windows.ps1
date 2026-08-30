@@ -2,6 +2,7 @@ param(
     [string]$InstallRoot = "",
     [switch]$SkipCompile,
     [switch]$SkipTrainingStep,
+    [switch]$SkipGameplay,
     [switch]$SkipControlCenter
 )
 
@@ -32,9 +33,6 @@ function Invoke-NativeCapture {
 
     $previousErrorAction = $ErrorActionPreference
     try {
-        # Windows PowerShell 5.1 can promote native stderr to NativeCommandError
-        # when ErrorActionPreference=Stop. Capture it as ordinary output and
-        # decide success exclusively from LASTEXITCODE instead.
         $ErrorActionPreference = "Continue"
         $output = & $Executable @Arguments 2>&1
         $exitCode = $LASTEXITCODE
@@ -53,13 +51,9 @@ function Get-TritonVersion {
         "-c",
         "import triton; print(triton.__version__)"
     )
-    if ($probe.ExitCode -ne 0) {
-        return $null
-    }
+    if ($probe.ExitCode -ne 0) { return $null }
     $version = $probe.Output.Trim()
-    if ([string]::IsNullOrWhiteSpace($version)) {
-        return $null
-    }
+    if ([string]::IsNullOrWhiteSpace($version)) { return $null }
     return $version
 }
 
@@ -72,7 +66,7 @@ if (-not [string]::IsNullOrWhiteSpace($existingPythonPath)) {
 $env:PYTHONPATH = [string]::Join([System.IO.Path]::PathSeparator, $parts)
 
 if (-not $SkipCompile) {
-    Write-Host "[0/2] Verifying Windows Triton for torch.compile..."
+    Write-Host "[0/3] Verifying Windows Triton for torch.compile..."
     $tritonVersion = Get-TritonVersion
     if ([string]::IsNullOrWhiteSpace($tritonVersion) -or -not $tritonVersion.StartsWith("3.6")) {
         Write-Host "Installing compatible triton-windows 3.6.x for PyTorch 2.11..."
@@ -82,15 +76,12 @@ if (-not $SkipCompile) {
         if ($install.ExitCode -ne 0) {
             throw "Failed to install triton-windows 3.6.x into unified runtime venv:`n$($install.Output)"
         }
-        if (-not [string]::IsNullOrWhiteSpace($install.Output)) {
-            Write-Host $install.Output
-        }
-
+        if (-not [string]::IsNullOrWhiteSpace($install.Output)) { Write-Host $install.Output }
         $tritonVersion = Get-TritonVersion
         if ([string]::IsNullOrWhiteSpace($tritonVersion) -or -not $tritonVersion.StartsWith("3.6")) {
             $details = Invoke-NativeCapture -Executable $Py -Arguments @(
                 "-c",
-                "import sys, traceback; print(sys.executable); import triton; print(triton.__version__)"
+                "import sys; print(sys.executable); import triton; print(triton.__version__)"
             )
             throw "Triton import/version check failed after installation. Probe output:`n$($details.Output)"
         }
@@ -98,27 +89,27 @@ if (-not $SkipCompile) {
     Write-Host "TRITON_WINDOWS_OK version=$tritonVersion"
 }
 
-# Older unified runtimes were patched before the PyO3 packaging contract was
-# finalized and may still import `libriichi.consts` as if libriichi were a
-# regular Python package. The unified extension exposes `consts` as an
-# attribute, so repair model.py in place before the smoke. This Stage 1 patch
-# is idempotent and does not require rebuilding the Rust extension.
-Write-Host "[0.5/2] Verifying unified Python extension imports..."
-$modelCompatPatch = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage1.py"
-& $Py $modelCompatPatch --root $InstallRoot
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to apply unified model import compatibility patch"
+Write-Host "[0.5/3] Repairing/verifying unified Python ABI imports..."
+foreach ($patch in @(
+    "patch_mortal_unified_stage1.py",
+    "patch_mortal_unified_python_abi_stage8a.py"
+)) {
+    $patchPath = Join-Path $ProjectRoot "scripts\$patch"
+    & $Py $patchPath --root $InstallRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to apply unified Python ABI compatibility patch: $patch"
+    }
 }
 $modelImportProbe = Invoke-NativeCapture -Executable $Py -Arguments @(
     "-c",
-    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts; import model; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION)"
+    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts, arena, dataset, stat; import model, engine, player, dataloader, train_grp; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION); print('MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK')"
 )
 if ($modelImportProbe.ExitCode -ne 0) {
-    throw "Unified model import probe failed:`n$($modelImportProbe.Output)"
+    throw "Unified Python ABI import probe failed:`n$($modelImportProbe.Output)"
 }
 Write-Host $modelImportProbe.Output
 
-Write-Host "[1/2] Running one-process 3P -> 4P CUDA/BF16 runtime smoke..."
+Write-Host "[1/3] Running one-process 3P -> 4P CUDA/BF16 runtime smoke..."
 $smokeArgs = @(
     (Join-Path $ProjectRoot "scripts\smoke_unified_runtime.py"),
     "--runtime-root",
@@ -131,8 +122,18 @@ if ($LASTEXITCODE -ne 0) {
     throw "Unified CUDA runtime smoke failed with exit code $LASTEXITCODE"
 }
 
+if (-not $SkipGameplay) {
+    Write-Host "[2/3] Running real 3P + 4P arena/log/dataset gameplay E2E..."
+    & $Py (Join-Path $ProjectRoot "scripts\smoke_unified_gameplay.py") --runtime-root $InstallRoot --device cuda:0
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unified gameplay E2E smoke failed with exit code $LASTEXITCODE"
+    }
+} else {
+    Write-Host "[2/3] Skipping real gameplay E2E (-SkipGameplay)."
+}
+
 if (-not $SkipControlCenter) {
-    Write-Host "[2/2] Verifying Control Center uses the same root, Python and Mortal code for both modes..."
+    Write-Host "[3/3] Verifying Control Center uses the same root, Python and Mortal code for both modes..."
     $ControlCenterProbe = @'
 from pathlib import Path
 from app.settings import load_settings
@@ -174,7 +175,7 @@ print('CONTROL_CENTER_UNIFIED_RUNTIME_OK')
         throw "Control Center unified routing probe failed with exit code $LASTEXITCODE"
     }
 } else {
-    Write-Host "[2/2] Skipping Control Center probe (-SkipControlCenter)."
+    Write-Host "[3/3] Skipping Control Center probe (-SkipControlCenter)."
 }
 
 Write-Host ""
