@@ -37,8 +37,7 @@ jobs:
           grep -q 'MORTAL_UNIFIED_GAMEPLAY_E2E_OK' scripts/smoke_unified_gameplay.py
           grep -q 'MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK' scripts/smoke_unified_training.py
           grep -q 'GameplayLoader' scripts/smoke_unified_training.py
-          grep -q 'smoke-trained-3p.pth' scripts/smoke_unified_training.py
-          grep -q 'smoke-trained-4p.pth' scripts/smoke_unified_training.py
+          grep -Fq 'smoke-trained-{mode}.pth' scripts/smoke_unified_training.py
           grep -q 'MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK' scripts/smoke_unified_evaluator.py
           grep -q 'require-trained-checkpoints' scripts/smoke_unified_evaluator.py
           grep -q 'OneVsTwo' scripts/smoke_unified_gameplay.py
