@@ -11,7 +11,7 @@ from torch.nn import functional as F
 class MortalV4Outputs:
     """Parameter-free view of a Mortal v4 DQN output.
 
-    Mortal v4 stores a single Linear(1024, 1 + ACTION_SPACE) layer.  We expose
+    Mortal v4 stores a single Linear(1024, 1 + ACTION_SPACE) layer. We expose
     the value and centred advantage terms without adding any deploy-time
     parameters, so the resulting state_dict remains fully compatible with
     standard Mortal/Akagi-NG loaders.
@@ -25,7 +25,7 @@ class MortalV4Outputs:
 def mortal_v4_outputs(dqn: nn.Module, phi: Tensor, mask: Tensor) -> MortalV4Outputs:
     if not hasattr(dqn, "net"):
         raise TypeError("ROGS requires a Mortal v4 DQN exposing dqn.net")
-    if mask.dtype is not torch.bool:
+    if mask.dtype != torch.bool:
         mask = mask.to(torch.bool)
 
     action_space = mask.shape[-1]
@@ -45,7 +45,7 @@ def hedge_policy(advantage: Tensor, mask: Tensor, eta: float = 1.0) -> Tensor:
     """Convert neural cumulative-advantage/regret estimates into a Hedge policy."""
     if eta <= 0:
         raise ValueError("eta must be positive")
-    if mask.dtype is not torch.bool:
+    if mask.dtype != torch.bool:
         mask = mask.to(torch.bool)
     logits = (advantage * eta).masked_fill(~mask, -torch.inf)
     return torch.softmax(logits, dim=-1)
@@ -99,25 +99,35 @@ def masked_teacher_kl(
     *,
     temperature: float = 1.0,
 ) -> Tensor:
-    """Distil oracle/search teacher preferences without changing inference ABI."""
+    """Distil oracle/search teacher preferences without changing inference ABI.
+
+    Illegal actions use -inf logits, so the KL term is explicitly zeroed on
+    masked positions to avoid the indeterminate 0 * inf form.
+    """
     if temperature <= 0:
         raise ValueError("temperature must be positive")
-    if mask.dtype is not torch.bool:
+    if mask.dtype != torch.bool:
         mask = mask.to(torch.bool)
+    if not mask.any(dim=-1).all():
+        raise ValueError("Every sample must have at least one legal action")
 
     s = (student_scores / temperature).masked_fill(~mask, -torch.inf)
     t = (teacher_scores / temperature).masked_fill(~mask, -torch.inf)
     teacher_prob = torch.softmax(t, dim=-1)
+    teacher_log_prob = torch.log_softmax(t, dim=-1)
     student_log_prob = torch.log_softmax(s, dim=-1)
-    return F.kl_div(student_log_prob, teacher_prob, reduction="batchmean") * (temperature**2)
+    pointwise = teacher_prob * (teacher_log_prob - student_log_prob)
+    pointwise = torch.where(mask, pointwise, torch.zeros_like(pointwise))
+    return pointwise.sum(-1).mean() * (temperature**2)
 
 
 def entropy_bonus(policy: Tensor, mask: Tensor) -> Tensor:
-    if mask.dtype is not torch.bool:
+    if mask.dtype != torch.bool:
         mask = mask.to(torch.bool)
-    p = policy.masked_fill(~mask, 0.0).clamp_min(1e-12)
-    entropy = -(p * p.log()).sum(-1)
-    return entropy.mean()
+    safe_p = policy.clamp_min(1e-12)
+    pointwise = -(safe_p * safe_p.log())
+    pointwise = torch.where(mask, pointwise, torch.zeros_like(pointwise))
+    return pointwise.sum(-1).mean()
 
 
 def potential_shaped_reward(
