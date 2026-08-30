@@ -1,0 +1,155 @@
+name: Unified Core CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  CANONICAL_MORTAL_SHA: 0cff2b52982be5b1163aa9a62fb01f03ce91e0d2
+
+jobs:
+  unified-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python test stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Clone pinned canonical Mortal core
+        run: |
+          git clone https://github.com/Equim-chan/Mortal.git /tmp/mortal-unified
+          git -C /tmp/mortal-unified checkout "$CANONICAL_MORTAL_SHA"
+          test "$(git -C /tmp/mortal-unified rev-parse HEAD)" = "$CANONICAL_MORTAL_SHA"
+
+      - name: Apply single libriichi dual-mode stages
+        run: |
+          python scripts/patch_libriichi_unified_stage1.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_stage2.py --root /tmp/mortal-unified
+
+      - name: Compile unified libriichi Rust crate
+        working-directory: /tmp/mortal-unified
+        run: cargo check -p libriichi --no-default-features
+
+      - name: Verify Rust dual-mode transport contract
+        run: |
+          grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified/libriichi/src/consts.rs
+          grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
+          grep -q "q_values: Vec<Vec<f32>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+          grep -q "masks_recv: Vec<Vec<bool>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+          grep -q "game_mode: String" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+          grep -q "action_space: usize" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+
+      - name: Apply one-model and one-trainer stages
+        run: |
+          python scripts/patch_mortal_unified_stage1.py --root /tmp/mortal-unified
+          python scripts/patch_mortal_unified_stage2.py --root /tmp/mortal-unified
+          python scripts/patch_mortal_4p.py --root /tmp/mortal-unified
+
+      - name: Compile unified Python core
+        run: |
+          python -m py_compile /tmp/mortal-unified/mortal/model.py
+          python -m py_compile /tmp/mortal-unified/mortal/train.py
+          python -m py_compile /tmp/mortal-unified/mortal/train_grp.py
+          python -m py_compile /tmp/mortal-unified/mortal/engine.py
+
+      - name: Synthetic 3P and 4P model forward
+        run: |
+          mkdir -p /tmp/unified-stub/libriichi
+          touch /tmp/unified-stub/libriichi/__init__.py
+          cat > /tmp/unified-stub/libriichi/consts.py <<'PY'
+          ACTION_SPACE = 46
+          GRP_SIZE = 7
+          def obs_shape(version):
+              return (1012, 34)
+          def oracle_obs_shape(version):
+              return (217, 34)
+          PY
+          PYTHONPATH=/tmp/unified-stub:/tmp/mortal-unified/mortal python - <<'PY'
+          import math
+          import torch
+          from model import Brain, DQN, GRP
+          from engine import MortalEngine
+
+          for mode, players, actions, channels, grp_size in (
+              ('3p', 3, 44, 1010, 6),
+              ('4p', 4, 46, 1012, 7),
+          ):
+              brain = Brain(
+                  version=4,
+                  conv_channels=16,
+                  num_blocks=1,
+                  obs_channels=channels,
+              ).eval()
+              dqn = DQN(version=4, action_space=actions).eval()
+              obs = torch.randn(2, channels, 34)
+              mask = torch.ones(2, actions, dtype=torch.bool)
+              with torch.inference_mode():
+                  phi = brain(obs)
+                  q = dqn(phi, mask)
+              assert phi.shape == (2, 1024)
+              assert q.shape == (2, actions)
+              assert torch.isfinite(q).all()
+
+              engine = MortalEngine(
+                  brain=brain,
+                  dqn=dqn,
+                  is_oracle=False,
+                  version=4,
+                  game_mode=mode,
+                  action_space=actions,
+              )
+              acts, q_values, masks, greedy = engine.react_batch(
+                  [obs[0].numpy(), obs[1].numpy()],
+                  [mask[0].numpy(), mask[1].numpy()],
+                  None,
+              )
+              assert len(acts) == 2
+              assert all(len(row) == actions for row in q_values)
+              assert all(len(row) == actions for row in masks)
+              assert all(greedy)
+
+              grp = GRP(
+                  hidden_size=8,
+                  num_layers=1,
+                  num_players=players,
+                  input_size=grp_size,
+              )
+              seq = [
+                  torch.randn(3, grp_size, dtype=torch.float64),
+                  torch.randn(5, grp_size, dtype=torch.float64),
+              ]
+              logits = grp(seq)
+              assert logits.shape == (2, math.factorial(players))
+              matrix = grp.calc_matrix(logits)
+              assert matrix.shape == (2, players, players)
+              assert torch.allclose(
+                  matrix.sum(-1),
+                  torch.ones(2, players, dtype=matrix.dtype),
+              )
+
+          print('MORTAL_UNIFIED_PYTHON_3P_4P_OK')
+          PY
+
+      - name: Verify current 3P safety gate
+        run: |
+          grep -q "3P action translation is not installed yet" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+
+      - name: Reject malformed patches
+        run: git -C /tmp/mortal-unified diff --check
