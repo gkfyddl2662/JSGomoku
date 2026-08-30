@@ -107,8 +107,16 @@ class DeviceExecutionCoordinator:
             lambda: {"acquisitions": 0, "contended": 0, "wait_ms_total": 0.0}
         )
         self._last_release = time.monotonic()
+
+        # 3P/4P checkpoint loads and torch.compile warmups can briefly require a
+        # second model's worth of device memory. Keep only one replacement build
+        # active at a time even though inference of the published model may continue.
+        self._maintenance_lock = threading.Lock()
         self._maintenance_active = 0
+        self._maintenance_waiting = 0
+        self._peak_maintenance_waiting = 0
         self._maintenance_cycles = 0
+        self._maintenance_wait_ms: deque[float] = deque(maxlen=recent_samples)
         self._inference_during_maintenance = 0
 
     @contextmanager
@@ -171,15 +179,23 @@ class DeviceExecutionCoordinator:
 
     @contextmanager
     def maintenance(self) -> Iterator[None]:
+        started = time.perf_counter()
         with self._condition:
-            self._maintenance_active += 1
-            self._maintenance_cycles += 1
-        try:
-            yield
-        finally:
+            self._maintenance_waiting += 1
+            self._peak_maintenance_waiting = max(self._peak_maintenance_waiting, self._maintenance_waiting)
+        with self._maintenance_lock:
+            waited_ms = (time.perf_counter() - started) * 1000.0
             with self._condition:
-                self._maintenance_active = max(0, self._maintenance_active - 1)
-                self._condition.notify_all()
+                self._maintenance_waiting = max(0, self._maintenance_waiting - 1)
+                self._maintenance_active = 1
+                self._maintenance_cycles += 1
+                self._maintenance_wait_ms.append(waited_ms)
+            try:
+                yield
+            finally:
+                with self._condition:
+                    self._maintenance_active = 0
+                    self._condition.notify_all()
 
     def snapshot(self) -> dict[str, Any]:
         with self._condition:
@@ -209,7 +225,15 @@ class DeviceExecutionCoordinator:
                     "max": round(max(self._wait_ms), 3) if self._wait_ms else None,
                 },
                 "maintenance_active": self._maintenance_active > 0,
+                "maintenance_waiting": self._maintenance_waiting,
+                "peak_maintenance_waiting": self._peak_maintenance_waiting,
                 "maintenance_cycles_total": self._maintenance_cycles,
+                "maintenance_wait_ms": {
+                    "p50": _percentile(self._maintenance_wait_ms, 0.50),
+                    "p95": _percentile(self._maintenance_wait_ms, 0.95),
+                    "p99": _percentile(self._maintenance_wait_ms, 0.99),
+                    "max": round(max(self._maintenance_wait_ms), 3) if self._maintenance_wait_ms else None,
+                },
                 "inference_during_maintenance_total": self._inference_during_maintenance,
                 "by_mode": by_mode,
             }
