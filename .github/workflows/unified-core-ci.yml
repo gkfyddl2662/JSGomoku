@@ -42,12 +42,13 @@ jobs:
         run: |
           python scripts/patch_libriichi_unified_stage1.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage2.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_stage3a.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
         run: cargo check -p libriichi --no-default-features
 
-      - name: Verify Rust dual-mode transport contract
+      - name: Verify Rust dual-mode transport and event contracts
         run: |
           grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
@@ -55,6 +56,10 @@ jobs:
           grep -q "masks_recv: Vec<Vec<bool>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "game_mode: String" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "action_space: usize" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+          grep -q "names: Vec<String>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
+          grep -q "scores: Vec<i32>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
+          grep -q "tehais: Vec<Vec<Tile>>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
+          grep -q "Nukidora" /tmp/mortal-unified/libriichi/src/mjai/event.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
