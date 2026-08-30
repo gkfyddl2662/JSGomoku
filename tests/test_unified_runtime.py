@@ -110,7 +110,7 @@ def test_unified_bootstrap_routes_one_click_rust_install_flag(tmp_path: Path, mo
         {"mode": "3p", "install_rust_if_missing": True},
     )
 
-    assert Path(cmd[5]).name == "bootstrap_unified_runtime.ps1"
+    assert cmd[5].replace("\\", "/").endswith("/scripts/bootstrap_unified_runtime.ps1")
     assert "-InstallRoot" in cmd
     assert str(s.mortal_unified_root) in cmd
     assert "-InstallRustIfMissing" in cmd
