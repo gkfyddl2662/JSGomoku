@@ -13,6 +13,7 @@ $CoreRoot = [System.IO.Path]::GetFullPath($CoreRoot)
 $Bootstrap = Join-Path $ProjectRoot "scripts\bootstrap_runtime.ps1"
 $LibriichiStage1 = Join-Path $ProjectRoot "scripts\patch_libriichi_unified_stage1.py"
 $LibriichiStage2 = Join-Path $ProjectRoot "scripts\patch_libriichi_unified_stage2.py"
+$LibriichiStage3A = Join-Path $ProjectRoot "scripts\patch_libriichi_unified_stage3a.py"
 $ModelStage1 = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage1.py"
 $TrainerStage2 = Join-Path $ProjectRoot "scripts\patch_mortal_unified_stage2.py"
 $SharedPatch = Join-Path $ProjectRoot "scripts\patch_mortal_4p.py"
@@ -42,15 +43,17 @@ if ($LASTEXITCODE -ne 0) { throw "failed to fetch canonical Mortal commit" }
 git -C $CoreRoot checkout --detach $CanonicalCommit
 if ($LASTEXITCODE -ne 0) { throw "failed to checkout canonical Mortal commit" }
 
-Write-Host "[3/7] Adding dual-mode contracts to the single libriichi crate..." -ForegroundColor Cyan
+Write-Host "[3/7] Adding dual-mode contracts/events to the single libriichi crate..." -ForegroundColor Cyan
 python $LibriichiStage1 --root $CoreRoot
 if ($LASTEXITCODE -ne 0) { throw "unified libriichi Stage 1 failed" }
 python $LibriichiStage2 --root $CoreRoot
 if ($LASTEXITCODE -ne 0) { throw "unified libriichi Stage 2 failed" }
+python $LibriichiStage3A --root $CoreRoot
+if ($LASTEXITCODE -ne 0) { throw "unified libriichi Stage 3A failed" }
 
 # Reuse the proven Windows/PyTorch/Rust bootstrap, but do not apply the old
 # mode-specific patch pipeline. The single crate now accepts runtime-sized
-# 44/46 action vectors before maturin builds it once.
+# 44/46 action vectors and shared 3P/4P MJAI event shapes before one build.
 Write-Host "[4/7] Building the single Python/Rust runtime..." -ForegroundColor Cyan
 $args = @(
     "-NoProfile",
@@ -86,7 +89,8 @@ $Train = Join-Path $CoreRoot "mortal\train.py"
 $Engine = Join-Path $CoreRoot "mortal\engine.py"
 $Consts = Join-Path $CoreRoot "libriichi\src\consts.rs"
 $Agent = Join-Path $CoreRoot "libriichi\src\agent\mortal.rs"
-foreach ($path in @($Model, $Train, $Engine, $Consts, $Agent)) {
+$Event = Join-Path $CoreRoot "libriichi\src\mjai\event.rs"
+foreach ($path in @($Model, $Train, $Engine, $Consts, $Agent, $Event)) {
     if (-not (Test-Path $path -PathType Leaf)) { throw "Missing unified-core file: $path" }
 }
 if (-not (Select-String -Path $Model -Pattern "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" -Quiet)) { throw "Unified model marker missing" }
@@ -94,6 +98,7 @@ if (-not (Select-String -Path $Train -Pattern "MORTAL_ROGS_UNIFIED_TRAINER_STAGE
 if (-not (Select-String -Path $Engine -Pattern "MORTAL_ROGS_UNIFIED_ENGINE_STAGE2" -Quiet)) { throw "Unified engine marker missing" }
 if (-not (Select-String -Path $Consts -Pattern "MORTAL_ROGS_UNIFIED_LIBRIICHI_STAGE1" -Quiet)) { throw "Unified libriichi marker missing" }
 if (-not (Select-String -Path $Agent -Pattern "MORTAL_ROGS_UNIFIED_AGENT_STAGE2" -Quiet)) { throw "Unified agent marker missing" }
+if (-not (Select-String -Path $Event -Pattern "MORTAL_ROGS_UNIFIED_EVENT_STAGE3A" -Quiet)) { throw "Unified event marker missing" }
 
 Write-Host "[7/7] Probing the installed single libriichi module..." -ForegroundColor Cyan
 if (-not $SkipRustBuild) {
@@ -120,12 +125,13 @@ print('MORTAL_UNIFIED_LIBRIICHI_CONTRACT_OK')
 }
 
 Write-Host ""
-Write-Host "MORTAL_UNIFIED_CORE_STAGE2_OK root=$CoreRoot" -ForegroundColor Green
+Write-Host "MORTAL_UNIFIED_CORE_STAGE3A_OK root=$CoreRoot" -ForegroundColor Green
 Write-Host "One Mortal source tree: $CoreRoot"
 Write-Host "One Python environment: $Py"
 Write-Host "One libriichi module: dual-mode shape/action contract ready"
 Write-Host "One Rust Mortal agent: runtime-sized 44/46 action vectors ready"
+Write-Host "Shared MJAI event format: 3P/4P + nukidora schema ready"
 Write-Host "4P game engine: ready"
 Write-Host "3P model/trainer dimensions: ready"
-Write-Host "3P event translation + game state rules: pending Stage 3+" -ForegroundColor Yellow
+Write-Host "3P PlayerState/arena/action translation: pending Stage 3B+" -ForegroundColor Yellow
 Write-Host "Do not replace the current user runtime until 3P game parity passes." -ForegroundColor Yellow
