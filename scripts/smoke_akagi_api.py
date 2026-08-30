@@ -80,6 +80,23 @@ def assert_mode_response(mode: str, body: dict, *, actions: int, expected_action
                 raise SystemExit(f"{mode} API did not sanitize illegal Q value at row={row_index} action={action_index}")
 
 
+def assert_managed_response(mode: str, body: dict, *, actions: int, obs_channels: int) -> None:
+    if body.get("protocol") != "mortal-rogs-inference-v1":
+        raise SystemExit(f"{mode} managed API protocol mismatch: {body}")
+    if body.get("mode") != mode or body.get("action_space") != actions:
+        raise SystemExit(f"{mode} managed API mode/action metadata mismatch: {body}")
+    if body.get("obs_shape") != [obs_channels, 34]:
+        raise SystemExit(f"{mode} managed API obs metadata mismatch: {body.get('obs_shape')}")
+    latency = body.get("latency_ms")
+    if not isinstance(latency, (int, float)) or latency < 0:
+        raise SystemExit(f"{mode} managed API latency metadata invalid: {latency}")
+    model = body.get("model")
+    if not isinstance(model, dict) or model.get("abi_version") != 4 or not model.get("checkpoint_signature"):
+        raise SystemExit(f"{mode} managed API model identity invalid: {model}")
+    if model.get("current") is not True:
+        raise SystemExit(f"{mode} managed API reported a stale model: {model}")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="End-to-end smoke for the Akagi-NG-compatible Mortal inference HTTP API")
     p.add_argument("--runtime-root", type=Path, required=True)
@@ -176,6 +193,20 @@ def main() -> int:
         health_bad_status, _ = request_json(f"{base}/health", api_key="wrong-key")
         if health_bad_status != 401:
             raise SystemExit(f"Protected health endpoint should return 401 for a bad key, got {health_bad_status}")
+        managed_bad_status, _ = request_json(f"{base}/api/inference/models", api_key="wrong-key")
+        if managed_bad_status != 401:
+            raise SystemExit(f"Protected managed endpoint should return 401 for a bad key, got {managed_bad_status}")
+
+        managed_health_status, managed_health = request_json(f"{base}/api/inference/health", api_key=args.api_key)
+        if managed_health_status != 200 or managed_health.get("management_protocol") != "mortal-rogs-inference-v1":
+            raise SystemExit(f"Managed health contract failed: HTTP {managed_health_status}: {managed_health}")
+        models_status, models_body = request_json(f"{base}/api/inference/models", api_key=args.api_key)
+        if models_status != 200 or models_body.get("protocol") != "mortal-rogs-inference-v1":
+            raise SystemExit(f"Managed models contract failed: HTTP {models_status}: {models_body}")
+        for mode in ("3p", "4p"):
+            model_info = models_body.get("models", {}).get(mode, {})
+            if model_info.get("model", {}).get("abi_version") != 4 or model_info.get("current") is not True:
+                raise SystemExit(f"Managed {mode} model status invalid: {model_info}")
 
         bad_status, _ = request_json(
             f"{base}/react_batch_3p",
@@ -195,7 +226,15 @@ def main() -> int:
         if wrong_shape_status != 400:
             raise SystemExit(f"4P-shaped payload on 3P endpoint should return 400, got {wrong_shape_status}")
 
-        results: dict[str, object] = {"health": health, "modes": {}}
+        bad_mode_status, _ = request_json(
+            f"{base}/api/inference/5p",
+            api_key=args.api_key,
+            payload=build_payload(1010, 44)[0],
+        )
+        if bad_mode_status != 404:
+            raise SystemExit(f"Unsupported managed mode should return 404, got {bad_mode_status}")
+
+        results: dict[str, object] = {"health": health, "managed_health": managed_health, "modes": {}}
         mode_payloads: dict[str, tuple[str, dict, list[int], int]] = {}
         for mode, endpoint, obs_channels, actions in (
             ("3p", "/react_batch_3p", 1010, 44),
@@ -209,13 +248,30 @@ def main() -> int:
             if status != 200:
                 raise SystemExit(f"{mode} API returned HTTP {status}: {body}")
             assert_mode_response(mode, body, actions=actions, expected_actions=expected_actions)
+
+            managed_status, managed_body = request_json(
+                f"{base}/api/inference/{mode}", api_key=args.api_key, payload=payload, gzip_body=True
+            )
+            if managed_status != 200:
+                raise SystemExit(f"{mode} managed API returned HTTP {managed_status}: {managed_body}")
+            assert_mode_response(f"{mode}-managed", managed_body, actions=actions, expected_actions=expected_actions)
+            assert_managed_response(mode, managed_body, actions=actions, obs_channels=obs_channels)
             results["modes"][mode] = {
                 "endpoint": endpoint,
+                "managed_endpoint": f"/api/inference/{mode}",
                 "batch": 2,
                 "obs": [obs_channels, 34],
                 "action_space": actions,
                 "actions": body["actions"],
+                "latency_ms": managed_body["latency_ms"],
+                "model": managed_body["model"],
             }
+
+        reload_status, reload_body = request_json(
+            f"{base}/api/inference/reload", api_key=args.api_key, payload={"mode": "3p"}
+        )
+        if reload_status != 200 or reload_body.get("results", {}).get("3p", {}).get("ok") is not True:
+            raise SystemExit(f"Explicit 3P reload contract failed: HTTP {reload_status}: {reload_body}")
 
         status, loaded_health = request_json(f"{base}/health", api_key=args.api_key)
         if status != 200:
@@ -251,12 +307,26 @@ def main() -> int:
         if "does not match endpoint 3p" not in info["last_error"]:
             raise SystemExit(f"Unexpected 3P hot-reload rejection reason: {info['last_error']}")
 
-        # Restore the valid 3P checkpoint and verify automatic recovery/reload.
+        rejected_reload_status, rejected_reload = request_json(
+            f"{base}/api/inference/reload", api_key=args.api_key, payload={"mode": "3p"}
+        )
+        if rejected_reload_status != 409:
+            raise SystemExit(
+                f"Explicit reload must reject a bad replacement without dropping the old model, got "
+                f"HTTP {rejected_reload_status}: {rejected_reload}"
+            )
+
+        # Restore the valid 3P checkpoint and verify explicit recovery/reload.
         shutil.copyfile(source_3p, model_3p)
         touch_new_signature(model_3p)
+        recovered_reload_status, recovered_reload = request_json(
+            f"{base}/api/inference/reload", api_key=args.api_key, payload={"mode": "3p"}
+        )
+        if recovered_reload_status != 200 or recovered_reload.get("results", {}).get("3p", {}).get("ok") is not True:
+            raise SystemExit(f"3P explicit hot-reload recovery failed: HTTP {recovered_reload_status}: {recovered_reload}")
         status, body = request_json(f"{base}{endpoint}", api_key=args.api_key, payload=payload, gzip_body=True)
         if status != 200:
-            raise SystemExit(f"3P hot-reload recovery failed HTTP {status}: {body}")
+            raise SystemExit(f"3P hot-reload recovery inference failed HTTP {status}: {body}")
         assert_mode_response("3p-hot-reload-recovery", body, actions=actions, expected_actions=expected_actions)
         _, recovered_health = request_json(f"{base}/health", api_key=args.api_key)
         info = recovered_health["models"]["3p"]
@@ -270,12 +340,21 @@ def main() -> int:
             "compiled": {mode: loaded_health["models"][mode].get("compiled") for mode in ("3p", "4p")},
             "amp_dtype": {mode: loaded_health["models"][mode].get("amp_dtype") for mode in ("3p", "4p")},
         }
+        results["managed_api"] = {
+            "protocol": "mortal-rogs-inference-v1",
+            "health": True,
+            "models": True,
+            "batch_inference": True,
+            "latency_metadata": True,
+            "explicit_reload": True,
+        }
         results["hot_reload"] = {
             "wrong_mode_rejected": True,
             "old_model_kept_serving": True,
             "health_degraded_on_reject": True,
-            "automatic_recovery": True,
+            "explicit_recovery": True,
         }
+        print("MORTAL_MANAGED_INFERENCE_API_OK")
         print("MORTAL_AKAGI_API_PREWARM_OK")
         print("MORTAL_AKAGI_API_PERFORMANCE_OK")
         print("MORTAL_AKAGI_API_HOT_RELOAD_OK")
