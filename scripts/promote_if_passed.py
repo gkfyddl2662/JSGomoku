@@ -13,14 +13,14 @@ from evaluation.paired import evaluate_promotion_records, load_paired_records, l
 def main() -> int:
     project = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(
-        description="Promote a Mortal checkpoint only after statistical and Akagi ABI gates pass"
+        description="Promote a Mortal checkpoint only after statistical and serving ABI gates pass"
     )
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--paired-results", type=Path, required=True)
     parser.add_argument("--profile", required=True)
     parser.add_argument("--mode", choices=("3p", "4p"), required=True)
-    parser.add_argument("--akagi-root", type=Path, required=True)
+    parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument(
         "--presets",
         type=Path,
@@ -37,7 +37,7 @@ def main() -> int:
 
     candidate = args.candidate.resolve()
     destination = args.destination.resolve()
-    akagi_root = args.akagi_root.resolve()
+    runtime_root = args.runtime_root.resolve()
     if not candidate.is_file() or candidate.suffix != ".pth":
         raise SystemExit(f"Candidate checkpoint does not exist or is not .pth: {candidate}")
     if candidate == destination:
@@ -73,6 +73,7 @@ def main() -> int:
         "games": len(rows),
         "statistics_passed": decision.passed,
         "statistics_reason": decision.reason,
+        "abi_kind": "mortal-rogs-inference-api-v1",
         "abi_passed": False,
         "promoted": False,
         "metrics": [
@@ -89,17 +90,19 @@ def main() -> int:
     }
 
     if decision.passed:
-        abi = project / "scripts" / "check_akagi_compat_dual.py"
+        abi = project / "scripts" / "check_mortal_api_checkpoint.py"
         proc = subprocess.run(
             [
                 sys.executable,
                 str(abi),
-                "--akagi-root",
-                str(akagi_root),
+                "--runtime-root",
+                str(runtime_root),
                 "--model",
                 str(candidate),
                 "--mode",
                 args.mode,
+                "--device",
+                "cpu",
             ],
             text=True,
             capture_output=True,
