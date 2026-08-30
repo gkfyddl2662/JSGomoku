@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -108,6 +109,152 @@ def probe_full_dataloader(
     }
 
 
+def run_canonical_trainer_smoke(
+    *,
+    mode: str,
+    contract: dict[str, int],
+    logs: list[Path],
+    example_cfg: Path,
+    output_root: Path,
+    mortal_dir: Path,
+    device: str,
+    toml,
+    torch,
+) -> dict[str, object]:
+    """Run the patched upstream train.py, including FileDatasetsIter and ROGS."""
+
+    run_root = output_root / f"canonical-{mode}"
+    run_root.mkdir(parents=True, exist_ok=True)
+    checkpoint = run_root / "current.pth"
+    best_checkpoint = run_root / "best.pth"
+    cfg_path = run_root / "config.toml"
+    names_file = run_root / "players.txt"
+    names_file.write_text(f"smoke-{mode}-challenger\n", encoding="utf-8")
+
+    cfg = copy.deepcopy(toml.load(example_cfg))
+    control = cfg.setdefault("control", {})
+    control.update(
+        {
+            "version": 4,
+            "online": False,
+            "state_file": str(checkpoint),
+            "best_state_file": str(best_checkpoint),
+            "tensorboard_dir": str(run_root / "tensorboard"),
+            "device": device,
+            "enable_cudnn_benchmark": False,
+            "enable_amp": False,
+            "enable_compile": False,
+            "batch_size": 64,
+            "opt_step_every": 1,
+            "save_every": 1,
+            "test_every": 1000000,
+            "submit_every": 1,
+        }
+    )
+
+    game = cfg.setdefault("game", {})
+    game.update(
+        {
+            "mode": mode,
+            "num_players": contract["players"],
+            "action_space": contract["actions"],
+            "obs_channels": contract["obs"],
+            "oracle_obs_channels": 170 if mode == "3p" else 217,
+            "grp_input_size": 6 if mode == "3p" else 7,
+        }
+    )
+
+    dataset_cfg = cfg.setdefault("dataset", {})
+    dataset_cfg.update(
+        {
+            "globs": [str(logs[0])],
+            "file_index": str(run_root / "file-index.pth"),
+            "file_batch_size": 1,
+            "reserve_ratio": 0.0,
+            "num_workers": 0,
+            "player_names_files": [str(names_file)],
+            "num_epochs": 1,
+            "enable_augmentation": False,
+            "augmented_first": False,
+            "pin_memory": False,
+        }
+    )
+
+    cfg.setdefault("env", {})["pts"] = [6.0, 3.0, 0.0] if mode == "3p" else [6.0, 4.0, 2.0, 0.0]
+    cfg.setdefault("resnet", {})["conv_channels"] = 8
+    cfg["resnet"]["num_blocks"] = 1
+    cfg.setdefault("freeze_bn", {})["mortal"] = False
+    cfg.setdefault("grp", {})["state_file"] = str(output_root / f"probe-grp-{mode}.pth")
+
+    cfg["rogs"] = {
+        "enabled": True,
+        "curriculum_steps": 100,
+        "oracle_final_weight": 0.05,
+        "bc_final_weight": 0.02,
+        "cql_final_weight": 0.05,
+        "regret_final_weight": 0.75,
+    }
+    cfg["objective"] = {
+        "value_weight": 1.0,
+        "regret_weight": 0.5,
+        "teacher_kl_weight": 0.3,
+        "entropy_weight": 0.002,
+        "bc_anchor_weight": 0.1,
+        "cql_anchor_weight": 0.25,
+        "regret_clip": 12.0,
+        "teacher_temperature": 1.5,
+    }
+    cfg_path.write_text(toml.dumps(cfg), encoding="utf-8")
+
+    project_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["MORTAL_CFG"] = str(cfg_path)
+    env["MORTAL_GAME_MODE"] = mode
+    env["MORTAL_PLAYER_COUNT"] = str(contract["players"])
+    python_path = [str(project_root), str(mortal_dir)]
+    if env.get("PYTHONPATH"):
+        python_path.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(python_path)
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(mortal_dir / "train.py")],
+            cwd=mortal_dir,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=180,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        fail(f"{mode} canonical trainer smoke timed out: {exc}")
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stdout + "\n" + proc.stderr).splitlines()[-80:])
+        fail(f"{mode} canonical trainer failed with exit {proc.returncode}:\n{tail}")
+    if not checkpoint.is_file():
+        fail(f"{mode} canonical trainer did not save {checkpoint}")
+
+    state = torch.load(checkpoint, weights_only=True, map_location="cpu")
+    for key in ("mortal", "current_dqn", "aux_net", "optimizer", "scheduler", "steps", "config"):
+        if key not in state:
+            fail(f"{mode} canonical trainer checkpoint missing {key}")
+    steps = int(state["steps"])
+    if steps <= 0:
+        fail(f"{mode} canonical trainer made no optimization steps")
+    state_cfg = state["config"]
+    if not bool(state_cfg.get("rogs", {}).get("enabled", False)):
+        fail(f"{mode} canonical trainer checkpoint lost ROGS enablement")
+    if state_cfg.get("game", {}).get("mode") != mode:
+        fail(f"{mode} canonical trainer checkpoint lost game mode")
+
+    return {
+        "steps": steps,
+        "checkpoint": str(checkpoint),
+        "rogs_enabled": True,
+        "player_filter": f"smoke-{mode}-challenger",
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Run one real-data optimization step from unified 3P/4P self-play logs and save strict v4 checkpoints."
@@ -172,6 +319,17 @@ def main() -> int:
             toml=toml,
             torch=torch,
             GRP=GRP,
+        )
+        canonical_trainer = run_canonical_trainer_smoke(
+            mode=mode,
+            contract=c,
+            logs=logs,
+            example_cfg=example_cfg,
+            output_root=output_root,
+            mortal_dir=mortal_dir,
+            device=str(device),
+            toml=toml,
+            torch=torch,
         )
 
         loader = dataset.GameplayLoader(
@@ -290,6 +448,7 @@ def main() -> int:
                     "loss": float(loss.detach().cpu()),
                     "source_logs": [str(p) for p in logs],
                     "full_dataloader": full_dataloader,
+                    "canonical_trainer": canonical_trainer,
                 },
             },
             checkpoint,
@@ -336,6 +495,7 @@ def main() -> int:
             "action_space": c["actions"],
             "obs": [c["obs"], 34],
             "full_dataloader": full_dataloader,
+            "canonical_trainer": canonical_trainer,
         }
 
         del loader, loaded_files, obs, mask, action, brain, dqn, reload_brain, reload_dqn, state
@@ -344,6 +504,7 @@ def main() -> int:
             torch.cuda.synchronize(device)
 
     print("MORTAL_UNIFIED_FULL_DATALOADER_REWARD_E2E_OK")
+    print("MORTAL_UNIFIED_CANONICAL_TRAINER_ROGS_E2E_OK")
     print("MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK")
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
