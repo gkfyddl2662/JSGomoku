@@ -67,11 +67,14 @@ jobs:
             }
           }
           foreach ($pattern in @(
-            'MORTAL_UNIFIED_RUNTIME_SMOKE_OK',
+            'smoke_unified_runtime\.py',
             'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
             'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK'
           )) {
             if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
-              throw "Missing smoke contract: $pattern"
+              throw "Missing Windows smoke contract: $pattern"
             }
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
+            throw 'Missing Python unified runtime smoke success marker'
           }
