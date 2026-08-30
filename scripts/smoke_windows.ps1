@@ -26,13 +26,13 @@ function Invoke-RuntimeSmoke(
     [string]$RuntimeRoot
 ) {
     Assert-File $Python "$Mode Python"
-    $args = @($Probe, "--mode", $Mode, "--runtime-root", $RuntimeRoot)
-    if ($SkipCompile) { $args += "--skip-compile" }
-    if ($SkipTrainingStep) { $args += "--skip-training-step" }
+    $probeArgs = @($Probe, "--mode", $Mode, "--runtime-root", $RuntimeRoot)
+    if ($SkipCompile) { $probeArgs += "--skip-compile" }
+    if ($SkipTrainingStep) { $probeArgs += "--skip-training-step" }
 
     Write-Host ""
     Write-Host "=== Mortal $Mode isolated runtime smoke ===" -ForegroundColor Cyan
-    & $Python @args
+    & $Python @probeArgs
     if ($LASTEXITCODE -ne 0) {
         throw "$Mode runtime smoke failed with exit code $LASTEXITCODE"
     }
@@ -62,12 +62,14 @@ if (-not $SkipWebUI) {
         }
 
         if ($null -eq $existing) {
-            $proc = Start-Process \
-                -FilePath $Py3 \
-                -ArgumentList @("-m", "app.main") \
-                -WorkingDirectory $ProjectRoot \
-                -PassThru \
-                -WindowStyle Hidden
+            $startArgs = @{
+                FilePath = $Py3
+                ArgumentList = @("-m", "app.main")
+                WorkingDirectory = $ProjectRoot
+                PassThru = $true
+                WindowStyle = "Hidden"
+            }
+            $proc = Start-Process @startArgs
             $started = $true
 
             $deadline = (Get-Date).AddSeconds(30)
