@@ -58,6 +58,26 @@ jobs:
             tests/test_objective.py \
             tests/test_mortal_hook.py
 
+  mortal-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Clone Mortal Sanma upstream
+        run: git clone --depth 1 https://github.com/Lawrencelea/Mortal_Sanma.git /tmp/mortal-sanma
+      - name: Apply RTX 5080 and ROGS patch pipeline
+        run: python scripts/patch_mortal_all.py --root /tmp/mortal-sanma
+      - name: Compile patched trainer
+        run: python -m py_compile /tmp/mortal-sanma/Mortal/mortal/train.py
+      - name: Verify ROGS hook postconditions
+        run: |
+          grep -q "compute_mortal_rogs_batch" /tmp/mortal-sanma/Mortal/mortal/train.py
+          grep -q "enable_behavior_cloning=not online" /tmp/mortal-sanma/Mortal/mortal/train.py
+          grep -q "loss/rogs_total" /tmp/mortal-sanma/Mortal/mortal/train.py
+          git -C /tmp/mortal-sanma diff --check
+
   mjx-sanma-patch:
     runs-on: ubuntu-latest
     steps:
