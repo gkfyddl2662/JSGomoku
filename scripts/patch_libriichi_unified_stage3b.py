@@ -164,7 +164,7 @@ def patch_update(text: str) -> str:
         "        scores: &[i32],\n        tehais: &[Vec<Tile>],\n    ) -> Result<()> {\n"
         "        ensure!(matches!(scores.len(), 3 | 4), \"expected 3 or 4 scores, got {}\", scores.len());\n"
         "        ensure!(tehais.len() == scores.len(), \"hand count {} != score count {}\", tehais.len(), scores.len());\n"
-        "        ensure!(self.player_id as usize < scores.len(), \"player {} is inactive for {}P\", self.player_id, scores.len());\n"
+        "        ensure!((self.player_id as usize) < scores.len(), \"player {} is inactive for {}P\", self.player_id, scores.len());\n"
         "        ensure!(tehais.iter().all(|hand| hand.len() == 13), \"every initial hand must contain 13 tiles\");\n",
         "state start signature",
     )
