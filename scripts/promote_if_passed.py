@@ -2,12 +2,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from evaluation.paired import evaluate_promotion_records, load_paired_records, load_rating_profiles
+
+
+def _resolve_runtime_root(candidate: Path, explicit: Path | None) -> Path:
+    if explicit is not None:
+        return explicit.expanduser().resolve()
+    configured = os.getenv("MORTAL_UNIFIED_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    # Unified candidates normally live at <root>/runtime/<mode>/models/*.pth.
+    try:
+        if candidate.parent.name == "models" and candidate.parent.parent.parent.name == "runtime":
+            return candidate.parents[3].resolve()
+    except IndexError:
+        pass
+    raise SystemExit("Could not resolve unified runtime root; pass --runtime-root or set MORTAL_UNIFIED_ROOT")
 
 
 def main() -> int:
@@ -20,7 +36,11 @@ def main() -> int:
     parser.add_argument("--paired-results", type=Path, required=True)
     parser.add_argument("--profile", required=True)
     parser.add_argument("--mode", choices=("3p", "4p"), required=True)
-    parser.add_argument("--runtime-root", type=Path, required=True)
+    parser.add_argument("--runtime-root", type=Path)
+    # Transitional compatibility only. Older Control Center builds still pass
+    # this option, but the path is intentionally ignored: Akagi never loads or
+    # validates the model directly in the API-serving architecture.
+    parser.add_argument("--akagi-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--presets",
         type=Path,
@@ -37,11 +57,11 @@ def main() -> int:
 
     candidate = args.candidate.resolve()
     destination = args.destination.resolve()
-    runtime_root = args.runtime_root.resolve()
     if not candidate.is_file() or candidate.suffix != ".pth":
         raise SystemExit(f"Candidate checkpoint does not exist or is not .pth: {candidate}")
     if candidate == destination:
         raise SystemExit("Candidate and destination must be different paths")
+    runtime_root = _resolve_runtime_root(candidate, args.runtime_root)
 
     rows = load_paired_records(args.paired_results)
     expected_players = 3 if args.mode == "3p" else 4
