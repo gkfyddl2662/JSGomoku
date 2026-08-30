@@ -4,6 +4,7 @@ import argparse
 import gzip
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -382,7 +383,18 @@ def main() -> int:
         f"drain_timeout_ms={args.drain_timeout_ms}",
         flush=True,
     )
-    uvicorn.run(app, host=args.host, port=args.port, reload=False, access_log=False)
+
+    config = uvicorn.Config(app, host=args.host, port=args.port, reload=False, access_log=False)
+    server = uvicorn.Server(config)
+    if os.name == "nt" and hasattr(signal, "SIGBREAK"):
+        # Control Center starts inference in CREATE_NEW_PROCESS_GROUP and sends
+        # CTRL_BREAK_EVENT on stop/restart. Translate SIGBREAK into Uvicorn's
+        # normal graceful-exit path so lifespan shutdown can drain/close models.
+        def handle_sigbreak(_signum: int, _frame: Any) -> None:
+            server.should_exit = True
+
+        signal.signal(signal.SIGBREAK, handle_sigbreak)
+    server.run()
     return 0
 
 
