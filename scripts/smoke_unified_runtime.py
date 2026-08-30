@@ -57,6 +57,28 @@ def main() -> int:
     if not torch.cuda.is_bf16_supported():
         fail("CUDA is available but BF16 is not supported")
 
+    triton_version = None
+    if not args.skip_compile and sys.platform == "win32":
+        try:
+            import triton
+        except Exception as exc:
+            fail(
+                "torch.compile on Windows requires triton-windows for this runtime. "
+                "Expected triton-windows 3.6.x for PyTorch 2.11. "
+                f"Import failed: {exc}"
+            )
+        triton_version = str(getattr(triton, "__version__", "unknown"))
+        try:
+            triton_major_minor = tuple(int(part) for part in triton_version.split(".")[:2])
+        except Exception:
+            fail(f"Unable to parse Triton version: {triton_version}")
+        if triton_major_minor != (3, 6):
+            fail(
+                f"Unsupported Windows Triton {triton_version} for pinned PyTorch {torch.__version__}; "
+                "expected Triton 3.6.x (install triton-windows>=3.6,<3.7)."
+            )
+        print(f"TRITON_WINDOWS_OK version={triton_version}")
+
     device = torch.device("cuda:0")
     torch.cuda.reset_peak_memory_stats(device)
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -189,6 +211,7 @@ def main() -> int:
         "runtime_root": str(root),
         "libriichi_file": getattr(libriichi, "__file__", None),
         "torch": torch.__version__,
+        "triton": triton_version,
         "cuda": torch.version.cuda,
         "gpu": torch.cuda.get_device_name(device),
         "capability": list(torch.cuda.get_device_capability(device)),
