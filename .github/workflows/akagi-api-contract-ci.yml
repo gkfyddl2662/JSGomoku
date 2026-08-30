@@ -79,5 +79,7 @@ jobs:
           grep -q 'MORTAL_INFERENCE_MICROBATCH_OK' scripts/smoke_akagi_api.py
           grep -q 'MORTAL_INFERENCE_BACKGROUND_RELOAD_OK' scripts/smoke_akagi_api.py
           grep -q 'MORTAL_INFERENCE_BENCHMARK_OK' scripts/benchmark_inference_api.py
+          grep -q 'MORTAL_INFERENCE_SWEEP_OK' scripts/benchmark_inference_api.py
           grep -q 'request_deadline_ms' serving/resilient.py
           grep -q '/api/inference/metrics' scripts/serve_akagi_api.py
+          grep -q '/api/inference/tuning' scripts/serve_akagi_api.py

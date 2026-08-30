@@ -183,12 +183,16 @@ function ensureInferenceBenchmarkControls() {
     '<label>Requests / mode<input id="inferenceBenchmarkRequests" type="number" value="64" min="4" max="4096" step="4" /></label>',
     '<label>Concurrency<input id="inferenceBenchmarkConcurrency" type="number" value="8" min="1" max="256" step="1" /></label>',
     '<label>Rows / request<input id="inferenceBenchmarkRows" type="number" value="1" min="1" max="64" step="1" /></label>',
+    '<label>Sweep waits (ms)<input id="inferenceSweepWaits" value="0,0.5,1,1.5,2" /></label>',
+    '<label>Latency budget p95 (ms)<input id="inferenceLatencyBudget" type="number" value="100" min="1" max="1000" step="5" /></label>',
     '</div>',
     '<div class="button-row top-gap">',
-    '<button class="secondary" onclick="startInferenceBenchmark()">RTX 5080 Serving Benchmark</button>',
+    '<button class="secondary" onclick="startInferenceBenchmark(false)">현재 설정 Benchmark</button>',
+    '<button class="secondary" onclick="startInferenceSweep()">Micro-batch A/B Sweep</button>',
     '<button class="secondary" onclick="loadInferenceBenchmark()">최신 Benchmark 결과</button>',
     '<button class="secondary" onclick="applyInferenceBenchmarkRecommendation()">추천값을 Tuning에 적용</button>',
     '</div>',
+    '<div class="subtle top-gap">A/B Sweep는 loaded/compiled 모델을 유지한 채 micro-batch wait만 후보별로 live 변경하고 완료 후 원래 값을 복구합니다. 실제 대국 중에는 부하 측정을 실행하지 않는 것을 권장합니다.</div>',
     '<div id="inferenceBenchmarkResult" class="subtle top-gap">Benchmark 미실행</div>',
   ].join('');
   telemetry.insertAdjacentElement('afterend', root);
@@ -210,24 +214,37 @@ function renderInferenceBenchmark(report, path='') {
   const rec=report.recommendation?.recommended||{};
   const reasons=(report.recommendation?.reasons||[]).join(' ');
   const modeText=[benchmarkModeText('3p',report.modes?.['3p']),benchmarkModeText('4p',report.modes?.['4p'])].filter(x=>!x.endsWith(' -')).join(' · ');
-  el.textContent=`${modeText} · 추천 ${rec.micro_batch_ms ?? '-'}ms / max ${rec.micro_batch_max_rows ?? '-'} rows / pending ${rec.max_pending_requests ?? '-'} / deadline ${rec.request_deadline_ms ?? '-'}ms${reasons?` · ${reasons}`:''}${path?` · ${path}`:''}`;
+  const sweep=report.sweep;
+  const sweepText=sweep ? ` · A/B winner ${sweep.winner_micro_batch_ms}ms · budget ${sweep.latency_budget_ms}ms · original restored ${sweep.original_restored?'YES':'NO'}` : '';
+  el.textContent=`${modeText}${sweepText} · 추천 ${rec.micro_batch_ms ?? '-'}ms / max ${rec.micro_batch_max_rows ?? '-'} rows / pending ${rec.max_pending_requests ?? '-'} / deadline ${rec.request_deadline_ms ?? '-'}ms${reasons?` · ${reasons}`:''}${path?` · ${path}`:''}`;
 }
 
-async function startInferenceBenchmark() {
-  ensureInferenceBenchmarkControls();
-  const body={
+function inferenceBenchmarkBody(sweep=false) {
+  return {
     modes: document.getElementById('inferenceBenchmarkModes')?.value || 'both',
     requests_per_mode: inferenceNumber('inferenceBenchmarkRequests',64),
     concurrency: inferenceNumber('inferenceBenchmarkConcurrency',8),
     batch_rows: inferenceNumber('inferenceBenchmarkRows',1),
+    sweep,
+    sweep_waits: document.getElementById('inferenceSweepWaits')?.value || '0,0.5,1,1.5,2',
+    latency_budget_ms: inferenceNumber('inferenceLatencyBudget',100),
   };
+}
+
+async function startInferenceBenchmark(sweep=false) {
+  ensureInferenceBenchmarkControls();
+  const body=inferenceBenchmarkBody(sweep);
   try {
     const j=await api('/api/inference/benchmark/start',{method:'POST',body:JSON.stringify(body)});
     selectedJob=j.id;
     await loadJobs();
-    toast(`Serving benchmark 시작 · ${body.modes.toUpperCase()} · concurrency ${body.concurrency}`);
+    toast(`${sweep?'A/B sweep':'Serving benchmark'} 시작 · ${body.modes.toUpperCase()} · concurrency ${body.concurrency}`);
     return j;
   } catch(e){ toast(`Benchmark 시작 실패: ${e.message}`,true); throw e; }
+}
+
+async function startInferenceSweep() {
+  return startInferenceBenchmark(true);
 }
 
 async function loadInferenceBenchmark() {
@@ -262,6 +279,7 @@ function applyInferenceBenchmarkRecommendation() {
 
 window.startInferenceApi = startInferenceApi;
 window.startInferenceBenchmark = startInferenceBenchmark;
+window.startInferenceSweep = startInferenceSweep;
 window.loadInferenceBenchmark = loadInferenceBenchmark;
 window.applyInferenceBenchmarkRecommendation = applyInferenceBenchmarkRecommendation;
 window.addEventListener('DOMContentLoaded', () => {

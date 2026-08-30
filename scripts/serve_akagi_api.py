@@ -5,7 +5,9 @@ import gzip
 import json
 import os
 import sys
+import threading
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -100,8 +102,6 @@ def _model_identity(info: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": path.name,
         "path": str(path),
-        # Identity is the checkpoint actually loaded by the GPU model, not merely
-        # the current file on disk. During background hot-reload these can differ.
         "checkpoint_signature": info.get("loaded_signature"),
         "candidate_signature": info.get("candidate_signature"),
         "abi_version": 4,
@@ -114,8 +114,9 @@ def _model_identity(info: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI:
-    app = FastAPI(title="Mortal-ROGS Inference API", version="1.3.0")
+    app = FastAPI(title="Mortal-ROGS Inference API", version="1.4.0")
     expected_key = api_key.strip()
+    tuning_lock = threading.Lock()
 
     def authorize(request: Request) -> None:
         if not expected_key:
@@ -123,6 +124,21 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
         supplied = request.headers.get("Authorization", "")
         if supplied != expected_key:
             raise HTTPException(401, "Invalid API key")
+
+    def apply_live_micro_batch_wait(wait_ms: float) -> dict[str, Any]:
+        if not 0.0 <= wait_ms <= 100.0:
+            raise ValueError("micro_batch_ms must be between 0 and 100")
+        # DynamicBatcher._take_batch uses the same Condition lock while reading
+        # wait_s. Acquire every mode lock in stable order so 3P/4P switch to the
+        # same candidate atomically without touching loaded/compiled models.
+        batchers = [service.batchers[mode] for mode in sorted(service.batchers)]
+        with tuning_lock, ExitStack() as stack:
+            for batcher in batchers:
+                stack.enter_context(batcher._condition)
+            for batcher in batchers:
+                batcher.wait_s = wait_ms / 1000.0
+            service.micro_batch_ms = wait_ms
+        return dict(service.metrics()["micro_batch"])
 
     async def infer_request(request: Request, mode: str, *, detailed: bool) -> dict[str, Any]:
         authorize(request)
@@ -133,12 +149,8 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
         payload = _decode_payload(await request.body(), request.headers.get("Content-Encoding"))
         started = time.perf_counter()
         try:
-            # Do not block uvicorn's event loop on CUDA work or queue waiting. This
-            # also allows concurrent HTTP requests to be coalesced by DynamicBatcher.
             response = await run_in_threadpool(service.infer, contract.mode, payload["obs"], payload["masks"])
         except (InferenceBusyError, InferenceDeadlineExceeded) as exc:
-            # Pinned AkagiOT reads for 4s and falls back/circuit-breaks on errors.
-            # Return a deterministic 503 before that client timeout instead of hanging.
             raise HTTPException(503, str(exc)) from exc
         except FileNotFoundError as exc:
             raise HTTPException(503, str(exc)) from exc
@@ -173,7 +185,6 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
 
     @app.get("/health")
     def health(request: Request) -> dict[str, Any]:
-        """AkagiOT-compatible health endpoint kept for existing clients."""
         authorize(request)
         return service.health()
 
@@ -212,6 +223,31 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
         authorize(request)
         return service.metrics()
 
+    @app.post("/api/inference/tuning")
+    async def managed_tuning(request: Request) -> dict[str, Any]:
+        authorize(request)
+        payload = _decode_json(await request.body(), request.headers.get("Content-Encoding"))
+        unknown = set(payload) - {"micro_batch_ms"}
+        if unknown:
+            raise HTTPException(400, f"Unsupported live tuning fields: {', '.join(sorted(unknown))}")
+        if "micro_batch_ms" not in payload:
+            raise HTTPException(400, "micro_batch_ms is required")
+        value = payload["micro_batch_ms"]
+        if isinstance(value, bool):
+            raise HTTPException(400, "micro_batch_ms must be numeric")
+        try:
+            wait_ms = float(value)
+            tuning = apply_live_micro_batch_wait(wait_ms)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "ok": True,
+            "protocol": "mortal-rogs-inference-v1",
+            "live": True,
+            "models_reloaded": False,
+            "micro_batch": tuning,
+        }
+
     @app.post("/api/inference/reload")
     async def managed_reload(request: Request) -> dict[str, Any]:
         authorize(request)
@@ -229,8 +265,6 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
 
         results: dict[str, Any] = {}
         for mode in modes:
-            # Candidate loading/strict-check/torch.compile runs off the event loop,
-            # while inference keeps using the already published model.
             result = await run_in_threadpool(service.reload, mode)
             if result.get("ok"):
                 info = result["status"]
@@ -286,8 +320,6 @@ def main() -> int:
         reload_poll_ms=args.reload_poll_ms,
     )
 
-    # Load, strict-validate, compile (when requested), and execute real forwards
-    # before uvicorn binds. Akagi must never pay the first torch.compile cost.
     print("MORTAL_AKAGI_API_WARMUP_BEGIN", flush=True)
     try:
         warmup = service.warmup()

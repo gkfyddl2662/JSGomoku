@@ -312,6 +312,85 @@ def main() -> int:
         if m3.get("latency_ms", {}).get("request", {}).get("p95") is None:
             raise SystemExit(f"3P latency percentile telemetry missing: {m3}")
 
+        signatures_before_tuning = {mode: health["models"][mode]["loaded_signature"] for mode in ("3p", "4p")}
+        bad_tuning_status, _ = request_json(
+            f"{base}/api/inference/tuning", api_key="wrong-key", payload={"micro_batch_ms": 5}
+        )
+        if bad_tuning_status != 401:
+            raise SystemExit(f"Live tuning must require auth, got HTTP {bad_tuning_status}")
+        unsupported_tuning_status, _ = request_json(
+            f"{base}/api/inference/tuning", api_key=args.api_key, payload={"request_deadline_ms": 1000}
+        )
+        if unsupported_tuning_status != 400:
+            raise SystemExit(f"Live tuning must reject non-wait fields, got HTTP {unsupported_tuning_status}")
+        tuning_status, tuning_body = request_json(
+            f"{base}/api/inference/tuning", api_key=args.api_key, payload={"micro_batch_ms": 5}
+        )
+        if tuning_status != 200 or tuning_body.get("models_reloaded") is not False:
+            raise SystemExit(f"Live micro-batch tuning failed: HTTP {tuning_status}: {tuning_body}")
+        _, tuned_health = request_json(f"{base}/health", api_key=args.api_key)
+        if tuned_health.get("serving", {}).get("micro_batch", {}).get("wait_ms") != 5.0:
+            raise SystemExit(f"Live tuning was not reflected in health: {tuned_health}")
+        for mode in ("3p", "4p"):
+            if tuned_health["models"][mode]["loaded_signature"] != signatures_before_tuning[mode]:
+                raise SystemExit(f"{mode} model changed during scheduler-only tuning: {tuned_health['models'][mode]}")
+        restore_tuning_status, _ = request_json(
+            f"{base}/api/inference/tuning", api_key=args.api_key, payload={"micro_batch_ms": 20}
+        )
+        if restore_tuning_status != 200:
+            raise SystemExit(f"Could not restore live tuning to 20ms: HTTP {restore_tuning_status}")
+
+        sweep_report_path = api_root / "sweep-report.json"
+        sweep_env = env.copy()
+        sweep_env["MORTAL_INFERENCE_API_KEY"] = args.api_key
+        sweep_cmd = [
+            sys.executable,
+            str(project / "scripts" / "benchmark_inference_api.py"),
+            "--server",
+            base,
+            "--modes",
+            "3p",
+            "--requests",
+            "4",
+            "--concurrency",
+            "2",
+            "--batch-rows",
+            "1",
+            "--sweep-waits",
+            "0,1",
+            "--latency-budget-ms",
+            "1000",
+            "--output",
+            str(sweep_report_path),
+        ]
+        sweep_proc = subprocess.run(
+            sweep_cmd,
+            cwd=project,
+            env=sweep_env,
+            text=True,
+            capture_output=True,
+            timeout=90,
+            check=False,
+        )
+        if sweep_proc.returncode != 0:
+            raise SystemExit(
+                f"Inference A/B sweep failed ({sweep_proc.returncode}):\n{sweep_proc.stdout}\n{sweep_proc.stderr}"
+            )
+        if "MORTAL_INFERENCE_SWEEP_OK" not in sweep_proc.stdout or not sweep_report_path.is_file():
+            raise SystemExit(f"Inference sweep marker/report missing:\n{sweep_proc.stdout}")
+        sweep_report = json.loads(sweep_report_path.read_text(encoding="utf-8"))
+        sweep = sweep_report.get("sweep", {})
+        if sweep.get("original_restored") is not True or len(sweep.get("candidates", [])) != 2:
+            raise SystemExit(f"Inference sweep did not restore/measure both candidates: {sweep}")
+        if sweep_report.get("recommendation", {}).get("kind") != "measured_ab_sweep":
+            raise SystemExit(f"Inference sweep recommendation type mismatch: {sweep_report.get('recommendation')}")
+        _, after_sweep_health = request_json(f"{base}/health", api_key=args.api_key)
+        if after_sweep_health.get("serving", {}).get("micro_batch", {}).get("wait_ms") != 20.0:
+            raise SystemExit(f"Inference sweep did not restore 20ms wait: {after_sweep_health}")
+        for mode in ("3p", "4p"):
+            if after_sweep_health["models"][mode]["loaded_signature"] != signatures_before_tuning[mode]:
+                raise SystemExit(f"{mode} model changed during A/B sweep: {after_sweep_health['models'][mode]}")
+
         reload_status, reload_body = request_json(
             f"{base}/api/inference/reload", api_key=args.api_key, payload={"mode": "3p"}
         )
@@ -379,6 +458,7 @@ def main() -> int:
             "health": True,
             "models": True,
             "metrics": True,
+            "live_tuning": True,
             "batch_inference": True,
             "latency_percentiles": True,
             "explicit_reload": True,
@@ -389,6 +469,9 @@ def main() -> int:
             "max_rows_per_execution": m3["max_rows_per_execution"],
             "request_deadline_ms": config["request_deadline_ms"],
             "akagi_read_timeout_ms": 4000,
+            "live_tuning_without_model_reload": True,
+            "ab_sweep_candidates": len(sweep["candidates"]),
+            "ab_sweep_original_restored": sweep["original_restored"],
         }
         results["hot_reload"] = {
             "wrong_mode_rejected": True,
@@ -399,6 +482,8 @@ def main() -> int:
         print("MORTAL_MANAGED_INFERENCE_API_OK")
         print("MORTAL_INFERENCE_MICROBATCH_OK")
         print("MORTAL_INFERENCE_TELEMETRY_OK")
+        print("MORTAL_INFERENCE_LIVE_TUNING_OK")
+        print("MORTAL_INFERENCE_SWEEP_E2E_OK")
         print("MORTAL_INFERENCE_BACKGROUND_RELOAD_OK")
         print("MORTAL_AKAGI_API_PREWARM_OK")
         print("MORTAL_AKAGI_API_PERFORMANCE_OK")

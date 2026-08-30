@@ -73,6 +73,36 @@ def request_json(
         return int(exc.code), payload, (time.perf_counter() - started) * 1000.0
 
 
+def post_json(url: str, payload: dict[str, Any], *, api_key: str = "", timeout: float = 4.0) -> tuple[int, dict[str, Any]]:
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = api_key
+    request = urllib.request.Request(url, data=raw, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return int(response.status), json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            decoded = json.loads(body)
+        except json.JSONDecodeError:
+            decoded = {"raw": body}
+        return int(exc.code), decoded
+
+
+def apply_micro_batch_wait(server: str, api_key: str, wait_ms: float, timeout: float) -> dict[str, Any]:
+    status, body = post_json(
+        f"{server}/api/inference/tuning",
+        {"micro_batch_ms": float(wait_ms)},
+        api_key=api_key,
+        timeout=timeout,
+    )
+    if status != 200 or body.get("ok") is not True:
+        raise RuntimeError(f"Live tuning failed for micro_batch_ms={wait_ms}: HTTP {status}: {body}")
+    return body
+
+
 def build_payload(mode: str, batch_rows: int) -> bytes:
     contract = MODE_CONTRACTS[mode]
     obs_channels = int(contract["obs_channels"])
@@ -256,6 +286,153 @@ def parse_modes(value: str) -> list[str]:
     raise argparse.ArgumentTypeError("modes must be 3p, 4p or both")
 
 
+def parse_sweep_waits(value: str) -> list[float]:
+    waits: list[float] = []
+    seen: set[float] = set()
+    for part in value.split(","):
+        text = part.strip()
+        if not text:
+            continue
+        try:
+            wait = round(float(text), 3)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"invalid sweep wait: {text}") from exc
+        if not 0.0 <= wait <= 100.0:
+            raise argparse.ArgumentTypeError("sweep waits must be between 0 and 100 ms")
+        if wait not in seen:
+            waits.append(wait)
+            seen.add(wait)
+    if not waits:
+        raise argparse.ArgumentTypeError("sweep waits must contain at least one value")
+    return waits
+
+
+def summarize_candidate(wait_ms: float, results: dict[str, dict[str, Any]], latency_budget_ms: float) -> dict[str, Any]:
+    p95_values = [
+        float(result["latency_ms"]["p95"])
+        for result in results.values()
+        if result.get("latency_ms", {}).get("p95") is not None
+    ]
+    max_p95 = max(p95_values) if p95_values else math.inf
+    throughput = sum(float(result.get("rows_per_s", 0.0)) for result in results.values())
+    failed_requests = sum(int(result["requests"] - result["successful_requests"]) for result in results.values())
+    busy = sum(int(result.get("busy_rejections", 0)) for result in results.values())
+    timeouts = sum(int(result.get("timeouts", 0)) for result in results.values())
+    safe = failed_requests == 0 and busy == 0 and timeouts == 0 and math.isfinite(max_p95)
+    return {
+        "micro_batch_ms": wait_ms,
+        "modes": results,
+        "aggregate": {
+            "rows_per_s": round(throughput, 3),
+            "max_p95_ms": round(max_p95, 3) if math.isfinite(max_p95) else None,
+            "failed_requests": failed_requests,
+            "busy_rejections": busy,
+            "timeouts": timeouts,
+            "safe": safe,
+            "within_latency_budget": bool(safe and max_p95 <= latency_budget_ms),
+        },
+    }
+
+
+def select_sweep_winner(candidates: list[dict[str, Any]], latency_budget_ms: float) -> dict[str, Any]:
+    if not candidates:
+        raise ValueError("sweep requires at least one candidate")
+    within = [candidate for candidate in candidates if candidate["aggregate"]["within_latency_budget"]]
+    if within:
+        return max(
+            within,
+            key=lambda candidate: (
+                float(candidate["aggregate"]["rows_per_s"]),
+                -float(candidate["aggregate"]["max_p95_ms"]),
+            ),
+        )
+    safe = [candidate for candidate in candidates if candidate["aggregate"]["safe"]]
+    if safe:
+        return min(
+            safe,
+            key=lambda candidate: (
+                float(candidate["aggregate"]["max_p95_ms"]),
+                -float(candidate["aggregate"]["rows_per_s"]),
+            ),
+        )
+    return min(
+        candidates,
+        key=lambda candidate: (
+            int(candidate["aggregate"]["failed_requests"]),
+            int(candidate["aggregate"]["busy_rejections"]),
+            int(candidate["aggregate"]["timeouts"]),
+            float(candidate["aggregate"]["max_p95_ms"] or math.inf),
+        ),
+    )
+
+
+def run_sweep(
+    server: str,
+    api_key: str,
+    modes: list[str],
+    settings: dict[str, Any],
+    waits: list[float],
+    *,
+    requests: int,
+    concurrency: int,
+    batch_rows: int,
+    timeout: float,
+    latency_budget_ms: float,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Any]]]:
+    original_wait = float(settings["micro_batch_ms"])
+    candidates: list[dict[str, Any]] = []
+    restored = False
+    restore_error: str | None = None
+    try:
+        for wait_ms in waits:
+            apply_micro_batch_wait(server, api_key, wait_ms, timeout)
+            time.sleep(0.05)
+            results: dict[str, dict[str, Any]] = {}
+            for mode in modes:
+                results[mode] = run_mode(
+                    server,
+                    api_key,
+                    mode,
+                    requests=requests,
+                    concurrency=concurrency,
+                    batch_rows=batch_rows,
+                    timeout=timeout,
+                )
+            candidates.append(summarize_candidate(wait_ms, results, latency_budget_ms))
+    finally:
+        try:
+            apply_micro_batch_wait(server, api_key, original_wait, timeout)
+            restored = True
+        except Exception as exc:
+            restore_error = f"{type(exc).__name__}: {exc}"
+
+    winner = select_sweep_winner(candidates, latency_budget_ms)
+    recommendation = dict(settings)
+    recommendation["micro_batch_ms"] = float(winner["micro_batch_ms"])
+    sweep = {
+        "kind": "measured_ab_sweep",
+        "latency_budget_ms": latency_budget_ms,
+        "candidates": candidates,
+        "winner_micro_batch_ms": winner["micro_batch_ms"],
+        "winner_aggregate": winner["aggregate"],
+        "original_micro_batch_ms": original_wait,
+        "original_restored": restored,
+        "restore_error": restore_error,
+    }
+    recommendation_report = {
+        "kind": "measured_ab_sweep",
+        "requires_ab_validation": False,
+        "requires_live_game_validation": True,
+        "recommended": recommendation,
+        "reasons": [
+            f"동일 loaded model에서 {len(candidates)}개 micro-batch wait 후보를 실측했습니다.",
+            f"latency budget {latency_budget_ms:g}ms 내에서는 합산 rows/s가 가장 높은 후보를 선택합니다.",
+            "후보 측정 후 원래 live scheduler 값을 복구합니다.",
+        ],
+    }
+    return sweep, recommendation_report, dict(winner["modes"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark the live Mortal-ROGS Akagi inference API.")
     parser.add_argument("--server", default="http://127.0.0.1:8190")
@@ -265,6 +442,8 @@ def main() -> int:
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--batch-rows", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=4.0)
+    parser.add_argument("--sweep-waits", default="")
+    parser.add_argument("--latency-budget-ms", type=float, default=100.0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -277,6 +456,8 @@ def main() -> int:
         raise SystemExit("--batch-rows must be >= 1")
     if args.timeout <= 0:
         raise SystemExit("--timeout must be > 0")
+    if args.latency_budget_ms <= 0:
+        raise SystemExit("--latency-budget-ms must be > 0")
 
     server = args.server.rstrip("/")
     status, health, _ = request_json(f"{server}/health", api_key=args.api_key, timeout=args.timeout)
@@ -288,17 +469,34 @@ def main() -> int:
         raise SystemExit(f"Managed metrics endpoint unavailable: HTTP {status}: {before_metrics}")
 
     settings = current_settings(before_metrics)
-    results: dict[str, dict[str, Any]] = {}
-    for mode in modes:
-        results[mode] = run_mode(
+    sweep = None
+    if args.sweep_waits.strip():
+        waits = parse_sweep_waits(args.sweep_waits)
+        sweep, recommendation_report, results = run_sweep(
             server,
             args.api_key,
-            mode,
+            modes,
+            settings,
+            waits,
             requests=args.requests,
             concurrency=args.concurrency,
             batch_rows=args.batch_rows,
             timeout=args.timeout,
+            latency_budget_ms=args.latency_budget_ms,
         )
+    else:
+        results: dict[str, dict[str, Any]] = {}
+        for mode in modes:
+            results[mode] = run_mode(
+                server,
+                args.api_key,
+                mode,
+                requests=args.requests,
+                concurrency=args.concurrency,
+                batch_rows=args.batch_rows,
+                timeout=args.timeout,
+            )
+        recommendation_report = recommend(settings, results, concurrency=args.concurrency, batch_rows=args.batch_rows)
 
     report = {
         "protocol": "mortal-rogs-serving-benchmark-v1",
@@ -316,7 +514,8 @@ def main() -> int:
             "gzip": True,
         },
         "modes": results,
-        "recommendation": recommend(settings, results, concurrency=args.concurrency, batch_rows=args.batch_rows),
+        "sweep": sweep,
+        "recommendation": recommendation_report,
     }
 
     if args.output is not None:
@@ -325,6 +524,8 @@ def main() -> int:
         output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         report["output"] = str(output)
 
+    if sweep is not None:
+        print("MORTAL_INFERENCE_SWEEP_OK")
     print("MORTAL_INFERENCE_BENCHMARK_OK")
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0

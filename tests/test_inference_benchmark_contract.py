@@ -69,11 +69,58 @@ def test_benchmark_contract_and_recommendation_are_mode_aware() -> None:
     assert result["recommended"]["max_pending_requests"] >= 256
 
 
-def test_control_center_exposes_benchmark_without_leaking_api_key_in_process_args() -> None:
+def test_sweep_prefers_safe_throughput_within_latency_budget() -> None:
+    benchmark = load_benchmark_module()
+    assert benchmark.parse_sweep_waits("0,0.5,1,0.5,2") == [0.0, 0.5, 1.0, 2.0]
+
+    candidates = [
+        {
+            "micro_batch_ms": 0.0,
+            "aggregate": {
+                "rows_per_s": 800.0,
+                "max_p95_ms": 30.0,
+                "failed_requests": 0,
+                "busy_rejections": 0,
+                "timeouts": 0,
+                "safe": True,
+                "within_latency_budget": True,
+            },
+        },
+        {
+            "micro_batch_ms": 1.0,
+            "aggregate": {
+                "rows_per_s": 1200.0,
+                "max_p95_ms": 55.0,
+                "failed_requests": 0,
+                "busy_rejections": 0,
+                "timeouts": 0,
+                "safe": True,
+                "within_latency_budget": True,
+            },
+        },
+        {
+            "micro_batch_ms": 2.0,
+            "aggregate": {
+                "rows_per_s": 1500.0,
+                "max_p95_ms": 140.0,
+                "failed_requests": 0,
+                "busy_rejections": 0,
+                "timeouts": 0,
+                "safe": True,
+                "within_latency_budget": False,
+            },
+        },
+    ]
+    winner = benchmark.select_sweep_winner(candidates, latency_budget_ms=100.0)
+    assert winner["micro_batch_ms"] == 1.0
+
+
+def test_control_center_exposes_benchmark_sweep_without_leaking_api_key_in_process_args() -> None:
     router = (PROJECT_ROOT / "app" / "inference_benchmark.py").read_text(encoding="utf-8")
     main = (PROJECT_ROOT / "app" / "main.py").read_text(encoding="utf-8")
     ui = (PROJECT_ROOT / "static" / "inference.js").read_text(encoding="utf-8")
     script = (PROJECT_ROOT / "scripts" / "benchmark_inference_api.py").read_text(encoding="utf-8")
+    server = (PROJECT_ROOT / "scripts" / "serve_akagi_api.py").read_text(encoding="utf-8")
 
     assert '@router.post("/api/inference/benchmark/start")' in router
     assert '@router.get("/api/inference/benchmark/latest")' in router
@@ -83,10 +130,23 @@ def test_control_center_exposes_benchmark_without_leaking_api_key_in_process_arg
     assert '"--api-key"' not in router
     assert 'default=os.getenv("MORTAL_INFERENCE_API_KEY", "")' in script
     assert "MORTAL_INFERENCE_BENCHMARK_OK" in script
+    assert "MORTAL_INFERENCE_SWEEP_OK" in script
+    assert "apply_micro_batch_wait" in script
+    assert "original_restored" in script
+    assert 'command.extend(["--sweep-waits"' in router
+
+    assert '@app.post("/api/inference/tuning")' in server
+    assert 'set(payload) - {"micro_batch_ms"}' in server
+    assert "batcher._condition" in server
+    assert '"models_reloaded": False' in server
 
     assert "startInferenceBenchmark" in ui
+    assert "startInferenceSweep" in ui
     assert "loadInferenceBenchmark" in ui
     assert "applyInferenceBenchmarkRecommendation" in ui
     assert "inferenceBenchmarkConcurrency" in ui
     assert "inferenceBenchmarkRows" in ui
+    assert "inferenceSweepWaits" in ui
+    assert "inferenceLatencyBudget" in ui
     assert "추천값을 Tuning에 적용" in ui
+    assert "original restored" in ui

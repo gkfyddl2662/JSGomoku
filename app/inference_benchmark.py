@@ -4,7 +4,6 @@ import json
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +15,9 @@ class InferenceBenchmarkBody(BaseModel):
     requests_per_mode: int = Field(default=64, ge=4, le=4096)
     concurrency: int = Field(default=8, ge=1, le=256)
     batch_rows: int = Field(default=1, ge=1, le=64)
+    sweep: bool = False
+    sweep_waits: str = "0,0.5,1,1.5,2"
+    latency_budget_ms: float = Field(default=100.0, gt=0.0, le=1000.0)
 
 
 def _connect_host(host: str) -> str:
@@ -53,6 +55,8 @@ def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any,
         modes = body.modes.strip().casefold()
         if modes not in {"3p", "4p", "both"}:
             raise HTTPException(400, "Benchmark modes must be 3p, 4p or both")
+        if body.sweep and not body.sweep_waits.strip():
+            raise HTTPException(400, "Sweep requires at least one micro-batch wait candidate")
 
         host = str(inference_target.get("host", "127.0.0.1"))
         port = int(inference_target.get("port", 8190))
@@ -67,7 +71,8 @@ def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any,
         report_dir = runtime.root / "runtime" / "serving-benchmarks"
         report_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        report = report_dir / f"serving-{stamp}-{time.time_ns() % 1_000_000_000:09d}.json"
+        suffix = "sweep" if body.sweep else "single"
+        report = report_dir / f"serving-{stamp}-{time.time_ns() % 1_000_000_000:09d}-{suffix}.json"
 
         command = [
             str(runtime.python_executable),
@@ -82,18 +87,24 @@ def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any,
             str(body.concurrency),
             "--batch-rows",
             str(body.batch_rows),
+            "--latency-budget-ms",
+            str(body.latency_budget_ms),
             "--output",
             str(report),
         ]
+        if body.sweep:
+            command.extend(["--sweep-waits", body.sweep_waits.strip()])
+
         env = controller._mortal_env(runtime)
         if api_key:
             env["MORTAL_INFERENCE_API_KEY"] = api_key
         try:
-            job = jobs.start("inference_benchmark", command, settings.project_root, env)
+            job = jobs.start("inference_benchmark_sweep" if body.sweep else "inference_benchmark", command, settings.project_root, env)
         except Exception as exc:
             raise HTTPException(400, str(exc)) from exc
         result = job.snapshot()
         result["report"] = str(report)
+        result["sweep"] = body.sweep
         return result
 
     @router.get("/api/inference/benchmark/latest")
