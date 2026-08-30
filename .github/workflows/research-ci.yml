@@ -45,7 +45,13 @@ jobs:
         shell: pwsh
         run: |
           $failed = $false
-          foreach ($path in @('scripts/bootstrap.ps1', 'scripts/bootstrap_runtime.ps1', 'scripts/smoke_windows.ps1')) {
+          foreach ($path in @(
+            'scripts/bootstrap.ps1',
+            'scripts/bootstrap_runtime.ps1',
+            'scripts/bootstrap_all_runtimes.ps1',
+            'scripts/migrate_legacy_runtime.ps1',
+            'scripts/smoke_windows.ps1'
+          )) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors) | Out-Null
