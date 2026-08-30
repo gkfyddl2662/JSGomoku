@@ -68,6 +68,63 @@
     </section>
 
     <section class="panel">
+      <div class="panel-title"><span>EXPERIMENTS</span><strong>Mortal vs ROGS · 양방향 모델 비교</strong></div>
+      <div class="subtle">동일 base config·동일 seed로 학습 variant를 분리하고, Mortal docs 방식처럼 동일 duplicate seed를 좌석 회전하여 Candidate→Baseline / Baseline→Candidate 양방향 평가를 실행합니다.</div>
+
+      <div class="form-grid top-gap">
+        <label>Training variant
+          <select id="ablationVariant">
+            <option value="mortal">Mortal · ROGS OFF / Global OFF</option>
+            <option value="rogs" selected>ROGS · Global OFF</option>
+            <option value="rogs-global">ROGS + Global reward</option>
+          </select>
+        </label>
+        <label>Training seed<input id="ablationSeed" type="number" value="36887" min="0" /></label>
+      </div>
+      <div class="button-row">
+        <button onclick="startTrainingAblation('fresh')">새 A/B 학습</button>
+        <button class="secondary" onclick="startTrainingAblation('resume')">이어서 학습</button>
+        <button class="secondary" onclick="startTrainingAblation('prepare')">설정만 생성</button>
+      </div>
+
+      <div class="form-grid top-gap">
+        <label>Candidate checkpoint (models 상대경로)<input id="comparisonCandidate" placeholder="ablation\\seed-36887\\rogs\\current.pth" /></label>
+        <label>Baseline checkpoint (models 상대경로)<input id="comparisonBaseline" value="best_mortal.pth" /></label>
+        <label>Candidate 표시 이름<input id="comparisonCandidateName" placeholder="ROGS" /></label>
+        <label>Baseline 표시 이름<input id="comparisonBaselineName" placeholder="Mortal" /></label>
+        <label>Seed start<input id="comparisonSeedStart" type="number" value="10000" min="0" /></label>
+        <label>Seed count<input id="comparisonSeedCount" type="number" value="100" min="1" /></label>
+        <label>Seed key<input id="comparisonSeedKey" value="0xD5DFAA4CEF265CD7" /></label>
+        <label>Comparison name<input id="comparisonName" placeholder="rogs-vs-mortal" /></label>
+        <label>Device<input id="comparisonDevice" value="cuda:0" /></label>
+        <label>torch.compile
+          <select id="comparisonCompile">
+            <option value="inherit" selected>Config 상속</option>
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+        <label>AMP
+          <select id="comparisonAmp">
+            <option value="inherit" selected>Config 상속</option>
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+        <label>Rating profile<input id="comparisonProfile" placeholder="mahjongsoul" /></label>
+        <label>Round kind<input id="comparisonRoundKind" value="south" /></label>
+        <label>Room<input id="comparisonRoom" placeholder="jade / houou / *" /></label>
+        <label>Rank<input id="comparisonRank" placeholder="saint3 / 6dan / *" /></label>
+        <label><input id="comparisonFresh" type="checkbox" /> 같은 이름 결과가 있으면 삭제 후 재실행</label>
+      </div>
+      <div class="button-row top-gap">
+        <button onclick="startModelComparison()">양방향 Duplicate 비교 시작</button>
+        <button class="secondary" onclick="fillComparisonFromPromotion()">현재 승격 후보 → Candidate</button>
+      </div>
+      <div class="subtle top-gap">출력: <code>paired.jsonl</code>, Mortal-style strength JSON/Markdown, native <code>libriichi.Stat</code> JSON/TXT, <code>comparison.json</code>, 그리고 profile 지정 시 bootstrap rating gate. 기본 Seed count 100은 빠른 preview용이며 Mortal docs의 대규모 강도 검증과 동일한 통계 신뢰도를 의미하지 않습니다.</div>
+    </section>
+
+    <section class="panel">
       <div class="panel-title"><span>SERVING</span><strong>Akagi-NG · Mortal API</strong></div>
       <div class="form-grid">
         <label>Host<input id="inferenceHost" value="127.0.0.1" /></label>
@@ -195,6 +252,7 @@
 
   <div id="toast"></div>
   <script src="/static/app.js"></script>
+  <script src="/static/experiments.js"></script>
   <script src="/static/inference.js"></script>
   <script src="/static/inference_soak.js"></script>
 </body>
