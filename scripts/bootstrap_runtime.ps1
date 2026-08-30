@@ -84,6 +84,28 @@ Do not use -SkipRustBuild for the ABI smoke test.
     & rustup show active-toolchain
 }
 
+function Enter-IsolatedVenv([string]$VenvRoot) {
+    $venvScripts = Join-Path $VenvRoot "Scripts"
+    $pythonExe = Join-Path $venvScripts "python.exe"
+    if (-not (Test-Path $pythonExe -PathType Leaf)) {
+        throw "Virtualenv Python is missing after creation: $pythonExe"
+    }
+
+    # maturin develop requires an activated venv/conda marker even when it is
+    # invoked via that venv's python.exe. Expose the same environment markers
+    # that Activate.ps1 would set, without mutating the user's shell profile.
+    $env:VIRTUAL_ENV = $VenvRoot
+    if (Test-Path Env:CONDA_PREFIX) {
+        Remove-Item Env:CONDA_PREFIX -ErrorAction SilentlyContinue
+    }
+    $pathParts = @($env:PATH -split ';')
+    if ($pathParts -notcontains $venvScripts) {
+        $env:PATH = "$venvScripts;$env:PATH"
+    }
+
+    Write-Host "Activated isolated venv for build: $VenvRoot"
+}
+
 foreach ($cmd in @("git", "python")) {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
         throw "Required command not found: $cmd"
@@ -110,7 +132,9 @@ $Py = "$VenvRoot\Scripts\python.exe"
 if (-not (Test-Path $Py)) {
     Write-Host "[2/7] Creating isolated Python environment: $VenvRoot"
     python -m venv $VenvRoot
+    if ($LASTEXITCODE -ne 0) { throw "python -m venv failed" }
 }
+Enter-IsolatedVenv $VenvRoot
 
 Write-Host "[3/7] Installing Python dependencies + Blackwell PyTorch cu128..."
 & $Py -m pip install --upgrade pip
