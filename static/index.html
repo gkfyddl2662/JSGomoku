@@ -84,10 +84,12 @@
       <div class="button-row top-gap">
         <button onclick="startInferenceApi()">Akagi API 시작/재시작</button>
         <button class="danger" onclick="stopInferenceApi()">Akagi API 중지</button>
+        <button class="secondary" onclick="reloadInferenceModel(currentMode())">선택 Mode 모델 Reload</button>
+        <button class="secondary" onclick="reloadInferenceModel()">3P + 4P Reload</button>
         <button class="secondary" onclick="loadInference()">상태 새로고침</button>
       </div>
       <div id="inferenceStatus" class="subtle top-gap">Inference API 확인 중…</div>
-      <div class="subtle top-gap">Akagi-NG에는 Mortal 모델 파일을 넣지 않습니다. Akagi-NG의 Online/AkagiOT 서버 URL을 이 API 주소로 설정하면 3P는 <code>/react_batch_3p</code>, 4P는 <code>/react_batch</code>로 통신합니다. 서버는 각 mode의 <code>best_mortal.pth</code>를 읽고 승격 시 자동 재로딩합니다.</div>
+      <div class="subtle top-gap">Akagi-NG에는 Mortal 모델 파일을 넣지 않습니다. Akagi-NG의 Online/AkagiOT 서버 URL을 이 API 주소로 설정하면 3P는 <code>/react_batch_3p</code>, 4P는 <code>/react_batch</code>로 통신합니다. 서버는 각 mode의 <code>best_mortal.pth</code>를 읽고 승격 시 자동 재로딩하며, 필요하면 위 버튼으로 안전한 strict hot-reload를 즉시 요청할 수 있습니다.</div>
     </section>
 
     <section class="panel">
@@ -193,5 +195,6 @@
 
   <div id="toast"></div>
   <script src="/static/app.js"></script>
+  <script src="/static/inference.js"></script>
 </body>
 </html>
