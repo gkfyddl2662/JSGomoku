@@ -142,6 +142,15 @@ async function startInferenceApi() {
   } catch(e){ toast(e.message,true); }
 }
 
+async function stopInferenceApi() {
+  try {
+    const result=await api('/api/inference/stop',{method:'POST'});
+    if(result.stopped) toast('Akagi API를 중지했습니다.');
+    else toast('Control Center가 관리 중인 Akagi API가 없습니다.');
+    await Promise.all([loadInference(),loadJobs()]);
+  } catch(e){ toast(e.message,true); }
+}
+
 function mjxArgs(){
   return {
     distro: document.getElementById('mjxDistro')?.value || '',
