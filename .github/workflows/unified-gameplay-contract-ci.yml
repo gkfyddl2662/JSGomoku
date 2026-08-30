@@ -25,13 +25,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Compile Stage 8A and gameplay tools
+      - name: Compile unified gameplay training and evaluator tools
         run: |
           python -m py_compile scripts/patch_mortal_unified_python_abi_stage8a.py
+          python -m py_compile scripts/patch_mortal_unified_eval_stage8c.py
           python -m py_compile scripts/smoke_unified_gameplay.py
+          python -m py_compile scripts/smoke_unified_training.py
+          python -m py_compile scripts/smoke_unified_evaluator.py
           grep -q 'MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_OK' scripts/patch_mortal_unified_python_abi_stage8a.py
+          grep -q 'MORTAL_ROGS_UNIFIED_EVAL_STAGE8C' scripts/patch_mortal_unified_eval_stage8c.py
           grep -q 'MORTAL_UNIFIED_GAMEPLAY_E2E_OK' scripts/smoke_unified_gameplay.py
-          grep -q 'GameplayLoader' scripts/smoke_unified_gameplay.py
+          grep -q 'MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK' scripts/smoke_unified_training.py
+          grep -q 'GameplayLoader' scripts/smoke_unified_training.py
+          grep -q 'smoke-trained-3p.pth' scripts/smoke_unified_training.py
+          grep -q 'smoke-trained-4p.pth' scripts/smoke_unified_training.py
+          grep -q 'MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK' scripts/smoke_unified_evaluator.py
+          grep -q 'require-trained-checkpoints' scripts/smoke_unified_evaluator.py
           grep -q 'OneVsTwo' scripts/smoke_unified_gameplay.py
           grep -q 'OneVsThree' scripts/smoke_unified_gameplay.py
 
@@ -51,6 +60,7 @@ jobs:
           grep -q 'from libriichi import arena' /tmp/mortal-stage8/mortal/player.py
           grep -q 'from libriichi import dataset' /tmp/mortal-stage8/mortal/dataloader.py
           grep -q 'from libriichi import dataset' /tmp/mortal-stage8/mortal/train_grp.py
+          grep -q 'MORTAL_ROGS_UNIFIED_EVAL_STAGE8C' /tmp/mortal-stage8/mortal/one_vs_three.py
           python -m py_compile /tmp/mortal-stage8/mortal/model.py
           python -m py_compile /tmp/mortal-stage8/mortal/engine.py
           python -m py_compile /tmp/mortal-stage8/mortal/player.py
@@ -59,7 +69,7 @@ jobs:
           python -m py_compile /tmp/mortal-stage8/mortal/one_vs_two.py
           python -m py_compile /tmp/mortal-stage8/mortal/one_vs_three.py
 
-      - name: Verify Windows gameplay launcher contract
+      - name: Verify Windows gameplay training evaluator launcher contract
         shell: pwsh
         run: |
           $tokens = $null
@@ -76,10 +86,14 @@ jobs:
           foreach ($pattern in @(
             'patch_mortal_unified_python_abi_stage8a\.py',
             'smoke_unified_gameplay\.py',
+            'smoke_unified_training\.py',
+            'smoke_unified_evaluator\.py',
             'SkipGameplay',
+            'SkipRealDataTraining',
+            'require-trained-checkpoints',
             'MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK'
           )) {
             if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
-              throw "Missing gameplay launcher contract: $pattern"
+              throw "Missing gameplay/training/evaluator launcher contract: $pattern"
             }
           }
