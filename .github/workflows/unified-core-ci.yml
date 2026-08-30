@@ -46,6 +46,7 @@ jobs:
           python scripts/patch_libriichi_unified_stage3a.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3b.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3c.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_stage3d.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
@@ -67,7 +68,11 @@ jobs:
           grep -q "pub can_nukidora: bool" /tmp/mortal-unified/libriichi/src/state/action.rs
           grep -q "pub fn new_n" /tmp/mortal-unified/libriichi/src/rankings.rs
           grep -q "MORTAL_ROGS_UNIFIED_PLAYER_STATE_STAGE3C" /tmp/mortal-unified/libriichi/src/state/update.rs
-          grep -q "nukidora state transition is not installed yet" /tmp/mortal-unified/libriichi/src/state/update.rs
+          grep -q "MORTAL_ROGS_UNIFIED_NUKIDORA_STAGE3D" /tmp/mortal-unified/libriichi/src/state/update.rs
+          grep -q "fn update_nukidora_candidate" /tmp/mortal-unified/libriichi/src/state/update.rs
+          grep -q "fn nukidora" /tmp/mortal-unified/libriichi/src/state/update.rs
+          grep -q "nukidora_ron_chance" /tmp/mortal-unified/libriichi/src/state/player_state.rs
+          ! grep -q "nukidora state transition is not installed yet" /tmp/mortal-unified/libriichi/src/state/update.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
