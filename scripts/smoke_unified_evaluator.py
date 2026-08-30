@@ -138,6 +138,7 @@ def main() -> int:
         del brain, dqn, brain2, dqn2, state
 
     print("MORTAL_UNIFIED_CHECKPOINT_EVAL_E2E_OK")
+    print("MORTAL_UNIFIED_EVALUATOR_E2E_OK")
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
 
