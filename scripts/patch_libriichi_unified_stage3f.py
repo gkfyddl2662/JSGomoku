@@ -109,6 +109,66 @@ fn unified_v4_yonma_keeps_stock_abi_and_rejects_nukidora() {
 '''
 
 
+def replace_exact(text: str, old: str, new: str, label: str) -> str:
+    if new in text:
+        return text
+    count = text.count(old)
+    if count != 1:
+        raise RuntimeError(f"{label}: expected one anchor, found {count}")
+    return text.replace(old, new, 1)
+
+
+def normalize_stock_tests(text: str) -> str:
+    scores_old = "        scores: [25000; 4],\n"
+    scores_count = text.count(scores_old)
+    if scores_count == 2:
+        text = text.replace(scores_old, "        scores: vec![25000; 4],\n")
+    elif scores_count != 0:
+        raise RuntimeError(f"stock score fixtures: expected 0 or 2 anchors, found {scores_count}")
+
+    text = replace_exact(
+        text,
+        '''        tehais: [
+            tile37_to_vec(&hand_with_aka("23406m 456789p 58s").unwrap())
+                .try_into()
+                .unwrap(),
+            [t!(?); 13],
+            [t!(?); 13],
+            [t!(?); 13],
+        ],
+''',
+        '''        tehais: vec![
+            tile37_to_vec(&hand_with_aka("23406m 456789p 58s").unwrap()),
+            vec![t!(?); 13],
+            vec![t!(?); 13],
+            vec![t!(?); 13],
+        ],
+''',
+        "furiten StartKyoku fixture",
+    )
+    text = replace_exact(
+        text,
+        '''        tehais: [
+            tile37_to_vec(&hand_with_aka("1111s 123456p 112z").unwrap())
+                .try_into()
+                .unwrap(),
+            [t!(?); 13],
+            [t!(?); 13],
+            [t!(?); 13],
+        ],
+''',
+        '''        tehais: vec![
+            tile37_to_vec(&hand_with_aka("1111s 123456p 112z").unwrap()),
+            vec![t!(?); 13],
+            vec![t!(?); 13],
+            vec![t!(?); 13],
+        ],
+''',
+        "dora-count StartKyoku fixture",
+    )
+    return text
+
+
 def apply(root: Path) -> None:
     obs = root / "libriichi/src/state/obs_repr.rs"
     if not obs.is_file() or REQUIRES not in obs.read_text(encoding="utf-8"):
@@ -117,19 +177,25 @@ def apply(root: Path) -> None:
     path = root / "libriichi/src/state/test.rs"
     if not path.is_file():
         raise RuntimeError(f"missing state tests: {path}")
-    original = path.read_text(encoding="utf-8")
-    if MARKER in original:
-        print(f"unchanged: {path}")
-        return
 
-    backup = path.with_suffix(path.suffix + ".unified-stage3f.bak")
-    if not backup.exists():
-        shutil.copy2(path, backup)
-    path.write_text(original.rstrip() + TESTS + "\n", encoding="utf-8")
+    original = path.read_text(encoding="utf-8")
+    updated = normalize_stock_tests(original)
+    if MARKER not in updated:
+        updated = updated.rstrip() + TESTS + "\n"
+
+    if updated != original:
+        backup = path.with_suffix(path.suffix + ".unified-stage3f.bak")
+        if not backup.exists():
+            shutil.copy2(path, backup)
+        path.write_text(updated, encoding="utf-8")
+        print(f"patched: {path}")
+    else:
+        print(f"unchanged: {path}")
 
     post = path.read_text(encoding="utf-8")
     required = (
         MARKER,
+        "scores: vec![25000; 4]",
         "unified_v4_sanma_nukidora_abi",
         "obs.dim(), (1010, 34)",
         "mask.len(), 44",
@@ -140,7 +206,7 @@ def apply(root: Path) -> None:
     missing = [needle for needle in required if needle not in post]
     if missing:
         raise RuntimeError(f"Stage 3F postconditions failed: {missing}")
-    print(f"patched: {path}")
+
     print("MORTAL_UNIFIED_ABI_TEST_STAGE3F_OK")
 
 
