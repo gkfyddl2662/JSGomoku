@@ -53,6 +53,7 @@ jobs:
           python scripts/patch_libriichi_unified_arena_stage4b.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_arena_stage4c.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_game_stage5a.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_game_stage5a_fix.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
@@ -86,6 +87,7 @@ jobs:
           grep -q "fn calc_tsumo_deltas" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "hidden_live_cap" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5A" /tmp/mortal-unified/libriichi/src/arena/game.rs
+          grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5A_FIX" /tmp/mortal-unified/libriichi/src/arena/game.rs
           grep -q "tenhou_sanma_hanchan" /tmp/mortal-unified/libriichi/src/arena/game.rs
           grep -q "target_score: 40_000" /tmp/mortal-unified/libriichi/src/arena/game.rs
           grep -q "unified_sanma_tsumogiri_game_smoke" /tmp/mortal-unified/libriichi/src/arena/game.rs
