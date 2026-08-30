@@ -36,16 +36,16 @@ jobs:
           grep -q 'module-name = "libriichi"' /tmp/mortal-libriichi-package/libriichi/pyproject.toml
           grep -q 'fn libriichi(' /tmp/mortal-libriichi-package/libriichi/src/lib.rs
 
-      - name: Build extension with maturin in an isolated venv
+      - name: Build extension with maturin in bootstrap-style venv
         run: |
-          python -m venv /tmp/libriichi-venv
-          /tmp/libriichi-venv/bin/python -m pip install --upgrade pip maturin
+          python -m venv /tmp/mortal-libriichi-package/.venv
+          /tmp/mortal-libriichi-package/.venv/bin/python -m pip install --upgrade pip maturin
           cd /tmp/mortal-libriichi-package/libriichi
-          /tmp/libriichi-venv/bin/python -m maturin develop --release
+          /tmp/mortal-libriichi-package/.venv/bin/python -m maturin develop --release
 
       - name: Import unified Python extension
         run: |
-          /tmp/libriichi-venv/bin/python - <<'PY'
+          /tmp/mortal-libriichi-package/.venv/bin/python - <<'PY'
           import libriichi
           from libriichi import consts
           assert consts.MAX_VERSION == 4
