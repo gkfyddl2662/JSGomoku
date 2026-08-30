@@ -66,8 +66,10 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
             or "ACTION_SPACE_4P: usize = 46" not in consts
         ):
             raise RuntimeError("unified action ABI postcondition failed")
-        if "4 => Ok((1010, 34))" not in consts or "4 => Ok((170, 34))" not in consts:
-            raise RuntimeError("unified 3P observation/oracle postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_ACTION_OBS_STAGE3E" not in consts:
+            raise RuntimeError("unified observation ABI stage postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_ARENA_STAGE4C" not in consts or "4 => Ok((170, 34))" not in consts:
+            raise RuntimeError("unified 3P oracle ABI stage postcondition failed")
 
     if not rust_only:
         model = (root / "mortal/model.py").read_text(encoding="utf-8")
