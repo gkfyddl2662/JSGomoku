@@ -74,8 +74,8 @@ jobs:
           grep -q "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" /tmp/mortal-unified-runtime/mortal/train.py
           grep -q "MORTAL_ROGS_UNIFIED_GRP_TRAINER_STAGE6B" /tmp/mortal-unified-runtime/mortal/train_grp.py
           grep -q "MORTAL_ROGS_UNIFIED_EVAL_STAGE5C" /tmp/mortal-unified-runtime/mortal/one_vs_two.py
-          grep -q "MORTAL_ROGS_UNIFIED_SELFPLAY_STAGE7B" /tmp/mortal-unified-runtime/mortal/player.py
-          grep -q "MORTAL_ROGS_UNIFIED_SELFPLAY_STAGE7B" /tmp/mortal-unified-runtime/mortal/client.py
+          grep -q "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" /tmp/mortal-unified-runtime/mortal/player.py
+          grep -q "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" /tmp/mortal-unified-runtime/mortal/client.py
           grep -q "compute_mortal_rogs_batch" /tmp/mortal-unified-runtime/mortal/train.py
 
       - name: Synthetic shared-process 3P and 4P model contracts
@@ -191,7 +191,6 @@ jobs:
 
           foreach ($pattern in @(
             'MORTAL_UNIFIED_ROOT',
-            'MORTAL_UNIFIED_RUNTIME_SMOKE_OK',
             'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
             'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK',
             'one_vs_two\.py',
@@ -199,6 +198,7 @@ jobs:
           )) {
             if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) { exit 1 }
           }
+          if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) { exit 1 }
 
       - name: Verify production patch chain can be refreshed and reapplied
         run: |
@@ -211,15 +211,15 @@ jobs:
           python -m py_compile /tmp/mortal-unified-runtime/mortal/player.py
           python -m py_compile /tmp/mortal-unified-runtime/mortal/client.py
           grep -q "MORTAL_ROGS_UNIFIED_STAT_STAGE7A" /tmp/mortal-unified-runtime/libriichi/src/stat.rs
-          grep -q "MORTAL_ROGS_UNIFIED_SELFPLAY_STAGE7B" /tmp/mortal-unified-runtime/mortal/player.py
-          grep -q "MORTAL_ROGS_UNIFIED_SELFPLAY_STAGE7B" /tmp/mortal-unified-runtime/mortal/client.py
+          grep -q "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" /tmp/mortal-unified-runtime/mortal/player.py
+          grep -q "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" /tmp/mortal-unified-runtime/mortal/client.py
 
       - name: Compile unified runtime tools
         run: |
           python -m py_compile scripts/patch_mortal_unified_all.py
           python -m py_compile scripts/patch_mortal_unified_eval_stage5c.py
           python -m py_compile scripts/patch_libriichi_unified_stat_stage7a.py
-          python -m py_compile scripts/patch_mortal_unified_selfplay_stage7b.py
+          python -m py_compile scripts/patch_mortal_unified_online_stage7b.py
           python -m py_compile scripts/smoke_unified_runtime.py
           grep -q "MORTAL_UNIFIED_RUNTIME_SMOKE_OK" scripts/smoke_unified_runtime.py
           grep -q "OneVsTwo" scripts/smoke_unified_runtime.py
