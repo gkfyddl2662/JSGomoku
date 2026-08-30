@@ -35,9 +35,10 @@ function ensureInferenceSoakControls() {
     '<button class="secondary" onclick="loadInferenceSoak()">최신 Soak 결과</button>',
     '<button class="secondary" onclick="applyInferenceSoakPreset()">Preset을 Tuning에 복사</button>',
     '<button onclick="applyInferenceProductionProfile()">Production preset 원자 적용</button>',
+    '<button class="secondary" onclick="startInferenceProductionProfile()">저장 Production profile로 서버 시작</button>',
     '<button class="secondary" onclick="loadInferenceProductionProfile()">Production profile 상태</button>',
     '</div>',
-    '<div class="subtle top-gap">Production gate는 최소 30분 실측을 요구합니다. 원자 적용은 profile 저장 → graceful drain → 재시작 → health/모델/serving 설정 검증 순서로 수행하며, 실패하면 이전 profile과 서버 설정으로 자동 rollback합니다.</div>',
+    '<div class="subtle top-gap">Production gate는 최소 30분 실측을 요구합니다. 원자 적용은 profile 저장 → graceful drain → 재시작 → health/모델/serving 설정 검증 순서로 수행하며, 실패하면 이전 profile과 서버 설정으로 자동 rollback합니다. 저장 profile 시작 시 API key는 파일에서 읽지 않고 위 API Key 입력값을 다시 주입합니다.</div>',
     '<div id="inferenceSoakResult" class="subtle top-gap">Soak 미실행</div>',
     '<div id="inferenceProductionProfileResult" class="subtle top-gap">Production profile 확인 중…</div>',
   ].join('');
@@ -85,7 +86,12 @@ function renderInferenceProductionProfile(result) {
   const serving = profile.serving || {};
   const target = profile.target || {};
   const source = profile.source || {};
-  el.textContent = `Production ${String(profile.status || 'unknown').toUpperCase()} · ${target.device || '-'} · ${target.host || '-'}:${target.port || '-'} · merge ${serving.micro_batch_ms ?? '-'}ms · pending ${serving.max_pending_requests ?? '-'} · deadline ${serving.request_deadline_ms ?? '-'}ms · reload quiet/wait ${serving.reload_quiet_ms ?? '-'}/${serving.reload_wait_ms ?? '-'}ms · source ${source.report || '-'}${result.path ? ` · ${result.path}` : ''}`;
+  const live = result.live || {};
+  let liveText = 'LIVE UNKNOWN';
+  if (live.running === false) liveText = 'OFFLINE';
+  else if (live.verified && live.matches) liveText = `LIVE MATCH${live.managed ? ' · MANAGED' : ' · UNMANAGED'}`;
+  else if (live.running) liveText = `LIVE DRIFT${live.managed ? ' · MANAGED' : ' · UNMANAGED'} · ${(live.drift || []).join(',') || 'unverified'}`;
+  el.textContent = `Production ${String(profile.status || 'unknown').toUpperCase()} · ${liveText} · ${target.device || '-'} · ${target.host || '-'}:${target.port || '-'} · merge ${serving.micro_batch_ms ?? '-'}ms · pending ${serving.max_pending_requests ?? '-'} · deadline ${serving.request_deadline_ms ?? '-'}ms · reload quiet/wait ${serving.reload_quiet_ms ?? '-'}/${serving.reload_wait_ms ?? '-'}ms · source ${source.report || '-'}${result.path ? ` · ${result.path}` : ''}`;
 }
 
 function inferenceSoakBody() {
@@ -199,10 +205,36 @@ async function applyInferenceProductionProfile() {
   }
 }
 
+async function startInferenceProductionProfile() {
+  ensureInferenceSoakControls();
+  const apiKey = document.getElementById('inferenceApiKey')?.value || '';
+  try {
+    toast('저장 Production profile로 inference 서버 시작 · health/settings 검증 중');
+    const result = await api('/api/inference/production/start', {
+      method:'POST',
+      body:JSON.stringify({api_key:apiKey, verify_timeout_s:180}),
+    });
+    if (result.job?.id) selectedJob = result.job.id;
+    await Promise.all([
+      typeof loadJobs === 'function' ? loadJobs() : Promise.resolve(),
+      typeof loadInference === 'function' ? loadInference() : Promise.resolve(),
+      typeof loadInferenceTelemetry === 'function' ? loadInferenceTelemetry() : Promise.resolve(),
+      loadInferenceProductionProfile(),
+    ]);
+    toast(result.already_running ? 'Production profile과 일치하는 서버가 이미 실행 중입니다.' : '저장 Production profile로 inference 서버 시작 완료');
+    return result;
+  } catch (e) {
+    await Promise.allSettled([loadInferenceProductionProfile()]);
+    toast(`Production profile 시작 실패: ${e.message}`, true);
+    throw e;
+  }
+}
+
 window.startInferenceSoak = startInferenceSoak;
 window.loadInferenceSoak = loadInferenceSoak;
 window.applyInferenceSoakPreset = applyInferenceSoakPreset;
 window.applyInferenceProductionProfile = applyInferenceProductionProfile;
+window.startInferenceProductionProfile = startInferenceProductionProfile;
 window.loadInferenceProductionProfile = loadInferenceProductionProfile;
 window.addEventListener('DOMContentLoaded', () => {
   ensureInferenceSoakControls();

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from app.inference_recovery import compare_profile_health, target_from_active_profile
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,15 +23,15 @@ def load_module():
     return module
 
 
-def health_for(module, serving):
+def health_for(module, serving, *, device: str = "cpu"):
     serving = module.normalize_serving_settings(serving)
     return {
         "protocol": "akagiot-v1",
         "degraded": False,
         "lifecycle": {"state": "running", "accepting": True},
         "models": {
-            "3p": {"loaded": True, "current": True, "last_error": None},
-            "4p": {"loaded": True, "current": True, "last_error": None},
+            "3p": {"loaded": True, "current": True, "last_error": None, "device": device},
+            "4p": {"loaded": True, "current": True, "last_error": None, "device": device},
         },
         "serving": {
             "micro_batch": {
@@ -182,14 +184,40 @@ def test_transaction_restores_previous_profile_and_server_on_candidate_failure(t
     assert path.read_bytes() == old_bytes
 
 
-def test_control_center_production_apply_contract() -> None:
+def test_active_profile_can_be_rehydrated_without_persisting_key_and_detects_device_drift(tmp_path: Path) -> None:
+    module = load_module()
+    serving = module.normalize_serving_settings({"micro_batch_ms": 1.0})
+    profile = module.build_profile(
+        {"host": "127.0.0.1", "port": 8190, "device": "cpu", "serving": serving},
+        serving,
+        source_report=tmp_path / "soak.json",
+        source_payload={"protocol": module.SOAK_PROTOCOL},
+        status="active",
+    )
+    restored = target_from_active_profile(profile, api_key="runtime-only-secret")
+    assert restored["api_key"] == "runtime-only-secret"
+    assert "runtime-only-secret" not in json.dumps(profile)
+    assert restored["serving"] == serving
+
+    matching = compare_profile_health(profile, health_for(module, serving, device="cpu"))
+    assert matching["verified"] is True and matching["matches"] is True
+    drifted = compare_profile_health(profile, health_for(module, serving, device="cuda:0"))
+    assert drifted["matches"] is False
+    assert "device:3p" in drifted["drift"] and "device:4p" in drifted["drift"]
+
+
+def test_control_center_production_apply_and_restore_contract() -> None:
     router = (PROJECT_ROOT / "app" / "inference_benchmark.py").read_text(encoding="utf-8")
     core = (PROJECT_ROOT / "app" / "inference_production.py").read_text(encoding="utf-8")
+    recovery = (PROJECT_ROOT / "app" / "inference_recovery.py").read_text(encoding="utf-8")
     ui = (PROJECT_ROOT / "static" / "inference_soak.js").read_text(encoding="utf-8")
 
     assert '@router.post("/api/inference/production/apply")' in router
     assert '@router.get("/api/inference/production/status")' in router
+    assert '@router.post("/api/inference/production/start")' in router
     assert "latest_eligible_soak(runtime.root)" in router
+    assert "target_from_active_profile(profile, api_key=body.api_key)" in router
+    assert "An unmanaged process is already listening" in router
     assert 'env["MORTAL_INFERENCE_API_KEY"] = api_key' in router
     production_section = router.split('@router.post("/api/inference/production/apply")', 1)[1]
     assert '"--api-key"' not in production_section
@@ -205,7 +233,10 @@ def test_control_center_production_apply_contract() -> None:
     assert "restore_profile(path, previous_bytes)" in core
     assert "Rollback health verification failed" in core
     assert "max_device_executions=1" in core
+    assert "device:3p" in recovery and "device:4p" in recovery
 
     assert "applyInferenceProductionProfile" in ui
+    assert "startInferenceProductionProfile" in ui
     assert "/api/inference/production/apply" in ui
+    assert "/api/inference/production/start" in ui
     assert "/api/inference/production/status" in ui

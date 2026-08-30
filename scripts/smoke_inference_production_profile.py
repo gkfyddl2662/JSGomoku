@@ -24,6 +24,7 @@ from app.inference_production import (
     normalize_serving_settings,
     verify_health,
 )
+from app.inference_recovery import compare_profile_health, target_from_active_profile
 
 
 def free_port() -> int:
@@ -59,7 +60,7 @@ def request_json(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Real-checkpoint E2E for production serving apply and rollback")
+    parser = argparse.ArgumentParser(description="Real-checkpoint E2E for production serving apply, rollback and saved-profile restore")
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--api-key", default="mortal-rogs-production-profile-smoke")
@@ -280,8 +281,22 @@ def main() -> int:
         if errors:
             raise SystemExit(f"rollback serving verification failed: {errors}")
 
+        stop()
+        active_profile = json.loads(profile.read_text(encoding="utf-8"))
+        restored_target = target_from_active_profile(active_profile, api_key=args.api_key)
+        if restored_target["api_key"] != args.api_key:
+            raise SystemExit("runtime-only API key was not injected into restored target")
+        if args.api_key in profile.read_text(encoding="utf-8"):
+            raise SystemExit("API key leaked into persisted production profile")
+        start(restored_target)
+        restored_health = wait_healthy(restored_target, 120.0)
+        comparison = compare_profile_health(active_profile, restored_health)
+        if comparison.get("matches") is not True:
+            raise SystemExit(f"saved production profile did not restore exact live settings: {comparison}")
+
         print("MORTAL_INFERENCE_PRODUCTION_APPLY_E2E_OK")
         print("MORTAL_INFERENCE_PRODUCTION_ROLLBACK_E2E_OK")
+        print("MORTAL_INFERENCE_PRODUCTION_RESTORE_E2E_OK")
         print(json.dumps({"profile": str(profile), "serving": candidate_settings}, ensure_ascii=False, indent=2))
         return 0
     finally:

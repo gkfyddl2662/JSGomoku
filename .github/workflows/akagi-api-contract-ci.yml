@@ -33,6 +33,7 @@ jobs:
           python -m py_compile \
             app/inference_benchmark.py \
             app/inference_production.py \
+            app/inference_recovery.py \
             serving/inference.py \
             serving/resilient.py \
             serving/coordination.py \
@@ -98,10 +99,13 @@ jobs:
           grep -q 'MORTAL_INFERENCE_PRODUCTION_PRESET_E2E_OK' scripts/smoke_inference_soak.py
           grep -q 'MORTAL_INFERENCE_PRODUCTION_APPLY_E2E_OK' scripts/smoke_inference_production_profile.py
           grep -q 'MORTAL_INFERENCE_PRODUCTION_ROLLBACK_E2E_OK' scripts/smoke_inference_production_profile.py
+          grep -q 'MORTAL_INFERENCE_PRODUCTION_RESTORE_E2E_OK' scripts/smoke_inference_production_profile.py
           grep -q 'mortal-rogs-serving-soak-v1' scripts/soak_inference_api.py
           grep -q 'mortal-rogs-serving-profile-v1' app/inference_production.py
           grep -q 'restore_profile(path, previous_bytes)' app/inference_production.py
+          grep -q 'target_from_active_profile' app/inference_recovery.py
           grep -q '/api/inference/production/apply' app/inference_benchmark.py
+          grep -q '/api/inference/production/start' app/inference_benchmark.py
           grep -q '/api/inference/production/status' app/inference_benchmark.py
           grep -q 'request_deadline_ms' serving/resilient.py
           grep -q 'DeviceExecutionCoordinator' serving/coordination.py

@@ -22,6 +22,7 @@ from .inference_production import (
     profile_path,
     read_profile,
 )
+from .inference_recovery import compare_profile_health, target_from_active_profile
 
 
 class InferenceBenchmarkBody(BaseModel):
@@ -49,6 +50,11 @@ class InferenceSoakBody(BaseModel):
 
 
 class InferenceProductionApplyBody(BaseModel):
+    verify_timeout_s: float = Field(default=180.0, ge=10.0, le=600.0)
+
+
+class InferenceProductionStartBody(BaseModel):
+    api_key: str = ""
     verify_timeout_s: float = Field(default=180.0, ge=10.0, le=600.0)
 
 
@@ -133,10 +139,8 @@ def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any,
         return None
 
     def publish_job_id(job_id: str | None) -> None:
-        # main.py owns the legacy lifecycle id. Publish transaction-created jobs
-        # back to it so the existing Status/Stop buttons continue to manage them.
-        module = sys.modules.get("app.main")
-        if module is not None:
+        module = sys.modules.get("app.main") or sys.modules.get("__main__")
+        if module is not None and hasattr(module, "_inference_job_id"):
             setattr(module, "_inference_job_id", job_id)
 
     def update_target(new_target: dict[str, Any]) -> None:
@@ -388,7 +392,96 @@ def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any,
             profile = read_profile(path)
         except ProductionProfileError as exc:
             raise HTTPException(500, str(exc)) from exc
-        return {"available": profile is not None, "profile": profile, "path": str(path)}
+        if profile is None:
+            return {"available": False, "profile": None, "path": str(path), "live": None}
+
+        managed = current_inference_job() is not None
+        key = str(inference_target.get("api_key", ""))
+        saved = target_from_active_profile(profile, api_key=key)
+        server = f"http://{_connect_host(saved['host'])}:{saved['port']}"
+        live: dict[str, Any] = {"running": False, "managed": managed, "verified": False, "matches": False, "drift": ["offline"]}
+        try:
+            status, health = _request_json(f"{server}/health", api_key=key, timeout=0.6)
+            if status == 200 and health.get("protocol") == "akagiot-v1":
+                live = {"running": True, "managed": managed, **compare_profile_health(profile, health)}
+            elif status == 401:
+                live = {"running": True, "managed": managed, "verified": False, "matches": False, "drift": ["authorization"]}
+            else:
+                live = {"running": True, "managed": managed, "verified": False, "matches": False, "drift": [f"http:{status}"]}
+        except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        return {"available": True, "profile": profile, "path": str(path), "live": live}
+
+    @router.post("/api/inference/production/start")
+    def start_saved_production(body: InferenceProductionStartBody) -> dict[str, Any]:
+        runtime = unified_runtime()
+        if not production_lock.acquire(blocking=False):
+            raise HTTPException(409, "A production serving profile transaction is already running")
+        try:
+            for row in jobs.list():
+                if row.get("running") and row.get("kind") in {"inference_soak", "inference_benchmark", "inference_benchmark_sweep"}:
+                    raise HTTPException(409, f"Stop {row.get('kind')} before restoring a production profile")
+
+            path = profile_path(runtime.root)
+            profile = read_profile(path)
+            if profile is None:
+                raise HTTPException(409, "No active production serving profile exists")
+            saved_target = target_from_active_profile(profile, api_key=body.api_key)
+
+            managed = current_inference_job()
+            if managed is not None:
+                current_key = str(inference_target.get("api_key", ""))
+                current_host = str(inference_target.get("host", saved_target["host"]))
+                current_port = int(inference_target.get("port", saved_target["port"]))
+                current_server = f"http://{_connect_host(current_host)}:{current_port}"
+                try:
+                    status, health = _request_json(f"{current_server}/health", api_key=current_key, timeout=0.8)
+                except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+                    status, health = 0, {}
+                same_target = current_host == saved_target["host"] and current_port == saved_target["port"]
+                if status == 200 and same_target and not verify_profile_drift(profile, health) and current_key == body.api_key:
+                    update_target(saved_target)
+                    return {"ok": True, "already_running": True, "managed": True, "profile": profile, "health": health, "job": managed}
+                raise HTTPException(409, "A managed inference API is already running with a different or unverified profile; stop it or use production apply")
+
+            server = f"http://{_connect_host(saved_target['host'])}:{saved_target['port']}"
+            try:
+                status, _ = _request_json(f"{server}/health", api_key=body.api_key, timeout=0.6)
+                if status:
+                    raise HTTPException(409, "An unmanaged process is already listening on the saved production server address")
+            except HTTPException:
+                raise
+            except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+                pass
+
+            started: dict[str, Any] | None = None
+            try:
+                started = start_server(runtime, saved_target)
+                health = wait_healthy(saved_target, body.verify_timeout_s)
+                comparison = compare_profile_health(profile, health)
+                if not comparison["matches"]:
+                    raise RuntimeError(f"Restored server does not match production profile: {comparison['drift']}")
+            except Exception as exc:
+                if started is not None:
+                    try:
+                        stop_server()
+                    except Exception:
+                        pass
+                raise HTTPException(409, f"Production profile restore failed: {type(exc).__name__}: {exc}") from exc
+
+            update_target(saved_target)
+            return {
+                "ok": True,
+                "already_running": False,
+                "managed": True,
+                "profile": profile,
+                "health": health,
+                "job": current_inference_job(),
+            }
+        except ProductionProfileError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        finally:
+            production_lock.release()
 
     @router.post("/api/inference/production/apply")
     def apply_production(body: InferenceProductionApplyBody) -> dict[str, Any]:
@@ -479,3 +572,7 @@ def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any,
             production_lock.release()
 
     return router
+
+
+def verify_profile_drift(profile: dict[str, Any], health: dict[str, Any]) -> list[str]:
+    return list(compare_profile_health(profile, health).get("drift", []))
