@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +21,13 @@ from .settings import load_settings, normalize_mode
 settings = load_settings()
 controller = MortalController(settings)
 jobs = JobManager()
-app = FastAPI(title="Mortal ROGS Control Center", version="0.5.0")
+app = FastAPI(title="Mortal ROGS Control Center", version="0.6.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
+
+# The inference server is a separate process. Remember the most recently launched
+# bind target so the Control Center can proxy its /health state without exposing
+# model files to Akagi-NG or requiring cross-origin browser requests.
+_inference_target: dict[str, Any] = {"host": "127.0.0.1", "port": 8190}
 
 
 class ConfigBody(BaseModel):
@@ -62,6 +70,19 @@ def _under(path: Path, root: Path) -> Path:
     return path
 
 
+def _probe_inference_health(host: str, port: int) -> dict[str, Any]:
+    normalized = host.strip().casefold()
+    # 0.0.0.0/:: are valid bind addresses but not useful connect targets.
+    connect_host = "127.0.0.1" if normalized in {"", "0.0.0.0", "::", "[::]"} else host.strip()
+    url = f"http://{connect_host}:{port}/health"
+    try:
+        with urllib.request.urlopen(url, timeout=0.6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return {"running": True, "url": f"http://{host}:{port}", "health_url": url, "health": payload, "error": None}
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return {"running": False, "url": f"http://{host}:{port}", "health_url": url, "health": None, "error": str(exc)}
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(settings.project_root / "static" / "index.html")
@@ -98,15 +119,27 @@ def api_inference_status() -> dict[str, Any]:
     r3 = _runtime("3p")
     r4 = _runtime("4p")
     unified = bool(r3.unified and r4.unified and r3.root == r4.root and r3.python_executable == r4.python_executable)
+    host = str(_inference_target["host"])
+    port = int(_inference_target["port"])
+    live = _probe_inference_health(host, port) if unified else {"running": False, "health": None, "error": "unified runtime unavailable"}
     return {
         "unified": unified,
         "runtime_root": str(r3.root) if unified else None,
         "python": str(r3.python_executable) if unified else None,
         "default_url": "http://127.0.0.1:8190",
+        "server_url": f"http://{host}:{port}",
+        "live": live,
         "endpoints": {"3p": "/react_batch_3p", "4p": "/react_batch"},
         "best_models": {
             "3p": str(r3.models_dir / "best_mortal.pth"),
             "4p": str(r4.models_dir / "best_mortal.pth"),
+        },
+        "akagi_settings": {
+            "ot": {
+                "online": True,
+                "server": f"http://{host}:{port}",
+                "api_key": "<same API key configured in Mortal-ROGS>",
+            }
         },
     }
 
@@ -123,13 +156,14 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
     if not script.is_file():
         raise HTTPException(500, f"Inference API script is missing: {script}")
 
+    host = body.host.strip() or "127.0.0.1"
     cmd = [
         str(r3.python_executable),
         str(script),
         "--runtime-root",
         str(r3.root),
         "--host",
-        body.host.strip() or "127.0.0.1",
+        host,
         "--port",
         str(body.port),
         "--device",
@@ -139,6 +173,8 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
         cmd.extend(["--api-key", body.api_key])
     try:
         job = jobs.start("inference_api", cmd, settings.project_root, controller._mortal_env(r3))
+        _inference_target["host"] = host
+        _inference_target["port"] = body.port
         return job.snapshot()
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
