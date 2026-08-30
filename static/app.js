@@ -122,8 +122,8 @@ async function setOnline(value) {
 }
 
 async function startJob(kind,args={}) {
-  try { const j=await api('/api/jobs',{method:'POST',body:JSON.stringify({kind,args})}); selectedJob=j.id; await loadJobs(); toast(`${kind} 시작`); }
-  catch(e){ toast(e.message,true); }
+  try { const j=await api('/api/jobs',{method:'POST',body:JSON.stringify({kind,args})}); selectedJob=j.id; await loadJobs(); toast(`${kind} 시작`); return j; }
+  catch(e){ toast(e.message,true); throw e; }
 }
 
 async function startSelfPlay() {
@@ -143,13 +143,37 @@ function startConvert(){ return startJob('convert',{source:document.getElementBy
 async function loadCheckpoints() {
   try {
     const rows=await api('/api/checkpoints');
-    document.getElementById('checkpoints').innerHTML=rows.length?rows.slice(0,30).map(x=>`<div class="list-item"><div><strong>${x.relative}</strong><div class="meta">${bytes(x.bytes)} · ${new Date(x.mtime*1000).toLocaleString()}</div></div><button class="mini" onclick="promote('${esc(x.relative)}')">Best로 승격</button></div>`).join(''):'<div class="subtle">checkpoint가 없습니다.</div>';
+    document.getElementById('checkpoints').innerHTML=rows.length?rows.slice(0,30).map(x=>`<div class="list-item"><div><strong>${x.relative}</strong><div class="meta">${bytes(x.bytes)} · ${new Date(x.mtime*1000).toLocaleString()}</div></div><button class="mini" onclick="selectPromotionCandidate('${esc(x.relative)}')">승격 후보</button></div>`).join(''):'<div class="subtle">checkpoint가 없습니다.</div>';
   } catch(e){ toast(e.message,true); }
 }
 
-async function promote(source) {
-  try { await api('/api/checkpoints/promote',{method:'POST',body:JSON.stringify({source,destination:'best_sanma.pth'})}); toast('best_sanma.pth로 복사했습니다.'); await loadCheckpoints(); }
-  catch(e){ toast(e.message,true); }
+function selectPromotionCandidate(source) {
+  document.getElementById('promotionCandidate').value=source;
+  toast(`승격 후보 선택: ${source}`);
+}
+
+function syncPromotionDestination() {
+  const mode=document.getElementById('promotionMode').value;
+  document.getElementById('promotionDestination').value = mode==='3p' ? 'rogs_3p/best_mortal3p.pth' : 'rogs_4p/best_mortal.pth';
+}
+
+async function runGatedPromotion() {
+  const args={
+    source: document.getElementById('promotionCandidate').value,
+    destination: document.getElementById('promotionDestination').value,
+    paired_results: document.getElementById('promotionResults').value,
+    profile: document.getElementById('promotionProfile').value,
+    mode: document.getElementById('promotionMode').value,
+    akagi_root: document.getElementById('promotionAkagiRoot').value,
+  };
+  if(!args.source || !args.paired_results || !args.profile || !args.akagi_root){
+    toast('Candidate, paired 결과, profile, Akagi-NG 경로를 모두 입력하세요.', true);
+    return;
+  }
+  try {
+    await startJob('promote_gated', args);
+    toast('Promotion Gate 실행: 통계와 Akagi ABI를 모두 통과해야 Best가 교체됩니다.');
+  } catch(e) {}
 }
 
 function esc(s){return s.replaceAll('\\','\\\\').replaceAll("'","\\'");}
@@ -182,6 +206,7 @@ async function stopSelected(){ if(!selectedJob)return; try{await api(`/api/jobs/
 async function refreshAll(){ await Promise.all([loadSystem(),loadSetup(),loadEvaluation(),loadData(),loadCheckpoints(),loadJobs()]); }
 
 window.addEventListener('load', async()=>{
+  syncPromotionDestination();
   await refreshAll(); await loadConfig();
   pollTimer=setInterval(async()=>{ await Promise.all([loadSystem(),loadJobs()]); },2500);
 });
