@@ -74,13 +74,16 @@ def main() -> int:
     if not args.skip_compile:
         def compiled_mm(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
             return torch.relu(x @ y)
+
         compiled = torch.compile(compiled_mm)
         out = compiled(a, b)
         torch.cuda.synchronize(device)
         if out.shape != mm.shape or not bool(torch.isfinite(out).all().item()):
             fail("torch.compile CUDA probe failed")
         compile_ok = True
+        del compiled, out
     del a, b, mm
+    torch.cuda.empty_cache()
 
     sys.path.insert(0, str(mortal_dir))
     model = importlib.import_module("model")
@@ -100,6 +103,7 @@ def main() -> int:
 
         conv_channels = int(cfg.get("resnet", {}).get("conv_channels", 192))
         num_blocks = int(cfg.get("resnet", {}).get("num_blocks", 40))
+        config_compile_enabled = bool(cfg.get("control", {}).get("enable_compile", False))
         brain = model.Brain(
             version=4,
             conv_channels=conv_channels,
@@ -140,6 +144,28 @@ def main() -> int:
             optimizer.step()
             torch.cuda.synchronize(device)
             train_ok = True
+            del optimizer, train_obs, train_mask, target, train_q, loss
+            torch.cuda.empty_cache()
+
+        configured_compile_ok = None
+        if not args.skip_compile and config_compile_enabled:
+            brain.eval()
+            dqn.eval()
+            brain.compile()
+            dqn.compile()
+            with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+                compiled_phi = brain(obs)
+                compiled_q = dqn(compiled_phi, mask)
+            torch.cuda.synchronize(device)
+            if tuple(compiled_phi.shape) != (1, 1024) or tuple(compiled_q.shape) != (1, c["actions"]):
+                fail(
+                    f"{mode} configured torch.compile shape failed: "
+                    f"phi={tuple(compiled_phi.shape)} q={tuple(compiled_q.shape)}"
+                )
+            if not bool(torch.isfinite(compiled_q).all().item()):
+                fail(f"{mode} configured torch.compile produced non-finite Q values")
+            configured_compile_ok = True
+            del compiled_phi, compiled_q
 
         mode_results[mode] = {
             "players": c["players"],
@@ -148,11 +174,12 @@ def main() -> int:
             "oracle_obs_shape": [c["oracle"], 34],
             "grp_size": c["grp"],
             "config": str(cfg_path),
+            "resnet": {"conv_channels": conv_channels, "num_blocks": num_blocks},
+            "config_compile_enabled": config_compile_enabled,
+            "configured_compile": configured_compile_ok,
             "training_step": train_ok,
         }
         del brain, dqn, obs, mask, phi, q
-        if not args.skip_training_step:
-            del optimizer, train_obs, train_mask, target, train_q, loss
         torch.cuda.empty_cache()
 
     result = {
