@@ -258,7 +258,6 @@ class MortalController:
             paired = self._resolve_user_path(args.get("paired_results"), must_exist=True)
             if paired.suffix.casefold() not in {".jsonl", ".json"}:
                 raise ValueError("Paired evaluation results must be JSON/JSONL")
-            akagi_root = self._resolve_user_path(args.get("akagi_root"), must_exist=True)
             profile = str(args.get("profile", "")).strip()
             if not profile:
                 raise ValueError("A rating profile is required")
@@ -280,8 +279,8 @@ class MortalController:
                 profile,
                 "--mode",
                 mode,
-                "--akagi-root",
-                str(akagi_root),
+                "--runtime-root",
+                str(runtime.root),
                 "--report",
                 str(report),
             ]
