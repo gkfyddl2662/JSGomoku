@@ -91,9 +91,14 @@ jobs:
             'bootstrap_unified_runtime\.ps1',
             'smoke_unified_windows\.ps1',
             'InstallRustIfMissing',
-            'MORTAL_ROGS_UNIFIED_WINDOWS_READY'
+            'MORTAL_ROGS_UNIFIED_WINDOWS_READY',
+            '\[string\[\]\]\$GitArgs',
+            'Get-GitText -GitArgs @\('
           )) {
             if (-not (Select-String -Path scripts/setup_and_smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
               throw "Missing one-command launcher contract: $pattern"
             }
+          }
+          if (Select-String -Path scripts/setup_and_smoke_unified_windows.ps1 -Pattern '\[string\[\]\]\$Args' -Quiet) {
+            throw 'Do not use PowerShell automatic variable $args as a Git wrapper parameter'
           }
