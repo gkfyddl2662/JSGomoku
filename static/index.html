@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Mortal Sanma Control Center</title>
+  <title>Mortal ROGS Control Center</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <div class="eyebrow">MORTAL · 3 PLAYER RIICHI</div>
-      <h1>Sanma Control Center</h1>
+      <div class="eyebrow">MORTAL · 3P / 4P · ROGS</div>
+      <h1>Mortal ROGS Control Center</h1>
     </div>
     <div class="top-actions">
       <span id="setupBadge" class="badge">checking</span>
@@ -41,12 +41,27 @@
       </article>
     </section>
 
+    <section class="panel">
+      <div class="panel-title"><span>EVALUATION</span><strong>Simulation Backends</strong></div>
+      <div id="evaluationBackends" class="metrics compact"></div>
+      <div class="form-grid top-gap">
+        <label>WSL 배포판 (선택)<input id="mjxDistro" placeholder="Ubuntu" /></label>
+        <label>MJX Linux 경로<input id="mjxLinuxRoot" value="~/mortal-rogs-mjx" /></label>
+      </div>
+      <div class="button-row">
+        <button onclick="setupMjx()">MJX 4P Runtime 설치</button>
+        <button class="secondary" onclick="probeMjx()">MJX Runtime 검사</button>
+        <button class="secondary" onclick="loadEvaluation()">Backend 새로고침</button>
+      </div>
+      <div id="evaluationNote" class="subtle">4P는 MJX, 3P는 libriichi3p를 기본 평가 엔진으로 사용합니다.</div>
+    </section>
+
     <section class="panel command-panel">
       <div class="panel-title"><span>PIPELINE</span><strong>학습 제어</strong></div>
       <div class="pipeline">
         <button onclick="startJob('train_grp')"><small>01</small>GRP 학습</button>
         <button onclick="setOnline(false).then(()=>startJob('train'))"><small>02</small>Offline Mortal</button>
-        <button onclick="startJob('evaluate')"><small>03</small>1 vs 2 평가</button>
+        <button onclick="startJob('evaluate')"><small>03</small>기본 평가</button>
         <button onclick="startSelfPlay()"><small>04</small>Self-play 시작</button>
         <button class="secondary" onclick="startJob('tensorboard')"><small>TB</small>TensorBoard</button>
       </div>
@@ -66,7 +81,7 @@
           <label>Tenhou GZ 입력 폴더<input id="tenhouSource" placeholder="D:\\tenhou_gz" /></label>
           <label>변환 XML/JSON 출력 폴더<input id="tenhouOutput" placeholder="D:\\tenhou_json" /></label>
         </div>
-        <button onclick="startTenhou()">三鳳南喰赤 추출</button>
+        <button onclick="startTenhou()">Tenhou 데이터 추출</button>
         <div class="form-grid top-gap">
           <label>변환 입력 폴더<input id="convertSource" placeholder="D:\\tenhou_json" /></label>
           <label>Mortal JSONL 출력 폴더<input id="convertOutput" placeholder="C:\\Mortal_Sanma\\data" /></label>
@@ -81,7 +96,7 @@
     </section>
 
     <section class="panel">
-      <div class="panel-title"><span>CONFIG</span><strong>config.sanma.toml</strong></div>
+      <div class="panel-title"><span>CONFIG</span><strong>Mortal config</strong></div>
       <div class="config-toolbar">
         <button class="secondary" onclick="loadConfig()">다시 읽기</button>
         <button onclick="saveConfig()">저장</button>
