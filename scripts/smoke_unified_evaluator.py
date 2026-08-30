@@ -1,0 +1,142 @@
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def fail(msg: str) -> None:
+    raise RuntimeError(msg)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Strict-save/load and evaluator E2E for unified 3P/4P Mortal v4 checkpoints.")
+    ap.add_argument("--runtime-root", type=Path, required=True)
+    ap.add_argument("--device", default="cuda:0")
+    args = ap.parse_args()
+
+    root = args.runtime_root.expanduser().resolve()
+    mortal_dir = root / "mortal"
+    sys.path.insert(0, str(mortal_dir))
+
+    import toml
+    import torch
+    from model import Brain, DQN
+
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        fail("CUDA evaluator smoke requested but CUDA is unavailable")
+
+    contracts = {
+        "3p": {"actions": 44, "obs": 1010, "evaluator": "one_vs_two.py", "section": "1v2", "games": 3},
+        "4p": {"actions": 46, "obs": 1012, "evaluator": "one_vs_three.py", "section": "1v3", "games": 4},
+    }
+    smoke_root = root / "runtime" / "smoke-evaluator"
+    if smoke_root.exists():
+        shutil.rmtree(smoke_root)
+    smoke_root.mkdir(parents=True, exist_ok=True)
+    results: dict[str, object] = {}
+
+    for mode, c in contracts.items():
+        source_cfg = mortal_dir / f"config.{mode}.toml"
+        if not source_cfg.is_file():
+            fail(f"missing source config: {source_cfg}")
+        cfg = copy.deepcopy(toml.load(source_cfg))
+        cfg.setdefault("control", {})["version"] = 4
+        cfg["control"]["enable_compile"] = False
+        cfg.setdefault("game", {})["mode"] = mode
+        cfg["game"]["action_space"] = c["actions"]
+        cfg["game"]["obs_channels"] = c["obs"]
+        cfg.setdefault("resnet", {})["conv_channels"] = 16
+        cfg["resnet"]["num_blocks"] = 1
+
+        brain = Brain(version=4, conv_channels=16, num_blocks=1, obs_channels=c["obs"]).eval()
+        dqn = DQN(version=4, action_space=c["actions"]).eval()
+        checkpoint = smoke_root / f"smoke-{mode}.pth"
+        torch.save(
+            {
+                "config": cfg,
+                "mortal": brain.state_dict(),
+                "current_dqn": dqn.state_dict(),
+            },
+            checkpoint,
+        )
+
+        state = torch.load(checkpoint, weights_only=True, map_location="cpu")
+        state_cfg = state["config"]
+        if int(state_cfg["control"]["version"]) != 4:
+            fail(f"{mode} checkpoint version is not v4")
+        if state_cfg["game"]["mode"] != mode:
+            fail(f"{mode} checkpoint game.mode mismatch")
+        if int(state_cfg["game"]["action_space"]) != c["actions"]:
+            fail(f"{mode} checkpoint action-space mismatch")
+        if int(state_cfg["game"]["obs_channels"]) != c["obs"]:
+            fail(f"{mode} checkpoint obs-channel mismatch")
+        brain2 = Brain(version=4, conv_channels=16, num_blocks=1, obs_channels=c["obs"]).eval()
+        dqn2 = DQN(version=4, action_space=c["actions"]).eval()
+        brain2.load_state_dict(state["mortal"], strict=True)
+        dqn2.load_state_dict(state["current_dqn"], strict=True)
+
+        section = cfg.setdefault(c["section"], {})
+        section["games_per_iter"] = c["games"]
+        section["iters"] = 1
+        section["seed_start"] = 23000 if mode == "3p" else 24000
+        section["seed_key"] = 0xE812
+        log_dir = smoke_root / f"logs-{mode}"
+        section["log_dir"] = str(log_dir)
+        if mode == "4p":
+            section.setdefault("akochan", {})["enabled"] = False
+        for side, name in (("challenger", f"eval-{mode}-challenger"), ("champion", f"eval-{mode}-champion")):
+            side_cfg = section.setdefault(side, {})
+            side_cfg["state_file"] = str(checkpoint)
+            side_cfg["device"] = str(device)
+            side_cfg["enable_amp"] = False
+            side_cfg["enable_compile"] = False
+            side_cfg["enable_rule_based_agari_guard"] = True
+            side_cfg["name"] = name
+
+        eval_cfg = smoke_root / f"eval-{mode}.toml"
+        eval_cfg.write_text(toml.dumps(cfg), encoding="utf-8")
+        env = os.environ.copy()
+        env["MORTAL_CFG"] = str(eval_cfg)
+        env["MORTAL_GAME_MODE"] = mode
+        old_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = str(mortal_dir) if not old_pythonpath else os.pathsep.join((str(mortal_dir), old_pythonpath))
+        proc = subprocess.run(
+            [sys.executable, c["evaluator"]],
+            cwd=mortal_dir,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            fail(
+                f"{mode} evaluator failed with exit {proc.returncode}\n"
+                f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+            )
+        logs = sorted(log_dir.glob("*.json.gz"))
+        if len(logs) != c["games"]:
+            fail(f"{mode} evaluator expected {c['games']} logs, got {len(logs)} in {log_dir}")
+
+        results[mode] = {
+            "checkpoint": str(checkpoint),
+            "strict_load": True,
+            "evaluator": c["evaluator"],
+            "games": c["games"],
+            "logs": len(logs),
+            "stdout_tail": proc.stdout.strip().splitlines()[-3:],
+        }
+        del brain, dqn, brain2, dqn2, state
+
+    print("MORTAL_UNIFIED_CHECKPOINT_EVAL_E2E_OK")
+    print(json.dumps(results, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
