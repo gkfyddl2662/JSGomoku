@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mortal Sanma Control Center</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">MORTAL · 3 PLAYER RIICHI</div>
+      <h1>Sanma Control Center</h1>
+    </div>
+    <div class="top-actions">
+      <span id="setupBadge" class="badge">checking</span>
+      <button class="ghost" onclick="refreshAll()">새로고침</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero-grid">
+      <article class="panel gpu-panel">
+        <div class="panel-title"><span>GPU</span><strong id="gpuName">-</strong></div>
+        <div class="metrics">
+          <div><label>VRAM</label><strong id="gpuVram">-</strong></div>
+          <div><label>GPU 사용률</label><strong id="gpuUtil">-</strong></div>
+          <div><label>온도</label><strong id="gpuTemp">-</strong></div>
+          <div><label>전력</label><strong id="gpuPower">-</strong></div>
+        </div>
+        <div id="torchInfo" class="subtle">PyTorch 확인 중…</div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title"><span>Mortal</span><strong>Environment</strong></div>
+        <div id="setupChecks" class="check-grid"></div>
+        <div class="button-row">
+          <button onclick="startJob('patch')">RTX 5080 패치 적용</button>
+          <button class="secondary" onclick="applyPreset()">5080 프리셋 적용</button>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel command-panel">
+      <div class="panel-title"><span>PIPELINE</span><strong>학습 제어</strong></div>
+      <div class="pipeline">
+        <button onclick="startJob('train_grp')"><small>01</small>GRP 학습</button>
+        <button onclick="setOnline(false).then(()=>startJob('train'))"><small>02</small>Offline Mortal</button>
+        <button onclick="startJob('evaluate')"><small>03</small>1 vs 2 평가</button>
+        <button onclick="startSelfPlay()"><small>04</small>Self-play 시작</button>
+        <button class="secondary" onclick="startJob('tensorboard')"><small>TB</small>TensorBoard</button>
+      </div>
+      <div class="mode-row">
+        <span>Training mode</span>
+        <button class="mini" onclick="setOnline(false)">Offline</button>
+        <button class="mini" onclick="setOnline(true)">Online self-play</button>
+        <a href="http://127.0.0.1:6006" target="_blank" rel="noreferrer">TensorBoard 열기 ↗</a>
+      </div>
+    </section>
+
+    <section class="two-col">
+      <article class="panel">
+        <div class="panel-title"><span>DATA</span><strong>데이터 파이프라인</strong></div>
+        <div id="dataStats" class="metrics compact"></div>
+        <div class="form-grid">
+          <label>Tenhou GZ 입력 폴더<input id="tenhouSource" placeholder="D:\\tenhou_gz" /></label>
+          <label>변환 XML/JSON 출력 폴더<input id="tenhouOutput" placeholder="D:\\tenhou_json" /></label>
+        </div>
+        <button onclick="startTenhou()">三鳳南喰赤 추출</button>
+        <div class="form-grid top-gap">
+          <label>변환 입력 폴더<input id="convertSource" placeholder="D:\\tenhou_json" /></label>
+          <label>Mortal JSONL 출력 폴더<input id="convertOutput" placeholder="C:\\Mortal_Sanma\\data" /></label>
+        </div>
+        <button onclick="startConvert()">MJAI JSONL 변환</button>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title"><span>CHECKPOINTS</span><strong>모델 관리</strong></div>
+        <div id="checkpoints" class="list"></div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span>CONFIG</span><strong>config.sanma.toml</strong></div>
+      <div class="config-toolbar">
+        <button class="secondary" onclick="loadConfig()">다시 읽기</button>
+        <button onclick="saveConfig()">저장</button>
+        <span id="configPath" class="subtle"></span>
+      </div>
+      <textarea id="configEditor" spellcheck="false"></textarea>
+      <div class="subtle">JSON 편집기로 표시되며 저장 시 TOML로 기록됩니다. 기존 설정은 <code>.webui.bak</code>로 자동 백업됩니다.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span>JOBS</span><strong>프로세스 & 로그</strong></div>
+      <div class="jobs-layout">
+        <div id="jobs" class="list jobs-list"></div>
+        <div>
+          <div class="log-toolbar"><strong id="logTitle">로그를 선택하세요</strong><button class="danger mini" id="stopButton" onclick="stopSelected()" disabled>중지</button></div>
+          <pre id="logs">No job selected.</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
