@@ -50,7 +50,8 @@ jobs:
             'Test-MortalRogsRustMsvcLink',
             'MSVC_LINK_PROBE_OK',
             'Microsoft\.VisualStudio\.2022\.BuildTools',
-            'Microsoft\.VisualStudio\.Workload\.VCTools'
+            'Microsoft\.VisualStudio\.Workload\.VCTools',
+            'Get-Variable -Name InstallRustIfMissing -Scope 1'
           )) {
             if (-not (Select-String -Path scripts/windows_msvc.ps1 -Pattern $pattern -Quiet)) {
               throw "Missing windows_msvc contract: $pattern"
@@ -77,4 +78,7 @@ jobs:
           }
           if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
             throw 'Missing Python unified runtime smoke success marker'
+          }
+          if (-not (Select-String -Path static/app.js -Pattern 'install_rust_if_missing:true' -Quiet)) {
+            throw 'Web UI bootstrap must request one-click native prerequisite installation'
           }
