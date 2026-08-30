@@ -46,11 +46,12 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        from libriichi.stat import Stat
+        from libriichi import stat as libriichi_stat
     except ImportError as exc:
         raise SystemExit(
             "libriichi is unavailable. Run this script with the unified Mortal runtime Python."
         ) from exc
+    Stat = libriichi_stat.Stat
 
     players = 3 if args.mode == "3p" else 4
     rank_points = [6, 0, -6] if players == 3 else [90, 45, 0, -135]
