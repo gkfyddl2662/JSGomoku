@@ -5,8 +5,12 @@ import shutil
 from pathlib import Path
 
 
-IMPORT_ANCHOR = "    from config import config\n"
+IMPORT_ANCHOR = (
+    "    from libriichi.consts import obs_shape\n"
+    "    from config import config\n"
+)
 IMPORT_REPLACEMENT = (
+    "    from libriichi.consts import obs_shape\n"
     "    from config import config\n"
     "    from training.mortal_hook import compute_mortal_rogs_batch, is_rogs_enabled\n"
 )
@@ -45,7 +49,11 @@ LOSS_ANCHOR = '''            with torch.autocast(device.type, enabled=enable_amp
                     next_rank_loss * next_rank_weight,
                 ))
 '''
-LOSS_REPLACEMENT = '''            with torch.autocast(device.type, enabled=enable_amp):
+LOSS_ANCHOR_RTX = LOSS_ANCHOR.replace(
+    "with torch.autocast(device.type, enabled=enable_amp):",
+    "with torch.autocast(device.type, dtype=amp_dtype if device.type == 'cuda' else None, enabled=enable_amp):",
+)
+LOSS_REPLACEMENT_TEMPLATE = '''{autocast}
                 phi = mortal(obs)
                 q_out = dqn(phi, masks)
                 q = q_out[range(batch_size), actions]
@@ -119,6 +127,22 @@ def replace_once(text: str, anchor: str, replacement: str, label: str) -> str:
     return text.replace(anchor, replacement, 1)
 
 
+def replace_loss(text: str) -> str:
+    if "rogs_batch = compute_mortal_rogs_batch(" in text:
+        return text
+    if text.count(LOSS_ANCHOR_RTX) == 1:
+        replacement = LOSS_REPLACEMENT_TEMPLATE.format(
+            autocast="            with torch.autocast(device.type, dtype=amp_dtype if device.type == 'cuda' else None, enabled=enable_amp):"
+        )
+        return text.replace(LOSS_ANCHOR_RTX, replacement, 1)
+    if text.count(LOSS_ANCHOR) == 1:
+        replacement = LOSS_REPLACEMENT_TEMPLATE.format(
+            autocast="            with torch.autocast(device.type, enabled=enable_amp):"
+        )
+        return text.replace(LOSS_ANCHOR, replacement, 1)
+    raise RuntimeError("loss: expected exactly one stock or RTX-patched anchor")
+
+
 def apply(train_py: Path) -> None:
     text = train_py.read_text(encoding="utf-8")
     backup = train_py.with_suffix(train_py.suffix + ".pre-rogs.bak")
@@ -127,7 +151,7 @@ def apply(train_py: Path) -> None:
 
     text = replace_once(text, IMPORT_ANCHOR, IMPORT_REPLACEMENT, "import")
     text = replace_once(text, STATS_ANCHOR, STATS_REPLACEMENT, "stats")
-    text = replace_once(text, LOSS_ANCHOR, LOSS_REPLACEMENT, "loss")
+    text = replace_loss(text)
     text = replace_once(text, STATS_UPDATE_ANCHOR, STATS_UPDATE_REPLACEMENT, "stats update")
     text = replace_once(text, TB_ANCHOR, TB_REPLACEMENT, "tensorboard")
 
