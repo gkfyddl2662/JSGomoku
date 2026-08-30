@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import threading
 import tomllib
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -141,6 +142,35 @@ class LoadedModel:
             raise ValueError("Checkpoint config must be a mapping")
 
         conv_channels, num_blocks = _validate_checkpoint_config(cfg, self.contract)
+        control = cfg.get("control", {}) if isinstance(cfg.get("control"), dict) else {}
+        online = cfg.get("online", {}) if isinstance(cfg.get("online"), dict) else {}
+        performance = cfg.get("performance", {}) if isinstance(cfg.get("performance"), dict) else {}
+
+        self.use_amp = self.device.type == "cuda" and bool(control.get("enable_amp", True))
+        self.amp_dtype_name = str(performance.get("amp_dtype", "bfloat16")).strip().casefold()
+        self.amp_dtype = None
+        if self.use_amp:
+            if self.amp_dtype_name in {"bfloat16", "bf16"}:
+                if not torch.cuda.is_bf16_supported():
+                    raise RuntimeError("Checkpoint requests BF16 inference but this CUDA device does not support BF16")
+                self.amp_dtype = torch.bfloat16
+                self.amp_dtype_name = "bfloat16"
+            elif self.amp_dtype_name in {"float16", "fp16", "half"}:
+                self.amp_dtype = torch.float16
+                self.amp_dtype_name = "float16"
+            else:
+                raise ValueError(f"Unsupported inference AMP dtype: {self.amp_dtype_name}")
+
+        compile_requested = bool(online.get("enable_compile", control.get("enable_compile", False)))
+        self.compiled = False
+
+        if self.device.type == "cuda":
+            torch.backends.cudnn.benchmark = bool(control.get("enable_cudnn_benchmark", True))
+            allow_tf32 = bool(performance.get("allow_tf32", True))
+            torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+            torch.backends.cudnn.allow_tf32 = allow_tf32
+            torch.set_float32_matmul_precision(str(performance.get("matmul_precision", "high")))
+
         model_module = _runtime_model_module(mortal_dir)
         Brain = getattr(model_module, "Brain")
         DQN = getattr(model_module, "DQN")
@@ -153,12 +183,29 @@ class LoadedModel:
         dqn = DQN(version=4, action_space=self.contract.action_space).eval()
         brain.load_state_dict(state["mortal"], strict=True)
         dqn.load_state_dict(state["current_dqn"], strict=True)
-        self.brain = brain.to(self.device)
-        self.dqn = dqn.to(self.device)
+        brain = brain.to(self.device)
+        dqn = dqn.to(self.device)
+
+        if compile_requested and self.device.type == "cuda":
+            if sys.platform == "win32":
+                try:
+                    import torch._inductor.config as inductor_config
+
+                    inductor_config.triton.descriptive_names = False
+                except Exception:
+                    # The Windows smoke has a dedicated contract for this setting;
+                    # keep inference usable if PyTorch moves the config attribute.
+                    pass
+            brain = torch.compile(brain)
+            dqn = torch.compile(dqn)
+            self.compiled = True
+
+        self.brain = brain
+        self.dqn = dqn
         self.config = cfg
 
         # Probe the exact endpoint ABI before publishing this model into the slot.
-        with self._infer_lock, torch.inference_mode():
+        with self._infer_lock, torch.inference_mode(), self._amp_context():
             obs = torch.zeros((1, self.contract.obs_channels, 34), dtype=torch.float32, device=self.device)
             mask = torch.ones((1, self.contract.action_space), dtype=torch.bool, device=self.device)
             q = self.dqn(self.brain(obs), mask)
@@ -166,6 +213,11 @@ class LoadedModel:
             raise ValueError(f"Checkpoint inference shape mismatch: {tuple(q.shape)}")
         if not bool(torch.isfinite(q).all()):
             raise ValueError("Checkpoint probe produced non-finite legal Q values")
+
+    def _amp_context(self):
+        if not self.use_amp or self.amp_dtype is None:
+            return nullcontext()
+        return self.torch.autocast(device_type="cuda", dtype=self.amp_dtype)
 
     def infer(self, obs: Any, masks: Any) -> dict[str, Any]:
         torch = self.torch
@@ -186,7 +238,7 @@ class LoadedModel:
 
         # Uvicorn normally serializes this synchronous GPU work in one event loop,
         # but keep the model itself safe when embedded in tests or multi-threaded hosts.
-        with self._infer_lock, torch.inference_mode():
+        with self._infer_lock, torch.inference_mode(), self._amp_context():
             q = self.dqn(self.brain(obs_t), masks_t)
         if tuple(q.shape) != (obs_t.shape[0], self.contract.action_space):
             raise RuntimeError(f"Unexpected Q output shape: {tuple(q.shape)}")
@@ -254,15 +306,19 @@ class ModelSlot:
     def status(self) -> dict[str, Any]:
         with self._lock:
             current_signature = self._signature() if self.path.is_file() else None
+            loaded = self._loaded
             return {
                 "mode": self.contract.mode,
                 "path": str(self.path),
                 "exists": self.path.is_file(),
-                "loaded": self._loaded is not None,
+                "loaded": loaded is not None,
                 "current": current_signature == self._loaded_signature if current_signature is not None else False,
                 "last_error": self._last_error,
                 "action_space": self.contract.action_space,
                 "obs_shape": [self.contract.obs_channels, 34],
+                "device": str(loaded.device) if loaded is not None else self.device,
+                "compiled": loaded.compiled if loaded is not None else None,
+                "amp_dtype": loaded.amp_dtype_name if loaded is not None and loaded.use_amp else None,
             }
 
 
