@@ -175,9 +175,8 @@ mod unified_arena_stage4b_tests {
             tsumo_oya: 2_000,
         };
         let deltas = state.calc_tsumo_deltas(1, point, 0, 1);
-        assert_eq!(deltas, [-2_100, 4_200, -1_100, 0]);
-        assert_eq!(deltas.iter().sum::<i32>(), 1_000); // honba contributes 200, payments remain balanced below
-        assert_eq!(deltas[..3].iter().sum::<i32>(), 1_000);
+        assert_eq!(deltas, [-2_100, 3_200, -1_100, 0]);
+        assert_eq!(deltas.iter().sum::<i32>(), 0);
     }
 
     #[test]
@@ -190,6 +189,7 @@ mod unified_arena_stage4b_tests {
         };
         let deltas = state.calc_tsumo_deltas(0, point, 0, 0);
         assert_eq!(deltas, [4_000, -2_000, -2_000, 0]);
+        assert_eq!(deltas.iter().sum::<i32>(), 0);
     }
 
     #[test]
@@ -206,14 +206,6 @@ mod unified_arena_stage4b_tests {
     }
 }
 '''
-
-    # The first sanma honba test above intentionally includes honba. Winner receives
-    # 200 extra and each opponent pays 100 extra, so the full active delta still sums
-    # to zero; keep an explicit correct assertion rather than a misleading comment.
-    tests = tests.replace(
-        '        assert_eq!(deltas.iter().sum::<i32>(), 1_000); // honba contributes 200, payments remain balanced below\n        assert_eq!(deltas[..3].iter().sum::<i32>(), 1_000);\n',
-        '        assert_eq!(deltas.iter().sum::<i32>(), 0);\n        assert_eq!(deltas[..3].iter().sum::<i32>(), 0);\n',
-    )
 
     text = text.rstrip() + tests.rstrip() + "\n"
     return text
