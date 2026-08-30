@@ -29,16 +29,20 @@ def patch_agent(text: str) -> str:
         "use crate::{must_tile, t, tu8};\n",
         "agent t macro",
     )
-    text = replace_once(
-        text,
+
+    old_gate = (
         "        ensure!(\n"
         "            self.game_mode == \"4p\",\n"
         "            \"3P action translation is not installed yet; unified libriichi Stage 3 is required\"\n"
         "        );\n\n"
-        "        let orig_action = self.actions[action_idx];\n",
-        "        let orig_action = self.actions[action_idx];\n",
-        "remove 3P translator safety gate",
+        "        let orig_action = self.actions[action_idx];\n"
     )
+    new_gate = "        let orig_action = self.actions[action_idx];\n"
+    gate_count = text.count(old_gate)
+    if gate_count != 1:
+        raise RuntimeError(f"remove 3P translator safety gate: expected one anchor, found {gate_count}")
+    text = text.replace(old_gate, new_gate, 1)
+
     text = replace_once(
         text,
         "            && !cans.can_riichi\n"
