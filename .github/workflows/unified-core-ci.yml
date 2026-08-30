@@ -48,10 +48,15 @@ jobs:
           python scripts/patch_libriichi_unified_stage3c.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3d.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3e_fixed.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_stage3f.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
         run: cargo check -p libriichi --no-default-features
+
+      - name: Run unified state ABI tests
+        working-directory: /tmp/mortal-unified
+        run: cargo test -p libriichi --no-default-features unified_v4_ -- --nocapture
 
       - name: Verify Rust dual-mode transport and state contracts
         run: |
@@ -76,6 +81,7 @@ jobs:
           grep -q "MORTAL_ROGS_UNIFIED_PLAYER_STATE_STAGE3C" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_NUKIDORA_STAGE3D" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_ACTION_OBS_STAGE3E" /tmp/mortal-unified/libriichi/src/state/obs_repr.rs
+          grep -q "MORTAL_ROGS_UNIFIED_ABI_TEST_STAGE3F" /tmp/mortal-unified/libriichi/src/state/test.rs
           grep -q "ACTION_NUKIDORA_3P" /tmp/mortal-unified/libriichi/src/state/obs_repr.rs
           grep -q "fn update_nukidora_candidate" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "fn nukidora" /tmp/mortal-unified/libriichi/src/state/update.rs
