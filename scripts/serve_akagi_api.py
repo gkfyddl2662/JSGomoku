@@ -4,8 +4,13 @@ import argparse
 import gzip
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -14,8 +19,7 @@ from serving.inference import InferenceService
 
 
 def parse_args() -> argparse.Namespace:
-    project = Path(__file__).resolve().parents[1]
-    default_root = Path(os.getenv("MORTAL_UNIFIED_ROOT", project.parent / "Mortal_Unified"))
+    default_root = Path(os.getenv("MORTAL_UNIFIED_ROOT", PROJECT_ROOT.parent / "Mortal_Unified"))
     p = argparse.ArgumentParser(
         description="Serve unified Mortal 3P/4P checkpoints through Akagi-NG's existing AkagiOT HTTP protocol."
     )
@@ -73,9 +77,6 @@ def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
     def health() -> dict[str, Any]:
         return service.health()
 
-    # Akagi-NG AkagiOTClient uses these endpoint names today. Keeping the exact
-    # protocol means Akagi only needs the server URL and API key; it never sees
-    # or loads a Mortal checkpoint.
     @app.post("/react_batch")
     async def react_batch(request: Request) -> dict[str, Any]:
         return await react(request, "4p")
