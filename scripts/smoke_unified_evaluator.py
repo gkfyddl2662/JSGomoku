@@ -42,14 +42,18 @@ def main() -> int:
     smoke_root.mkdir(parents=True, exist_ok=True)
     results: dict[str, object] = {}
 
+    example_cfg = mortal_dir / "config.example.toml"
+    if not example_cfg.is_file():
+        fail(f"missing Mortal example config: {example_cfg}")
+
     for mode, c in contracts.items():
         source_cfg = mortal_dir / f"config.{mode}.toml"
-        if not source_cfg.is_file():
-            fail(f"missing source config: {source_cfg}")
-        cfg = copy.deepcopy(toml.load(source_cfg))
+        cfg_source = source_cfg if source_cfg.is_file() else example_cfg
+        cfg = copy.deepcopy(toml.load(cfg_source))
         cfg.setdefault("control", {})["version"] = 4
         cfg["control"]["enable_compile"] = False
         cfg.setdefault("game", {})["mode"] = mode
+        cfg["game"]["num_players"] = 3 if mode == "3p" else 4
         cfg["game"]["action_space"] = c["actions"]
         cfg["game"]["obs_channels"] = c["obs"]
         cfg.setdefault("resnet", {})["conv_channels"] = 16
