@@ -27,6 +27,7 @@ RUST_STAGES = (
 PYTHON_STAGES = (
     "patch_mortal_unified_stage1.py",
     "patch_mortal_unified_stage2.py",
+    "patch_mortal_unified_eval_stage5c.py",
     "patch_mortal_unified_grp_stage6b.py",
     "patch_mortal_4p.py",
 )
@@ -72,12 +73,15 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
         model = (root / "mortal/model.py").read_text(encoding="utf-8")
         train = (root / "mortal/train.py").read_text(encoding="utf-8")
         train_grp = (root / "mortal/train_grp.py").read_text(encoding="utf-8")
+        evaluator = (root / "mortal/one_vs_two.py").read_text(encoding="utf-8")
         if "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" not in model:
             raise RuntimeError("unified Python model postcondition failed")
         if "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" not in train:
             raise RuntimeError("unified trainer postcondition failed")
         if "MORTAL_ROGS_UNIFIED_GRP_TRAINER_STAGE6B" not in train_grp:
             raise RuntimeError("unified GRP trainer postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_EVAL_STAGE5C" not in evaluator:
+            raise RuntimeError("unified 3P evaluator postcondition failed")
 
     mode = "rust" if rust_only else "python" if python_only else "all"
     print(f"MORTAL_UNIFIED_PATCH_ALL_OK mode={mode} root={root}")
