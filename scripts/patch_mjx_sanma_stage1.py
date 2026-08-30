@@ -20,6 +20,8 @@ struct RuleConfig {
   bool allow_chi = true;
   bool allow_nuki = false;
   bool nuki_is_dora = false;
+  // True means only active opponents pay a tsumo. In sanma this deliberately
+  // preserves the missing fourth payer (Tenhou-style tsumo loss).
   bool tsumo_loss = true;
   int starting_points = 25000;
   int return_points = 30000;
@@ -47,7 +49,7 @@ struct RuleConfig {
     rule.allow_chi = false;
     rule.allow_nuki = true;
     rule.nuki_is_dora = true;
-    rule.tsumo_loss = false;
+    rule.tsumo_loss = true;
     rule.starting_points = 35000;
     rule.return_points = 40000;
     rule.rounds_per_wind = 3;
@@ -144,6 +146,8 @@ def apply(root: Path) -> None:
 
     if "TileType::kM2 <= type && type <= TileType::kM8" not in tile_cpp.read_text(encoding="utf-8"):
         raise RuntimeError("Sanma tile removal postcondition failed")
+    if "rule.tsumo_loss = true;" not in rule_h.read_text(encoding="utf-8"):
+        raise RuntimeError("Sanma Tenhou-style tsumo-loss postcondition failed")
 
 
 def main() -> int:
@@ -151,7 +155,7 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     args = parser.parse_args()
     apply(args.root.resolve())
-    print("MJX_SANMA_STAGE1_OK rule + 108-tile sanma set")
+    print("MJX_SANMA_STAGE1_OK rule + 108-tile sanma set + Tenhou tsumo-loss default")
     return 0
 
 
