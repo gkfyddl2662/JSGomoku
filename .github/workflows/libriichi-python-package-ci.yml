@@ -1,0 +1,57 @@
+name: Libriichi Python Package CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CANONICAL_MORTAL_SHA: 0cff2b52982be5b1163aa9a62fb01f03ce91e0d2
+
+jobs:
+  python-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Clone pinned canonical Mortal
+        run: |
+          git clone https://github.com/Equim-chan/Mortal.git /tmp/mortal-libriichi-package
+          git -C /tmp/mortal-libriichi-package checkout "$CANONICAL_MORTAL_SHA"
+
+      - name: Apply unified Rust and Python packaging patches
+        run: |
+          python scripts/patch_mortal_unified_all.py --root /tmp/mortal-libriichi-package --rust-only
+          grep -q 'module-name = "libriichi"' /tmp/mortal-libriichi-package/libriichi/pyproject.toml
+          grep -q 'fn libriichi(' /tmp/mortal-libriichi-package/libriichi/src/lib.rs
+
+      - name: Build extension with maturin in an isolated venv
+        run: |
+          python -m venv /tmp/libriichi-venv
+          /tmp/libriichi-venv/bin/python -m pip install --upgrade pip maturin
+          cd /tmp/mortal-libriichi-package/libriichi
+          /tmp/libriichi-venv/bin/python -m maturin develop --release
+
+      - name: Import unified Python extension
+        run: |
+          /tmp/libriichi-venv/bin/python - <<'PY'
+          import libriichi
+          from libriichi import consts
+          assert consts.MAX_VERSION == 4
+          assert consts.action_space_for('3p') == 44
+          assert consts.action_space_for('4p') == 46
+          assert consts.obs_shape_for('3p', 4) == (1010, 34)
+          assert consts.obs_shape_for('4p', 4) == (1012, 34)
+          print('LIBRIICHI_PYTHON_IMPORT_OK', libriichi.__file__)
+          PY
