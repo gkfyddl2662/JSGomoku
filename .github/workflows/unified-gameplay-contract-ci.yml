@@ -45,8 +45,9 @@ jobs:
         run: |
           ! grep -R --include='*.py' -n 'from libriichi\.' /tmp/mortal-stage8/mortal
           grep -q 'MORTAL_ROGS_UNIFIED_PYTHON_ABI_STAGE8A' /tmp/mortal-stage8/mortal/engine.py
-          grep -q 'game_mode = None' /tmp/mortal-stage8/mortal/engine.py
+          grep -q "game_mode = '4p'" /tmp/mortal-stage8/mortal/engine.py
           grep -q 'action_space = None' /tmp/mortal-stage8/mortal/engine.py
+          grep -q 'self.game_mode = mode' /tmp/mortal-stage8/mortal/engine.py
           grep -q 'from libriichi import arena' /tmp/mortal-stage8/mortal/player.py
           grep -q 'from libriichi import dataset' /tmp/mortal-stage8/mortal/dataloader.py
           grep -q 'from libriichi import dataset' /tmp/mortal-stage8/mortal/train_grp.py
