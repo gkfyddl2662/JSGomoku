@@ -35,11 +35,11 @@ jobs:
           grep -q 'OneVsTwo' scripts/smoke_unified_gameplay.py
           grep -q 'OneVsThree' scripts/smoke_unified_gameplay.py
 
-      - name: Clone canonical Mortal and apply production Python chain
+      - name: Clone canonical Mortal and apply production chain
         run: |
           git clone https://github.com/Equim-chan/Mortal.git /tmp/mortal-stage8
           git -C /tmp/mortal-stage8 checkout "$CANONICAL_MORTAL_SHA"
-          python scripts/patch_mortal_unified_all.py --root /tmp/mortal-stage8 --python-only
+          python scripts/patch_mortal_unified_all.py --root /tmp/mortal-stage8
 
       - name: Verify extension-safe Python ABI
         run: |
