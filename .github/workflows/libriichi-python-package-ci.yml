@@ -41,7 +41,7 @@ jobs:
       - name: Build extension with maturin in bootstrap-style venv
         run: |
           python -m venv /tmp/mortal-libriichi-package/.venv
-          /tmp/mortal-libriichi-package/.venv/bin/python -m pip install --upgrade pip maturin numpy
+          /tmp/mortal-libriichi-package/.venv/bin/python -m pip install --upgrade pip maturin numpy toml
           /tmp/mortal-libriichi-package/.venv/bin/python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
           cd /tmp/mortal-libriichi-package/libriichi
           /tmp/mortal-libriichi-package/.venv/bin/python -m maturin develop --release
@@ -68,5 +68,13 @@ jobs:
           PYTHONPATH: /tmp/mortal-libriichi-package/mortal
         run: |
           /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_unified_gameplay.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
+
+      - name: Run strict checkpoint and evaluator E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_unified_evaluator.py \
             --runtime-root /tmp/mortal-libriichi-package \
             --device cpu
