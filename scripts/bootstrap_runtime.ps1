@@ -3,21 +3,93 @@ param(
     [string]$Mode = "3p",
     [Parameter(Mandatory=$true)]
     [string]$InstallRoot,
-    [switch]$SkipRustBuild
+    [switch]$SkipRustBuild,
+    [switch]$InstallRustIfMissing
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 
+function Refresh-RustPath {
+    $cargoBin = Join-Path $HOME ".cargo\bin"
+    if (Test-Path $cargoBin) {
+        $parts = @($env:PATH -split ';')
+        if ($parts -notcontains $cargoBin) {
+            $env:PATH = "$cargoBin;$env:PATH"
+        }
+    }
+}
+
+function Ensure-RustToolchain {
+    if ($SkipRustBuild) {
+        return
+    }
+
+    Refresh-RustPath
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        if (-not $InstallRustIfMissing) {
+            throw @"
+Rust/Cargo is required to build the isolated libriichi ABI.
+Install it with:
+  winget install --id Rustlang.Rustup --exact --source winget
+Then open a new PowerShell, or rerun this bootstrap with -InstallRustIfMissing.
+Do not use -SkipRustBuild for the ABI smoke test.
+"@
+        }
+
+        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw "winget is not available. Install Rust from https://rustup.rs and rerun this bootstrap."
+        }
+
+        Write-Host "[0/8] Rust/Cargo missing; installing rustup with WinGet..."
+        & winget install `
+            --id Rustlang.Rustup `
+            --exact `
+            --source winget `
+            --accept-package-agreements `
+            --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) {
+            Refresh-RustPath
+            if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+                throw "Rustup WinGet installation failed with exit code $LASTEXITCODE"
+            }
+        }
+        Refresh-RustPath
+    }
+
+    if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+        Refresh-RustPath
+    }
+    if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+        throw "rustup is not available after Rust installation. Open a new PowerShell and rerun the bootstrap."
+    }
+
+    Write-Host "[0/8] Ensuring stable MSVC Rust toolchain..."
+    & rustup default stable-msvc
+    if ($LASTEXITCODE -ne 0) {
+        throw "rustup failed to activate stable-msvc"
+    }
+    Refresh-RustPath
+
+    foreach ($cmd in @("cargo", "rustc")) {
+        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+            throw "$cmd is still unavailable after rustup setup"
+        }
+    }
+
+    Write-Host "Rust toolchain ready:"
+    & cargo --version
+    & rustc --version
+    & rustup show active-toolchain
+}
+
 foreach ($cmd in @("git", "python")) {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
         throw "Required command not found: $cmd"
     }
 }
-if (-not $SkipRustBuild -and -not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    throw "cargo is required unless -SkipRustBuild is used"
-}
+Ensure-RustToolchain
 
 $RepoUrl = if ($Mode -eq "3p") {
     "https://github.com/Lawrencelea/Mortal_Sanma.git"
@@ -42,10 +114,14 @@ if (-not (Test-Path $Py)) {
 
 Write-Host "[3/7] Installing Python dependencies + Blackwell PyTorch cu128..."
 & $Py -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
 & $Py -m pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+if ($LASTEXITCODE -ne 0) { throw "PyTorch cu128 installation failed" }
 & $Py -m pip install tqdm toml tensorboard maturin numpy pytest
+if ($LASTEXITCODE -ne 0) { throw "Python dependency installation failed" }
 if ($Mode -eq "3p") {
     & $Py -m pip install -r "$ProjectRoot\requirements.txt"
+    if ($LASTEXITCODE -ne 0) { throw "Control Center dependency installation failed" }
 }
 
 if (-not $SkipRustBuild) {
@@ -54,7 +130,12 @@ if (-not $SkipRustBuild) {
     Push-Location $Libriichi
     try {
         & $Py -m maturin develop --release
-        if ($LASTEXITCODE -ne 0) { throw "maturin develop failed" }
+        if ($LASTEXITCODE -ne 0) {
+            throw @"
+maturin develop failed.
+If the log mentions link.exe, cl.exe, Windows SDK, or MSVC, install Visual Studio 2022 Build Tools with the Desktop development with C++ workload, then rerun this command.
+"@
+        }
     } finally {
         Pop-Location
     }
@@ -63,7 +144,7 @@ if (-not $SkipRustBuild) {
         Write-Host "[5/7] Building 3P Tenhou tools..."
         Push-Location "$InstallRoot\tenhou_dl"
         try {
-            cargo build --release
+            & cargo build --release
             if ($LASTEXITCODE -ne 0) { throw "tenhou_dl build failed" }
         } finally {
             Pop-Location
