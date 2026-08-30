@@ -48,7 +48,7 @@ async function changeGameMode() {
   document.getElementById('promotionMode').value=mode;
   syncPromotionDestination();
   document.getElementById('promotionCandidate').value='';
-  await Promise.all([loadSetup(),loadData(),loadCheckpoints(),loadConfig()]);
+  await Promise.all([loadSetup(),loadData(),loadCheckpoints(),loadConfig(),loadInference()]);
 }
 
 async function loadSystem() {
@@ -93,6 +93,32 @@ async function loadEvaluation() {
     document.getElementById('evaluationBackends').innerHTML=rows.map(([a,b])=>`<div><label>${a}</label><strong>${b}</strong></div>`).join('');
     document.getElementById('evaluationNote').textContent = `4P ${p4?.name||'-'} · ${p4?.batched_agent?'batched inference':'single inference'} · 3P production ${p3?.name||'-'} → target ${sanma?.name||'mjx_sanma'} · parity gate required`;
   } catch(e){ toast(`평가 backend: ${e.message}`,true); }
+}
+
+async function loadInference() {
+  try {
+    const s=await api('/api/inference/status');
+    const el=document.getElementById('inferenceStatus');
+    if(!el) return;
+    el.textContent=s.unified
+      ? `${s.default_url} · 3P ${s.endpoints?.['3p']} · 4P ${s.endpoints?.['4p']} · Best 모델 자동 재로딩`
+      : 'Unified runtime 설치가 필요합니다.';
+  } catch(e){ toast(`Inference API: ${e.message}`,true); }
+}
+
+async function startInferenceApi() {
+  const body={
+    host: document.getElementById('inferenceHost').value || '127.0.0.1',
+    port: Number(document.getElementById('inferencePort').value || 8190),
+    api_key: document.getElementById('inferenceApiKey').value || '',
+    device: document.getElementById('inferenceDevice').value || 'auto',
+  };
+  try {
+    const j=await api('/api/inference/start',{method:'POST',body:JSON.stringify(body)});
+    selectedJob=j.id;
+    await loadJobs();
+    toast(`Akagi API 시작 · http://${body.host}:${body.port}`);
+  } catch(e){ toast(e.message,true); }
 }
 
 function mjxArgs(){
@@ -202,27 +228,27 @@ function selectPromotionCandidate(source) {
 }
 
 function syncPromotionDestination() {
-  const mode=document.getElementById('promotionMode').value;
-  document.getElementById('promotionDestination').value = mode==='3p' ? 'rogs_3p/best_mortal3p.pth' : 'rogs_4p/best_mortal.pth';
+  document.getElementById('promotionDestination').value = 'best_mortal.pth';
 }
 
 async function runGatedPromotion() {
-  const args={
+  const body={
     source: document.getElementById('promotionCandidate').value,
-    destination: document.getElementById('promotionDestination').value,
+    destination: document.getElementById('promotionDestination').value || 'best_mortal.pth',
     paired_results: document.getElementById('promotionResults').value,
     profile: document.getElementById('promotionProfile').value,
     mode: document.getElementById('promotionMode').value,
-    akagi_root: document.getElementById('promotionAkagiRoot').value,
   };
-  if(!args.source || !args.paired_results || !args.profile || !args.akagi_root){
-    toast('Candidate, paired 결과, profile, Akagi-NG 경로를 모두 입력하세요.', true);
+  if(!body.source || !body.paired_results || !body.profile){
+    toast('Candidate, paired 결과, profile을 모두 입력하세요.', true);
     return;
   }
   try {
-    await startJob('promote_gated', args);
-    toast('Promotion Gate 실행: 통계와 Akagi ABI를 모두 통과해야 Best가 교체됩니다.');
-  } catch(e) {}
+    const j=await api('/api/promotion/start',{method:'POST',body:JSON.stringify(body)});
+    selectedJob=j.id;
+    await loadJobs();
+    toast('Promotion Gate 실행: 통계 + Mortal API ABI를 모두 통과해야 Best가 교체됩니다.');
+  } catch(e){ toast(e.message,true); }
 }
 
 function esc(s){return s.replaceAll('\\','\\\\').replaceAll("'","\\'");}
@@ -252,12 +278,12 @@ async function loadSelectedJob() {
 
 async function stopSelected(){ if(!selectedJob)return; try{await api(`/api/jobs/${selectedJob}/stop`,{method:'POST'});toast('프로세스를 중지했습니다.');await loadJobs();}catch(e){toast(e.message,true);} }
 
-async function refreshAll(){ await Promise.all([loadSystem(),loadSetup(),loadEvaluation(),loadData(),loadCheckpoints(),loadJobs()]); }
+async function refreshAll(){ await Promise.all([loadSystem(),loadSetup(),loadEvaluation(),loadInference(),loadData(),loadCheckpoints(),loadJobs()]); }
 
 window.addEventListener('load', async()=>{
   const saved=localStorage.getItem('mortalGameMode');
   if(saved==='3p' || saved==='4p') document.getElementById('gameMode').value=saved;
   await changeGameMode();
-  await Promise.all([loadSystem(),loadEvaluation(),loadJobs()]);
+  await Promise.all([loadSystem(),loadEvaluation(),loadInference(),loadJobs()]);
   pollTimer=setInterval(async()=>{ await Promise.all([loadSystem(),loadJobs()]); },2500);
 });
