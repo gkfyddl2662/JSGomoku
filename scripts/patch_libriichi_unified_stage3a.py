@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 
-EVENT_SHA = "6fef1e9ddcf6d175c45fb8239ce2fa143e9ae32b"
+EVENT_SHA = "3b92f06ec354dc3204b647541f69c92a181ad9f4"
 MARKER = "MORTAL_ROGS_UNIFIED_EVENT_STAGE3A"
 
 
