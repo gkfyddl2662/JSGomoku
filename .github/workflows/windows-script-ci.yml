@@ -83,6 +83,8 @@ jobs:
             'Invoke-NativeCapture',
             'Get-TritonVersion',
             'MORTAL_UNIFIED_MODEL_IMPORT_OK',
+            'MORTAL_CFG',
+            'config\.4p\.toml',
             'patch_mortal_unified_stage1\.py',
             'patch_mortal_unified_eval_stage8c\.py',
             'MORTAL_UNIFIED_EVAL_STAGE8C_IMPORT_OK',
@@ -98,6 +100,9 @@ jobs:
           }
           if (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern 'import triton; print\(triton\.__version__\)" 2>\$null' -Quiet) {
             throw 'Triton import probe must not terminate Windows PowerShell through NativeCommandError'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern "os\.environ\['MORTAL_CFG'\].*Config4P" -Quiet)) {
+            throw 'Unified Python import probe must bind MORTAL_CFG to a mode-specific config before importing config-dependent modules'
           }
           if (-not (Select-String -Path scripts/patch_mortal_unified_stage1.py -Pattern 'from libriichi import consts as _libriichi_consts' -Quiet)) {
             throw 'Unified model Stage 1 must use extension-safe libriichi consts import'
