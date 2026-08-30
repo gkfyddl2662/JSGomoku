@@ -47,6 +47,7 @@ jobs:
           python scripts/patch_libriichi_unified_stage3b.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3c.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3d.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_stage3e.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
@@ -56,10 +57,15 @@ jobs:
         run: |
           grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
+          grep -q "ACTION_NUKIDORA_3P: usize = 38" /tmp/mortal-unified/libriichi/src/consts.rs
+          grep -q "obs_shape_for_players" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "q_values: Vec<Vec<f32>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "masks_recv: Vec<Vec<bool>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "game_mode: String" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "action_space: usize" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+          grep -q "translated_action" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+          grep -q "Event::Nukidora" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
+          ! grep -q "3P action translation is not installed yet" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "names: Vec<String>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
           grep -q "scores: Vec<i32>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
           grep -q "tehais: Vec<Vec<Tile>>" /tmp/mortal-unified/libriichi/src/mjai/event.rs
@@ -69,6 +75,8 @@ jobs:
           grep -q "pub fn new_n" /tmp/mortal-unified/libriichi/src/rankings.rs
           grep -q "MORTAL_ROGS_UNIFIED_PLAYER_STATE_STAGE3C" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_NUKIDORA_STAGE3D" /tmp/mortal-unified/libriichi/src/state/update.rs
+          grep -q "MORTAL_ROGS_UNIFIED_ACTION_OBS_STAGE3E" /tmp/mortal-unified/libriichi/src/state/obs_repr.rs
+          grep -q "ACTION_NUKIDORA_3P" /tmp/mortal-unified/libriichi/src/state/obs_repr.rs
           grep -q "fn update_nukidora_candidate" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "fn nukidora" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "nukidora_ron_chance" /tmp/mortal-unified/libriichi/src/state/player_state.rs
@@ -164,10 +172,6 @@ jobs:
 
           print('MORTAL_UNIFIED_PYTHON_3P_4P_OK')
           PY
-
-      - name: Verify current 3P safety gate
-        run: |
-          grep -q "3P action translation is not installed yet" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
 
       - name: Reject malformed patches
         run: git -C /tmp/mortal-unified diff --check
