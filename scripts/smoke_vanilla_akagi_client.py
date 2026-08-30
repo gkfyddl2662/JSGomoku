@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.machinery
-import importlib.util
 import json
+import logging
 import os
-import platform
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
 
 import numpy as np
@@ -47,52 +48,73 @@ def wait_ready(proc: subprocess.Popen[str], base: str, api_key: str) -> dict:
     raise RuntimeError("Mortal inference API did not become ready")
 
 
-def akagi_binary_path(akagi_root: Path, module_name: str) -> Path:
-    py_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-    machine = platform.machine().lower()
-    if machine in {"amd64", "x86_64"}:
-        arch = "x86_64"
-    elif machine in {"arm64", "aarch64"}:
-        arch = "aarch64"
-    else:
-        raise RuntimeError(f"Unsupported architecture for pinned Akagi native smoke: {machine}")
+def install_package_shell(name: str, path: Path) -> types.ModuleType:
+    """Expose a package path without executing that package's __init__.py.
 
-    if sys.platform == "win32":
-        platform_tag = f"{arch}-pc-windows-msvc"
-        suffix = ".pyd"
-    elif sys.platform == "darwin":
-        platform_tag = f"{arch}-apple-darwin"
-        suffix = ".so"
-    elif sys.platform.startswith("linux"):
-        platform_tag = f"{arch}-unknown-linux-gnu"
-        suffix = ".so"
-    else:
-        raise RuntimeError(f"Unsupported platform for pinned Akagi native smoke: {sys.platform}")
-
-    path = akagi_root / "lib" / f"{module_name}-{py_version}-{platform_tag}{suffix}"
-    if not path.is_file():
-        raise RuntimeError(f"Pinned Akagi bundled native module is missing: {path}")
-    return path
+    Akagi-NG's source-tree package initializers eagerly import its local Mortal and
+    state-tracker stack. The AkagiOT HTTP engine itself does not depend on those
+    components, and a packaged Akagi installation already provides its own native
+    libraries. For this read-only source integration smoke we therefore expose only
+    the package paths needed to import AkagiOT's untouched source modules.
+    """
+    module = types.ModuleType(name)
+    module.__package__ = name
+    module.__path__ = [str(path)]
+    module.__spec__ = importlib.machinery.ModuleSpec(name, loader=None, is_package=True)
+    module.__spec__.submodule_search_locations = module.__path__
+    sys.modules[name] = module
+    return module
 
 
-def load_akagi_native_module(akagi_root: Path, module_name: str):
-    """Load Akagi's own bundled extension without copying or renaming its files."""
-    path = akagi_binary_path(akagi_root, module_name)
-    existing = sys.modules.pop(module_name, None)
+def load_vanilla_akagi_ot(backend: Path):
+    """Import AkagiOTClient/AkagiOTEngine without activating Akagi local models.
+
+    The imported class definitions still come from the untouched pinned Akagi-NG
+    checkout. Only eager package initializers and their unrelated local-engine/native
+    side effects are bypassed. This mirrors Mortal-ROGS's production boundary: Akagi
+    owns state/UI/networking, while Mortal-ROGS owns every Mortal checkpoint.
+    """
+    akagi_pkg = backend / "akagi_ng"
+    mjai_pkg = akagi_pkg / "mjai_bot"
+    engine_pkg = mjai_pkg / "engine"
+    target = engine_pkg / "akagi_ot.py"
+    for path in (akagi_pkg, mjai_pkg, engine_pkg, target):
+        if not path.exists():
+            raise RuntimeError(f"Pinned Akagi API-only import path is missing: {path}")
+
+    sys.path.insert(0, str(backend))
     try:
-        loader = importlib.machinery.ExtensionFileLoader(module_name, str(path))
-        spec = importlib.util.spec_from_file_location(module_name, str(path), loader=loader)
-        if spec is None:
-            raise RuntimeError(f"Could not create import spec for {path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        loader.exec_module(module)
-        return module, path
-    except Exception:
-        sys.modules.pop(module_name, None)
-        if existing is not None:
-            sys.modules[module_name] = existing
-        raise
+        # The root initializer is harmless and gives us Akagi's own version metadata.
+        importlib.import_module("akagi_ng")
+
+        # Avoid mjai_bot/__init__.py -> StateTracker -> core.lib_loader and
+        # engine/__init__.py -> factory/provider -> local Mortal engine. Those are
+        # intentionally outside this API-only integration contract.
+        install_package_shell("akagi_ng.mjai_bot", mjai_pkg)
+        install_package_shell("akagi_ng.mjai_bot.engine", engine_pkg)
+
+        # Akagi's logger initializes files under the source checkout on import.
+        # Supply a process-local logger for the read-only integration smoke only;
+        # AkagiOT uses it solely for circuit-breaker status messages.
+        logger_module = types.ModuleType("akagi_ng.mjai_bot.logger")
+        logger_module.logger = logging.getLogger("akagi-ng-api-only-smoke")
+        sys.modules[logger_module.__name__] = logger_module
+
+        module = importlib.import_module("akagi_ng.mjai_bot.engine.akagi_ot")
+        status_module = importlib.import_module("akagi_ng.mjai_bot.status")
+
+        source = Path(module.__file__).resolve()
+        if source != target.resolve():
+            raise RuntimeError(f"AkagiOT source mismatch: expected {target}, got {source}")
+        if "libriichi" in sys.modules or "libriichi3p" in sys.modules:
+            raise RuntimeError("API-only AkagiOT import unexpectedly activated a native libriichi module")
+
+        return module.AkagiOTClient, module.AkagiOTEngine, status_module.BotStatusContext, source
+    finally:
+        try:
+            sys.path.remove(str(backend))
+        except ValueError:
+            pass
 
 
 def main() -> int:
@@ -172,20 +194,7 @@ def main() -> int:
         if not (backend / "akagi_ng" / "mjai_bot" / "engine" / "akagi_ot.py").is_file():
             raise SystemExit(f"Pinned Akagi-NG backend is incomplete: {backend}")
 
-        # A source checkout contains the same native modules as an Akagi release,
-        # but with Python/platform-qualified filenames. Load those untouched files
-        # directly into memory so Akagi's own core.lib_loader sees the exact module
-        # names it expects. No Akagi file is copied, renamed, patched or written.
-        akagi_riichi, riichi_path = load_akagi_native_module(akagi_root, "libriichi")
-        akagi_riichi3p, riichi3p_path = load_akagi_native_module(akagi_root, "libriichi3p")
-        if not hasattr(akagi_riichi, "consts") or not hasattr(akagi_riichi3p, "consts"):
-            raise SystemExit("Pinned Akagi native modules did not expose consts")
-
-        sys.path.insert(0, str(backend))
-
-        # These classes come directly from the untouched Akagi-NG checkout.
-        from akagi_ng.mjai_bot.engine.akagi_ot import AkagiOTClient, AkagiOTEngine
-        from akagi_ng.mjai_bot.status import BotStatusContext
+        AkagiOTClient, AkagiOTEngine, BotStatusContext, source = load_vanilla_akagi_ot(backend)
 
         client = AkagiOTClient(base, args.api_key)
         if client.session.headers.get("Authorization") != args.api_key:
@@ -197,10 +206,8 @@ def main() -> int:
             "akagi_sha": actual_sha,
             "server": base,
             "akagi_modified": False,
-            "akagi_native": {
-                "4p": str(riichi_path),
-                "3p": str(riichi3p_path),
-            },
+            "akagi_ot_source": str(source),
+            "native_modules_loaded": False,
             "modes": {},
         }
         for mode, is_3p, obs_channels, action_space, endpoint in (
@@ -232,7 +239,7 @@ def main() -> int:
         if after_status:
             raise SystemExit(f"Vanilla Akagi-NG checkout was modified by integration smoke:\n{after_status}")
 
-        print("MORTAL_VANILLA_AKAGI_NATIVE_READONLY_OK")
+        print("MORTAL_VANILLA_AKAGI_API_ONLY_IMPORT_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_3P_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_4P_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_E2E_OK")
