@@ -82,7 +82,8 @@
         </label>
       </div>
       <div class="button-row top-gap">
-        <button onclick="startInferenceApi()">Akagi API 시작</button>
+        <button onclick="startInferenceApi()">Akagi API 시작/재시작</button>
+        <button class="danger" onclick="stopInferenceApi()">Akagi API 중지</button>
         <button class="secondary" onclick="loadInference()">상태 새로고침</button>
       </div>
       <div id="inferenceStatus" class="subtle top-gap">Inference API 확인 중…</div>
