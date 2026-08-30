@@ -25,9 +25,10 @@ app = FastAPI(title="Mortal ROGS Control Center", version="0.6.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
 
 # The inference server is a separate process. Remember the most recently launched
-# bind target so the Control Center can proxy its /health state without exposing
-# model files to Akagi-NG or requiring cross-origin browser requests.
+# bind target and job so the Control Center can manage its full lifecycle without
+# ever handing Mortal checkpoint files to Akagi-NG.
 _inference_target: dict[str, Any] = {"host": "127.0.0.1", "port": 8190}
+_inference_job_id: str | None = None
 
 
 class ConfigBody(BaseModel):
@@ -83,6 +84,15 @@ def _probe_inference_health(host: str, port: int) -> dict[str, Any]:
         return {"running": False, "url": f"http://{host}:{port}", "health_url": url, "health": None, "error": str(exc)}
 
 
+def _inference_job_snapshot() -> dict[str, Any] | None:
+    if _inference_job_id is None:
+        return None
+    try:
+        return jobs.get(_inference_job_id, include_logs=False)
+    except KeyError:
+        return None
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(settings.project_root / "static" / "index.html")
@@ -129,6 +139,7 @@ def api_inference_status() -> dict[str, Any]:
         "default_url": "http://127.0.0.1:8190",
         "server_url": f"http://{host}:{port}",
         "live": live,
+        "job": _inference_job_snapshot(),
         "endpoints": {"3p": "/react_batch_3p", "4p": "/react_batch"},
         "best_models": {
             "3p": str(r3.models_dir / "best_mortal.pth"),
@@ -146,6 +157,8 @@ def api_inference_status() -> dict[str, Any]:
 
 @app.post("/api/inference/start")
 def api_inference_start(body: InferenceBody) -> dict[str, Any]:
+    global _inference_job_id
+
     r3 = _runtime("3p")
     r4 = _runtime("4p")
     if not (r3.unified and r4.unified and r3.root == r4.root and r3.python_executable == r4.python_executable):
@@ -155,6 +168,12 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
     script = settings.project_root / "scripts" / "serve_akagi_api.py"
     if not script.is_file():
         raise HTTPException(500, f"Inference API script is missing: {script}")
+
+    # Make Start idempotent from the user perspective: starting again replaces the
+    # Control-Center-managed API process instead of creating a port-conflicting job.
+    previous = _inference_job_snapshot()
+    if previous and previous.get("running"):
+        jobs.stop(str(previous["id"]))
 
     host = body.host.strip() or "127.0.0.1"
     cmd = [
@@ -175,9 +194,26 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
         job = jobs.start("inference_api", cmd, settings.project_root, controller._mortal_env(r3))
         _inference_target["host"] = host
         _inference_target["port"] = body.port
+        _inference_job_id = job.id
         return job.snapshot()
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/inference/stop")
+def api_inference_stop() -> dict[str, Any]:
+    global _inference_job_id
+
+    snapshot = _inference_job_snapshot()
+    if snapshot is None:
+        return {"ok": True, "stopped": False, "reason": "no Control-Center-managed inference API job"}
+    try:
+        stopped = jobs.stop(str(snapshot["id"]))
+    except KeyError:
+        _inference_job_id = None
+        return {"ok": True, "stopped": False, "reason": "inference API job no longer exists"}
+    _inference_job_id = None
+    return {"ok": True, "stopped": True, "job": stopped}
 
 
 @app.post("/api/promotion/start")
