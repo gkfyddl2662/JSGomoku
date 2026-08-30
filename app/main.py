@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -17,7 +18,7 @@ from .settings import load_settings, normalize_mode
 settings = load_settings()
 controller = MortalController(settings)
 jobs = JobManager()
-app = FastAPI(title="Mortal ROGS Control Center", version="0.4.0")
+app = FastAPI(title="Mortal ROGS Control Center", version="0.5.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
 
 
@@ -30,11 +31,35 @@ class JobBody(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+class InferenceBody(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = Field(default=8190, ge=1, le=65535)
+    api_key: str = "mortal-rogs-local"
+    device: str = "auto"
+
+
+class PromotionBody(BaseModel):
+    source: str
+    destination: str = "best_mortal.pth"
+    paired_results: str
+    profile: str
+    mode: str = "3p"
+
+
 def _runtime(mode: str):
     try:
         return settings.runtime(normalize_mode(mode))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+def _under(path: Path, root: Path) -> Path:
+    path = path.resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError as exc:
+        raise HTTPException(400, "Path escapes the allowed runtime directory") from exc
+    return path
 
 
 @app.get("/")
@@ -66,6 +91,103 @@ def api_evaluation_backends() -> dict[str, Any]:
         return evaluation_status(settings.project_root)
     except Exception as exc:
         raise HTTPException(500, str(exc)) from exc
+
+
+@app.get("/api/inference/status")
+def api_inference_status() -> dict[str, Any]:
+    r3 = _runtime("3p")
+    r4 = _runtime("4p")
+    unified = bool(r3.unified and r4.unified and r3.root == r4.root and r3.python_executable == r4.python_executable)
+    return {
+        "unified": unified,
+        "runtime_root": str(r3.root) if unified else None,
+        "python": str(r3.python_executable) if unified else None,
+        "default_url": "http://127.0.0.1:8190",
+        "endpoints": {"3p": "/react_batch_3p", "4p": "/react_batch"},
+        "best_models": {
+            "3p": str(r3.models_dir / "best_mortal.pth"),
+            "4p": str(r4.models_dir / "best_mortal.pth"),
+        },
+    }
+
+
+@app.post("/api/inference/start")
+def api_inference_start(body: InferenceBody) -> dict[str, Any]:
+    r3 = _runtime("3p")
+    r4 = _runtime("4p")
+    if not (r3.unified and r4.unified and r3.root == r4.root and r3.python_executable == r4.python_executable):
+        raise HTTPException(400, "Akagi API serving requires the unified Mortal runtime")
+    if not r3.python_executable.is_file():
+        raise HTTPException(400, f"Unified Python runtime is missing: {r3.python_executable}")
+    script = settings.project_root / "scripts" / "serve_akagi_api.py"
+    if not script.is_file():
+        raise HTTPException(500, f"Inference API script is missing: {script}")
+
+    cmd = [
+        str(r3.python_executable),
+        str(script),
+        "--runtime-root",
+        str(r3.root),
+        "--host",
+        body.host.strip() or "127.0.0.1",
+        "--port",
+        str(body.port),
+        "--device",
+        body.device.strip() or "auto",
+    ]
+    if body.api_key:
+        cmd.extend(["--api-key", body.api_key])
+    try:
+        job = jobs.start("inference_api", cmd, settings.project_root, controller._mortal_env(r3))
+        return job.snapshot()
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/promotion/start")
+def api_promotion_start(body: PromotionBody) -> dict[str, Any]:
+    runtime = _runtime(body.mode)
+    source = _under(runtime.models_dir / body.source, runtime.models_dir)
+    destination = _under(runtime.models_dir / body.destination, runtime.models_dir)
+    if not source.is_file() or source.suffix.casefold() != ".pth":
+        raise HTTPException(400, f"Candidate checkpoint must be an existing .pth file: {source}")
+    if destination.suffix.casefold() != ".pth":
+        raise HTTPException(400, "Promotion destination must end with .pth")
+
+    paired = Path(body.paired_results).expanduser().resolve()
+    if not paired.is_file() or paired.suffix.casefold() not in {".json", ".jsonl"}:
+        raise HTTPException(400, "Paired evaluation results must be an existing JSON/JSONL file")
+    profile = body.profile.strip()
+    if not profile:
+        raise HTTPException(400, "A rating profile is required")
+
+    report_dir = runtime.runs_dir / "promotion"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report = report_dir / f"{source.stem}-{runtime.mode}-{profile}.json"
+    script = settings.project_root / "scripts" / "promote_if_passed.py"
+    cmd = [
+        str(runtime.python_executable),
+        str(script),
+        "--candidate",
+        str(source),
+        "--destination",
+        str(destination),
+        "--paired-results",
+        str(paired),
+        "--profile",
+        profile,
+        "--mode",
+        runtime.mode,
+        "--runtime-root",
+        str(runtime.root),
+        "--report",
+        str(report),
+    ]
+    try:
+        job = jobs.start("promote_gated", cmd, settings.project_root, controller._mortal_env(runtime))
+        return job.snapshot()
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/config")
