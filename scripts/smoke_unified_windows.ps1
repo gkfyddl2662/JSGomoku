@@ -5,6 +5,7 @@ param(
     [switch]$SkipGameplay,
     [switch]$SkipRealDataTraining,
     [switch]$SkipEvaluator,
+    [switch]$SkipInferenceApi,
     [switch]$SkipControlCenter
 )
 
@@ -79,7 +80,7 @@ if (-not [string]::IsNullOrWhiteSpace($existingPythonPath)) {
 $env:PYTHONPATH = [string]::Join([System.IO.Path]::PathSeparator, $parts)
 
 if (-not $SkipCompile) {
-    Write-Host "[0/5] Verifying Windows Triton for torch.compile..."
+    Write-Host "[0/6] Verifying Windows Triton for torch.compile..."
     $tritonVersion = Get-TritonVersion
     if ([string]::IsNullOrWhiteSpace($tritonVersion) -or -not $tritonVersion.StartsWith("3.6")) {
         Write-Host "Installing compatible triton-windows 3.6.x for PyTorch 2.11..."
@@ -104,7 +105,7 @@ if (-not $SkipCompile) {
 
 $gameplayAbi = Get-InstalledGameplayAbi
 if ($gameplayAbi -lt 2) {
-    Write-Host "[0.25/5] Upgrading unified native gameplay dataset ABI to v2..."
+    Write-Host "[0.25/6] Upgrading unified native gameplay dataset ABI to v2..."
     & $Py (Join-Path $ProjectRoot "scripts\patch_libriichi_unified_dataset_stage8b.py") --root $InstallRoot
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to apply unified gameplay dataset Stage 8B"
@@ -141,7 +142,7 @@ if ($gameplayAbi -lt 2) {
     Write-Host "MORTAL_UNIFIED_DATASET_STAGE8B_OK abi=$gameplayAbi"
 }
 
-Write-Host "[0.5/5] Repairing/verifying unified Python ABI imports and evaluators..."
+Write-Host "[0.5/6] Repairing/verifying unified Python ABI imports and evaluators..."
 foreach ($patch in @(
     "patch_mortal_unified_stage1.py",
     "patch_mortal_unified_eval_stage8c.py",
@@ -162,7 +163,7 @@ if ($modelImportProbe.ExitCode -ne 0) {
 }
 Write-Host $modelImportProbe.Output
 
-Write-Host "[1/5] Running one-process 3P -> 4P CUDA/BF16 runtime smoke..."
+Write-Host "[1/6] Running one-process 3P -> 4P CUDA/BF16 runtime smoke..."
 $smokeArgs = @(
     (Join-Path $ProjectRoot "scripts\smoke_unified_runtime.py"),
     "--runtime-root",
@@ -176,29 +177,29 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if (-not $SkipGameplay) {
-    Write-Host "[2/5] Running real 3P + 4P arena/log/dataset gameplay E2E..."
+    Write-Host "[2/6] Running real 3P + 4P arena/log/dataset gameplay E2E..."
     & $Py (Join-Path $ProjectRoot "scripts\smoke_unified_gameplay.py") --runtime-root $InstallRoot --device cuda:0
     if ($LASTEXITCODE -ne 0) {
         throw "Unified gameplay E2E smoke failed with exit code $LASTEXITCODE"
     }
 } else {
-    Write-Host "[2/5] Skipping real gameplay E2E (-SkipGameplay)."
+    Write-Host "[2/6] Skipping real gameplay E2E (-SkipGameplay)."
 }
 
 $trainedCheckpointRequired = $false
 if (-not $SkipRealDataTraining) {
-    Write-Host "[3/5] Training one mini-batch from real 3P/4P self-play logs and strict-reloading checkpoints..."
+    Write-Host "[3/6] Training one mini-batch from real 3P/4P self-play logs and strict-reloading checkpoints..."
     & $Py (Join-Path $ProjectRoot "scripts\smoke_unified_training.py") --runtime-root $InstallRoot --device cuda:0 --batch-size 16
     if ($LASTEXITCODE -ne 0) {
         throw "Unified real-data mini-training E2E failed with exit code $LASTEXITCODE"
     }
     $trainedCheckpointRequired = $true
 } else {
-    Write-Host "[3/5] Skipping real-data mini-training (-SkipRealDataTraining)."
+    Write-Host "[3/6] Skipping real-data mini-training (-SkipRealDataTraining)."
 }
 
 if (-not $SkipEvaluator) {
-    Write-Host "[4/5] Running strict checkpoint reload + real 3P/4P evaluator E2E..."
+    Write-Host "[4/6] Running strict checkpoint reload + real 3P/4P evaluator E2E..."
     $evalArgs = @(
         (Join-Path $ProjectRoot "scripts\smoke_unified_evaluator.py"),
         "--runtime-root",
@@ -212,11 +213,21 @@ if (-not $SkipEvaluator) {
         throw "Unified checkpoint/evaluator E2E smoke failed with exit code $LASTEXITCODE"
     }
 } else {
-    Write-Host "[4/5] Skipping checkpoint/evaluator E2E (-SkipEvaluator)."
+    Write-Host "[4/6] Skipping checkpoint/evaluator E2E (-SkipEvaluator)."
+}
+
+if (-not $SkipInferenceApi) {
+    Write-Host "[5/6] Running Akagi-compatible gzip HTTP inference API E2E..."
+    & $Py (Join-Path $ProjectRoot "scripts\smoke_akagi_api.py") --runtime-root $InstallRoot --device cuda:0
+    if ($LASTEXITCODE -ne 0) {
+        throw "Akagi-compatible inference API E2E smoke failed with exit code $LASTEXITCODE"
+    }
+} else {
+    Write-Host "[5/6] Skipping inference API E2E (-SkipInferenceApi)."
 }
 
 if (-not $SkipControlCenter) {
-    Write-Host "[5/5] Verifying Control Center uses the same root, Python and Mortal code for both modes..."
+    Write-Host "[6/6] Verifying Control Center uses the same root, Python and Mortal code for both modes..."
     $ControlCenterProbe = @'
 from pathlib import Path
 from app.settings import load_settings
@@ -258,7 +269,7 @@ print('CONTROL_CENTER_UNIFIED_RUNTIME_OK')
         throw "Control Center unified routing probe failed with exit code $LASTEXITCODE"
     }
 } else {
-    Write-Host "[5/5] Skipping Control Center probe (-SkipControlCenter)."
+    Write-Host "[6/6] Skipping Control Center probe (-SkipControlCenter)."
 }
 
 Write-Host ""
