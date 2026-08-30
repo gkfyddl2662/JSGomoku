@@ -55,16 +55,17 @@ jobs:
           python scripts/patch_libriichi_unified_game_stage5a.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_game_stage5a_fix.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_game_stage5b.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_grp_stage6a.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
         run: cargo check -p libriichi --no-default-features
 
-      - name: Run unified Rust ABI and game tests
+      - name: Run unified Rust ABI, game, and GRP tests
         working-directory: /tmp/mortal-unified
         run: cargo test -p libriichi --no-default-features unified_ -- --nocapture
 
-      - name: Verify Rust dual-mode transport, state, arena, and game contracts
+      - name: Verify Rust dual-mode transport, state, arena, game, and GRP contracts
         run: |
           grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
@@ -90,11 +91,16 @@ jobs:
           grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5B" /tmp/mortal-unified/libriichi/src/arena/one_vs_two.rs
           grep -q "unified_one_vs_two_rotates_all_three_challenger_seats" /tmp/mortal-unified/libriichi/src/arena/one_vs_two.rs
           grep -q "m.add_class::<OneVsTwo>()" /tmp/mortal-unified/libriichi/src/arena/mod.rs
+          grep -q "MORTAL_ROGS_UNIFIED_GRP_STAGE6A" /tmp/mortal-unified/libriichi/src/dataset/grp.rs
+          grep -q "pub num_players: u8" /tmp/mortal-unified/libriichi/src/dataset/grp.rs
+          grep -q "105_000" /tmp/mortal-unified/libriichi/src/dataset/grp.rs
+          grep -q "unified_grp_sanma_is_six_wide_and_105k" /tmp/mortal-unified/libriichi/src/dataset/grp.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
           python scripts/patch_mortal_unified_stage1.py --root /tmp/mortal-unified
           python scripts/patch_mortal_unified_stage2.py --root /tmp/mortal-unified
+          python scripts/patch_mortal_unified_grp_stage6b.py --root /tmp/mortal-unified
           python scripts/patch_mortal_4p.py --root /tmp/mortal-unified
 
       - name: Compile unified Python core
@@ -103,6 +109,10 @@ jobs:
           python -m py_compile /tmp/mortal-unified/mortal/train.py
           python -m py_compile /tmp/mortal-unified/mortal/train_grp.py
           python -m py_compile /tmp/mortal-unified/mortal/engine.py
+          grep -q "MORTAL_ROGS_UNIFIED_GRP_TRAINER_STAGE6B" /tmp/mortal-unified/mortal/train_grp.py
+          grep -q "network_cfg\['num_players'\] = num_players" /tmp/mortal-unified/mortal/train_grp.py
+          grep -q "mixed 3P/4P GRP samples" /tmp/mortal-unified/mortal/train_grp.py
+          grep -q "GRP(\*\*network_cfg, dtype=dtype)" /tmp/mortal-unified/mortal/train_grp.py
 
       - name: Synthetic 3P and 4P model forward
         run: |
