@@ -1,0 +1,84 @@
+name: Unified Gameplay Contract CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CANONICAL_MORTAL_SHA: 0cff2b52982be5b1163aa9a62fb01f03ce91e0d2
+
+jobs:
+  gameplay-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile Stage 8A and gameplay tools
+        run: |
+          python -m py_compile scripts/patch_mortal_unified_python_abi_stage8a.py
+          python -m py_compile scripts/smoke_unified_gameplay.py
+          grep -q 'MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_OK' scripts/patch_mortal_unified_python_abi_stage8a.py
+          grep -q 'MORTAL_UNIFIED_GAMEPLAY_E2E_OK' scripts/smoke_unified_gameplay.py
+          grep -q 'GameplayLoader' scripts/smoke_unified_gameplay.py
+          grep -q 'OneVsTwo' scripts/smoke_unified_gameplay.py
+          grep -q 'OneVsThree' scripts/smoke_unified_gameplay.py
+
+      - name: Clone canonical Mortal and apply production Python chain
+        run: |
+          git clone https://github.com/Equim-chan/Mortal.git /tmp/mortal-stage8
+          git -C /tmp/mortal-stage8 checkout "$CANONICAL_MORTAL_SHA"
+          python scripts/patch_mortal_unified_all.py --root /tmp/mortal-stage8 --python-only
+
+      - name: Verify extension-safe Python ABI
+        run: |
+          ! grep -R --include='*.py' -n 'from libriichi\.' /tmp/mortal-stage8/mortal
+          grep -q 'MORTAL_ROGS_UNIFIED_PYTHON_ABI_STAGE8A' /tmp/mortal-stage8/mortal/engine.py
+          grep -q 'game_mode = None' /tmp/mortal-stage8/mortal/engine.py
+          grep -q 'action_space = None' /tmp/mortal-stage8/mortal/engine.py
+          grep -q 'from libriichi import arena' /tmp/mortal-stage8/mortal/player.py
+          grep -q 'from libriichi import dataset' /tmp/mortal-stage8/mortal/dataloader.py
+          grep -q 'from libriichi import dataset' /tmp/mortal-stage8/mortal/train_grp.py
+          python -m py_compile /tmp/mortal-stage8/mortal/model.py
+          python -m py_compile /tmp/mortal-stage8/mortal/engine.py
+          python -m py_compile /tmp/mortal-stage8/mortal/player.py
+          python -m py_compile /tmp/mortal-stage8/mortal/dataloader.py
+          python -m py_compile /tmp/mortal-stage8/mortal/train_grp.py
+          python -m py_compile /tmp/mortal-stage8/mortal/one_vs_two.py
+          python -m py_compile /tmp/mortal-stage8/mortal/one_vs_three.py
+
+      - name: Verify Windows gameplay launcher contract
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/smoke_unified_windows.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host $_.Message }
+            exit 1
+          }
+          foreach ($pattern in @(
+            'patch_mortal_unified_python_abi_stage8a\.py',
+            'smoke_unified_gameplay\.py',
+            'SkipGameplay',
+            'MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK'
+          )) {
+            if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing gameplay launcher contract: $pattern"
+            }
+          }
