@@ -33,6 +33,7 @@ PYTHON_STAGES = (
     "patch_mortal_unified_grp_stage6b.py",
     "patch_mortal_4p.py",
     "patch_mortal_unified_online_stage7b.py",
+    "patch_mortal_unified_python_abi_stage8a.py",
 )
 
 
@@ -87,6 +88,7 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
         evaluator = (root / "mortal/one_vs_two.py").read_text(encoding="utf-8")
         player = (root / "mortal/player.py").read_text(encoding="utf-8")
         client = (root / "mortal/client.py").read_text(encoding="utf-8")
+        engine = (root / "mortal/engine.py").read_text(encoding="utf-8")
         if "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" not in model:
             raise RuntimeError("unified Python model postcondition failed")
         if "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" not in train:
@@ -98,6 +100,11 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
         for name, text in (("train", train), ("player", player), ("client", client)):
             if "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" not in text:
                 raise RuntimeError(f"unified online stage postcondition failed: {name}")
+        if "MORTAL_ROGS_UNIFIED_PYTHON_ABI_STAGE8A" not in engine:
+            raise RuntimeError("unified Python ABI stage postcondition failed")
+        for path in (root / "mortal").glob("*.py"):
+            if "from libriichi." in path.read_text(encoding="utf-8"):
+                raise RuntimeError(f"legacy libriichi submodule import remains: {path}")
 
     mode = "rust" if rust_only else "python" if python_only else "all"
     print(f"MORTAL_UNIFIED_PATCH_ALL_OK mode={mode} root={root}")
