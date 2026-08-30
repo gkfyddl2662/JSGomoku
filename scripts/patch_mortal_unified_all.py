@@ -22,6 +22,7 @@ RUST_STAGES = (
     "patch_libriichi_unified_game_stage5a_fix.py",
     "patch_libriichi_unified_game_stage5b.py",
     "patch_libriichi_unified_grp_stage6a.py",
+    "patch_libriichi_unified_stat_stage7a.py",
 )
 
 PYTHON_STAGES = (
@@ -30,6 +31,7 @@ PYTHON_STAGES = (
     "patch_mortal_unified_eval_stage5c.py",
     "patch_mortal_unified_grp_stage6b.py",
     "patch_mortal_4p.py",
+    "patch_mortal_unified_online_stage7b.py",
 )
 
 
@@ -61,6 +63,7 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
 
     if not python_only:
         consts = (root / "libriichi/src/consts.rs").read_text(encoding="utf-8")
+        stat = (root / "libriichi/src/stat.rs").read_text(encoding="utf-8")
         if (
             "ACTION_SPACE_3P: usize = 44" not in consts
             or "ACTION_SPACE_4P: usize = 46" not in consts
@@ -70,12 +73,16 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
             raise RuntimeError("unified observation ABI stage postcondition failed")
         if "MORTAL_ROGS_UNIFIED_ARENA_STAGE4C" not in consts or "4 => Ok((170, 34))" not in consts:
             raise RuntimeError("unified 3P oracle ABI stage postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_STAT_STAGE7A" not in stat:
+            raise RuntimeError("unified statistics stage postcondition failed")
 
     if not rust_only:
         model = (root / "mortal/model.py").read_text(encoding="utf-8")
         train = (root / "mortal/train.py").read_text(encoding="utf-8")
         train_grp = (root / "mortal/train_grp.py").read_text(encoding="utf-8")
         evaluator = (root / "mortal/one_vs_two.py").read_text(encoding="utf-8")
+        player = (root / "mortal/player.py").read_text(encoding="utf-8")
+        client = (root / "mortal/client.py").read_text(encoding="utf-8")
         if "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" not in model:
             raise RuntimeError("unified Python model postcondition failed")
         if "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" not in train:
@@ -84,6 +91,9 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
             raise RuntimeError("unified GRP trainer postcondition failed")
         if "MORTAL_ROGS_UNIFIED_EVAL_STAGE5C" not in evaluator:
             raise RuntimeError("unified 3P evaluator postcondition failed")
+        for name, text in (("train", train), ("player", player), ("client", client)):
+            if "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" not in text:
+                raise RuntimeError(f"unified online stage postcondition failed: {name}")
 
     mode = "rust" if rust_only else "python" if python_only else "all"
     print(f"MORTAL_UNIFIED_PATCH_ALL_OK mode={mode} root={root}")
