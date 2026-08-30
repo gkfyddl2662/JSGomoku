@@ -53,15 +53,17 @@ async function loadEvaluation() {
     const e=await api('/api/evaluation/backends');
     const p3=e.primary?.['3p'];
     const p4=e.primary?.['4p'];
+    const sanma=e.backends?.mjx_sanma;
     const runtime=e.runtime||{};
     const rows=[
-      ['3P Primary', p3?.name||'-'],
+      ['3P Production', p3?.name||'-'],
+      ['3P Target', sanma?.name ? `${sanma.name}${sanma.experimental?' · EXP':''}` : '-'],
       ['4P Primary', p4?.name||'-'],
       ['MJX Ref', runtime.mjx_ref||'-'],
       ['WSL2', runtime.wsl_available?'READY':'NOT FOUND'],
     ];
     document.getElementById('evaluationBackends').innerHTML=rows.map(([a,b])=>`<div><label>${a}</label><strong>${b}</strong></div>`).join('');
-    document.getElementById('evaluationNote').textContent = `4P ${p4?.name||'-'} · ${p4?.batched_agent?'batched inference':'single inference'} · 3P ${p3?.name||'-'} · MJX runtime ${runtime.mjx_runtime||'wsl2'} / Python ${runtime.mjx_python||'3.11'}`;
+    document.getElementById('evaluationNote').textContent = `4P ${p4?.name||'-'} · ${p4?.batched_agent?'batched inference':'single inference'} · 3P production ${p3?.name||'-'} → target ${sanma?.name||'mjx_sanma'} · parity gate required`;
   } catch(e){ toast(`평가 backend: ${e.message}`,true); }
 }
 
@@ -72,8 +74,18 @@ function mjxArgs(){
   };
 }
 
+function mjxSanmaArgs(){
+  return {
+    root: document.getElementById('mjxSanmaRoot')?.value || 'C:\\Mortal_ROGS\\mjx-sanma',
+    through: Number(document.getElementById('mjxSanmaThrough')?.value || 3),
+  };
+}
+
 async function setupMjx(){ return startJob('mjx_setup', mjxArgs()); }
 async function probeMjx(){ return startJob('mjx_probe', mjxArgs()); }
+async function prepareMjxSanma(){ return startJob('mjx_sanma_prepare', mjxSanmaArgs()); }
+async function patchMjxSanma(){ return startJob('mjx_sanma_patch', mjxSanmaArgs()); }
+async function auditMjxSanma(){ return startJob('mjx_sanma_audit', mjxSanmaArgs()); }
 
 async function loadData() {
   try {
