@@ -42,12 +42,51 @@
         <div id="runtimePath" class="subtle"></div>
         <div id="setupChecks" class="check-grid"></div>
         <div class="button-row">
-          <button onclick="bootstrapRuntime()">선택 Runtime 설치/구성</button>
+          <button onclick="bootstrapRuntime()">통합 Runtime 설치/구성</button>
           <button onclick="startJob('patch')">RTX 5080 + ROGS 패치</button>
           <button class="secondary" onclick="applyPreset()">5080 프리셋 적용</button>
         </div>
-        <div class="subtle top-gap">3P와 4P는 서로 다른 Python venv/libriichi를 사용합니다. 동일 venv에 두 엔진을 설치하지 않습니다.</div>
+        <div class="subtle top-gap">3P와 4P는 하나의 <code>Mortal_Unified</code>, 하나의 Python venv, 하나의 <code>libriichi</code>를 공유합니다. 데이터와 모델만 mode별로 분리됩니다.</div>
       </article>
+    </section>
+
+    <section class="panel command-panel">
+      <div class="panel-title"><span>PIPELINE</span><strong id="pipelineTitle">3P 학습 제어</strong></div>
+      <div class="pipeline">
+        <button onclick="startJob('train_grp')"><small>01</small>GRP 학습</button>
+        <button onclick="setOnline(false).then(()=>startJob('train'))"><small>02</small>Offline Mortal</button>
+        <button onclick="startJob('evaluate')"><small>03</small>기본 평가</button>
+        <button onclick="startSelfPlay()"><small>04</small>Self-play 시작</button>
+        <button class="secondary" onclick="startJob('tensorboard')"><small>TB</small>TensorBoard</button>
+      </div>
+      <div class="mode-row">
+        <span>Training mode</span>
+        <button class="mini" onclick="setOnline(false)">Offline</button>
+        <button class="mini" onclick="setOnline(true)">Online self-play</button>
+        <a id="tensorboardLink" href="http://127.0.0.1:6006" target="_blank" rel="noreferrer">TensorBoard 열기 ↗</a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span>SERVING</span><strong>Akagi-NG · Mortal API</strong></div>
+      <div class="form-grid">
+        <label>Host<input id="inferenceHost" value="127.0.0.1" /></label>
+        <label>Port<input id="inferencePort" type="number" value="8190" min="1" max="65535" /></label>
+        <label>API Key<input id="inferenceApiKey" value="mortal-rogs-local" /></label>
+        <label>Device
+          <select id="inferenceDevice">
+            <option value="auto" selected>Auto (CUDA 우선)</option>
+            <option value="cuda:0">CUDA 0</option>
+            <option value="cpu">CPU</option>
+          </select>
+        </label>
+      </div>
+      <div class="button-row top-gap">
+        <button onclick="startInferenceApi()">Akagi API 시작</button>
+        <button class="secondary" onclick="loadInference()">상태 새로고침</button>
+      </div>
+      <div id="inferenceStatus" class="subtle top-gap">Inference API 확인 중…</div>
+      <div class="subtle top-gap">Akagi-NG에는 Mortal 모델 파일을 넣지 않습니다. Akagi-NG의 Online/AkagiOT 서버 URL을 이 API 주소로 설정하면 3P는 <code>/react_batch_3p</code>, 4P는 <code>/react_batch</code>로 통신합니다. 서버는 각 mode의 <code>best_mortal.pth</code>를 읽고 승격 시 자동 재로딩합니다.</div>
     </section>
 
     <section class="panel">
@@ -79,24 +118,7 @@
         <button onclick="patchMjxSanma()">선택 단계까지 패치</button>
         <button class="secondary" onclick="auditMjxSanma()">Sanma Audit</button>
       </div>
-      <div id="evaluationNote" class="subtle">4P는 MJX, 3P는 libriichi3p가 production 기본값입니다. MJX-Sanma는 parity gate 통과 전까지 experimental로 차단됩니다.</div>
-    </section>
-
-    <section class="panel command-panel">
-      <div class="panel-title"><span>PIPELINE</span><strong id="pipelineTitle">3P 학습 제어</strong></div>
-      <div class="pipeline">
-        <button onclick="startJob('train_grp')"><small>01</small>GRP 학습</button>
-        <button onclick="setOnline(false).then(()=>startJob('train'))"><small>02</small>Offline Mortal</button>
-        <button onclick="startJob('evaluate')"><small>03</small>기본 평가</button>
-        <button onclick="startSelfPlay()"><small>04</small>Self-play 시작</button>
-        <button class="secondary" onclick="startJob('tensorboard')"><small>TB</small>TensorBoard</button>
-      </div>
-      <div class="mode-row">
-        <span>Training mode</span>
-        <button class="mini" onclick="setOnline(false)">Offline</button>
-        <button class="mini" onclick="setOnline(true)">Online self-play</button>
-        <a id="tensorboardLink" href="http://127.0.0.1:6006" target="_blank" rel="noreferrer">TensorBoard 열기 ↗</a>
-      </div>
+      <div id="evaluationNote" class="subtle">3P/4P production 정확성 기준은 unified Mortal/libriichi입니다. MJX-Sanma는 parity gate 통과 전까지 experimental로 차단됩니다.</div>
     </section>
 
     <section class="two-col">
@@ -111,11 +133,11 @@
           <button onclick="startTenhou()">Tenhou 데이터 추출</button>
           <div class="form-grid top-gap">
             <label>변환 입력 폴더<input id="convertSource" placeholder="D:\\tenhou_json" /></label>
-            <label>Mortal JSONL 출력 폴더<input id="convertOutput" placeholder="C:\\Mortal_Sanma\\data" /></label>
+            <label>Mortal JSONL 출력 폴더<input id="convertOutput" placeholder="C:\\Users\\<사용자명>\\Downloads\\Mortal_Unified\\runtime\\3p\\data" /></label>
           </div>
           <button onclick="startConvert()">MJAI JSONL 변환</button>
         </div>
-        <div id="yonmaDataNote" class="subtle" hidden>4P stock Mortal은 native <code>*.json.gz</code> 로그를 <code>dataset.globs</code>에서 직접 읽습니다. Config의 dataset 경로를 4P 데이터셋에 지정하세요.</div>
+        <div id="yonmaDataNote" class="subtle" hidden>4P Mortal은 native <code>*.json.gz</code> 로그를 <code>dataset.globs</code>에서 직접 읽습니다. Config의 dataset 경로를 4P 데이터셋에 지정하세요.</div>
       </article>
 
       <article class="panel">
@@ -126,24 +148,23 @@
     </section>
 
     <section class="panel">
-      <div class="panel-title"><span>PROMOTION</span><strong>Rating + Akagi ABI Gate</strong></div>
+      <div class="panel-title"><span>PROMOTION</span><strong>Rating + Mortal API ABI Gate</strong></div>
       <div class="form-grid">
-        <label>Candidate (선택 Runtime models 기준 상대경로)<input id="promotionCandidate" placeholder="rogs_3p/candidate.pth" /></label>
+        <label>Candidate (선택 Runtime models 기준 상대경로)<input id="promotionCandidate" placeholder="candidate.pth" /></label>
         <label>Mode
           <select id="promotionMode" onchange="syncPromotionDestination()">
-            <option value="3p">3P · mortal3p.pth</option>
-            <option value="4p">4P · mortal.pth</option>
+            <option value="3p">3P · Sanma</option>
+            <option value="4p">4P · Yonma</option>
           </select>
         </label>
-        <label>Destination (models 기준 상대경로)<input id="promotionDestination" value="rogs_3p/best_mortal3p.pth" /></label>
+        <label>Destination (models 기준 상대경로)<input id="promotionDestination" value="best_mortal.pth" /></label>
         <label>Rating profile<input id="promotionProfile" value="mahjongsoul" /></label>
-        <label>Paired 평가 JSONL<input id="promotionResults" placeholder="C:\\Mortal_ROGS\\runs\\eval\\paired.jsonl" /></label>
-        <label>Akagi-NG 루트<input id="promotionAkagiRoot" value="C:\\Akagi-NG" /></label>
+        <label>Paired 평가 JSONL<input id="promotionResults" placeholder="C:\\Mortal_Unified\\runtime\\3p\\runs\\eval\\paired.jsonl" /></label>
       </div>
       <div class="button-row top-gap">
-        <button onclick="runGatedPromotion()">통계 + Akagi 검사 후 승격</button>
+        <button onclick="runGatedPromotion()">통계 + API ABI 검사 후 승격</button>
       </div>
-      <div class="subtle">승격 순서: paired Rating EV/평균순위/라스율 bootstrap → Akagi-NG pinned source SHA → Mortal v4 strict state_dict → 44/46 action inference → 원자적 Best 교체.</div>
+      <div class="subtle">승격 순서: paired Rating EV/평균순위/라스율 bootstrap → Mortal v4 mode/action/observation strict load → API inference probe → 원자적 <code>best_mortal.pth</code> 교체. Akagi-NG는 모델 파일을 직접 읽지 않습니다.</div>
     </section>
 
     <section class="panel">
