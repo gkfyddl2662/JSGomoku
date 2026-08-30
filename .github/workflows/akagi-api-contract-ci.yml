@@ -38,6 +38,7 @@ jobs:
             scripts/serve_akagi_api.py \
             scripts/benchmark_inference_api.py \
             scripts/smoke_akagi_api.py \
+            scripts/smoke_inference_coordination.py \
             scripts/smoke_vanilla_akagi_client.py \
             scripts/check_mortal_api_checkpoint.py \
             scripts/export_akagi_mortal.py \
@@ -80,6 +81,8 @@ jobs:
           grep -q 'MORTAL_VANILLA_AKAGI_CIRCUIT_RECOVERY_OK' scripts/smoke_vanilla_akagi_client.py
           grep -q 'MORTAL_INFERENCE_MICROBATCH_OK' scripts/smoke_akagi_api.py
           grep -q 'MORTAL_INFERENCE_BACKGROUND_RELOAD_OK' scripts/smoke_akagi_api.py
+          grep -q 'MORTAL_INFERENCE_DEVICE_COORDINATION_OK' scripts/smoke_inference_coordination.py
+          grep -q 'MORTAL_INFERENCE_GRACEFUL_DRAIN_OK' scripts/smoke_inference_coordination.py
           grep -q 'MORTAL_INFERENCE_BENCHMARK_OK' scripts/benchmark_inference_api.py
           grep -q 'MORTAL_INFERENCE_SWEEP_OK' scripts/benchmark_inference_api.py
           grep -q 'request_deadline_ms' serving/resilient.py
