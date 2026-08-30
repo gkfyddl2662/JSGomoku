@@ -9,6 +9,14 @@ from pathlib import Path
 
 MODEL_SHA = "0fce8aaf19e3cbff2be3d9c241c53dad4e59ddce"
 MARKER = "# MORTAL_ROGS_UNIFIED_MODEL_STAGE1"
+LEGACY_CONST_IMPORT = "from libriichi.consts import obs_shape, oracle_obs_shape, ACTION_SPACE, GRP_SIZE\n"
+SAFE_CONST_IMPORT = (
+    "from libriichi import consts as _libriichi_consts\n"
+    "obs_shape = _libriichi_consts.obs_shape\n"
+    "oracle_obs_shape = _libriichi_consts.oracle_obs_shape\n"
+    "ACTION_SPACE = _libriichi_consts.ACTION_SPACE\n"
+    "GRP_SIZE = _libriichi_consts.GRP_SIZE\n"
+)
 
 
 def git_blob_sha(path: Path) -> str:
@@ -30,14 +38,24 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def patch_model(text: str) -> str:
+    # PyO3 exposes `consts` as an attribute of the single `libriichi`
+    # extension module. It is not guaranteed to be importable as a real
+    # Python package submodule (`libriichi.consts`) on Windows/maturin.
+    # Apply this import compatibility fix even to an already Stage-1-patched
+    # runtime so users do not need a full source reset/rebuild.
+    if LEGACY_CONST_IMPORT in text:
+        text = text.replace(LEGACY_CONST_IMPORT, SAFE_CONST_IMPORT, 1)
+
     if MARKER in text:
         return text
 
+    if SAFE_CONST_IMPORT not in text:
+        raise RuntimeError("libriichi consts import compatibility patch failed")
+
     text = replace_once(
         text,
-        "from libriichi.consts import obs_shape, oracle_obs_shape, ACTION_SPACE, GRP_SIZE\n",
-        "from libriichi.consts import obs_shape, oracle_obs_shape, ACTION_SPACE, GRP_SIZE\n\n"
-        f"{MARKER}\n",
+        SAFE_CONST_IMPORT,
+        SAFE_CONST_IMPORT + "\n" + f"{MARKER}\n",
         "unified marker",
     )
 
@@ -183,6 +201,7 @@ def apply(root: Path) -> None:
     post = model.read_text(encoding="utf-8")
     required = (
         MARKER,
+        SAFE_CONST_IMPORT,
         "action_space=ACTION_SPACE",
         "self.action_space = int(action_space)",
         "obs_channels=None",
@@ -192,6 +211,8 @@ def apply(root: Path) -> None:
     missing = [needle for needle in required if needle not in post]
     if missing:
         raise RuntimeError(f"unified model Stage 1 postconditions failed: {missing}")
+    if LEGACY_CONST_IMPORT in post:
+        raise RuntimeError("legacy libriichi.consts import remains after Stage 1")
 
     py_compile.compile(str(model), doraise=True)
     print("MORTAL_UNIFIED_MODEL_STAGE1_OK")
