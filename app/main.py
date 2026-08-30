@@ -21,7 +21,7 @@ from .settings import load_settings, normalize_mode
 settings = load_settings()
 controller = MortalController(settings)
 jobs = JobManager()
-app = FastAPI(title="Mortal ROGS Control Center", version="0.6.0")
+app = FastAPI(title="Mortal ROGS Control Center", version="0.7.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
 
 # The inference server is a separate process. Remember the most recently launched
@@ -45,6 +45,10 @@ class InferenceBody(BaseModel):
     port: int = Field(default=8190, ge=1, le=65535)
     api_key: str = "mortal-rogs-local"
     device: str = "auto"
+
+
+class InferenceReloadBody(BaseModel):
+    mode: str | None = None
 
 
 class PromotionBody(BaseModel):
@@ -71,10 +75,43 @@ def _under(path: Path, root: Path) -> Path:
     return path
 
 
-def _probe_inference_health(host: str, port: int, api_key: str = "") -> dict[str, Any]:
+def _inference_connect_host(host: str) -> str:
     normalized = host.strip().casefold()
-    # 0.0.0.0/:: are valid bind addresses but not useful connect targets.
-    connect_host = "127.0.0.1" if normalized in {"", "0.0.0.0", "::", "[::]"} else host.strip()
+    return "127.0.0.1" if normalized in {"", "0.0.0.0", "::", "[::]"} else host.strip()
+
+
+def _inference_request(path: str, *, payload: dict[str, Any] | None = None, timeout: float = 1.5) -> dict[str, Any]:
+    host = str(_inference_target["host"])
+    port = int(_inference_target["port"])
+    api_key = str(_inference_target.get("api_key", ""))
+    connect_host = _inference_connect_host(host)
+    url = f"http://{connect_host}:{port}{path}"
+    headers = {"Authorization": api_key} if api_key else {}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            decoded = json.loads(body) if body else {}
+            if not isinstance(decoded, dict):
+                raise HTTPException(502, "Inference API returned a non-object JSON response")
+            return decoded
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body)
+        except json.JSONDecodeError:
+            detail = body
+        raise HTTPException(exc.code, detail=detail) from exc
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(503, f"Inference API unavailable: {exc}") from exc
+
+
+def _probe_inference_health(host: str, port: int, api_key: str = "") -> dict[str, Any]:
+    connect_host = _inference_connect_host(host)
     url = f"http://{connect_host}:{port}/health"
     headers = {"Authorization": api_key} if api_key else {}
     request = urllib.request.Request(url, headers=headers)
@@ -143,7 +180,14 @@ def api_inference_status() -> dict[str, Any]:
         "server_url": f"http://{host}:{port}",
         "live": live,
         "job": _inference_job_snapshot(),
-        "endpoints": {"3p": "/react_batch_3p", "4p": "/react_batch"},
+        "endpoints": {
+            "3p": "/react_batch_3p",
+            "4p": "/react_batch",
+            "managed_3p": "/api/inference/3p",
+            "managed_4p": "/api/inference/4p",
+            "models": "/api/inference/models",
+            "reload": "/api/inference/reload",
+        },
         "best_models": {
             "3p": str(r3.models_dir / "best_mortal.pth"),
             "4p": str(r4.models_dir / "best_mortal.pth"),
@@ -172,8 +216,6 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
     if not script.is_file():
         raise HTTPException(500, f"Inference API script is missing: {script}")
 
-    # Make Start idempotent from the user perspective: starting again replaces the
-    # Control-Center-managed API process instead of creating a port-conflicting job.
     previous = _inference_job_snapshot()
     if previous and previous.get("running"):
         jobs.stop(str(previous["id"]))
@@ -202,6 +244,18 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
         return job.snapshot()
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/inference/reload")
+def api_inference_reload(body: InferenceReloadBody) -> dict[str, Any]:
+    mode = None
+    if body.mode is not None:
+        try:
+            mode = normalize_mode(body.mode)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    payload = {"mode": mode} if mode else {}
+    return _inference_request("/api/inference/reload", payload=payload, timeout=180.0)
 
 
 @app.post("/api/inference/stop")
