@@ -71,10 +71,20 @@ jobs:
             --runtime-root /tmp/mortal-libriichi-package \
             --device cpu
 
-      - name: Run strict checkpoint and evaluator E2E
+      - name: Run real-data mini-training E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_unified_training.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu \
+            --batch-size 16
+
+      - name: Run trained checkpoint and evaluator E2E
         env:
           PYTHONPATH: /tmp/mortal-libriichi-package/mortal
         run: |
           /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_unified_evaluator.py \
             --runtime-root /tmp/mortal-libriichi-package \
-            --device cpu
+            --device cpu \
+            --require-trained-checkpoints
