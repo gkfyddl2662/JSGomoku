@@ -101,6 +101,40 @@ class MortalController:
             ])
             return cmd, self.s.project_root, {}
 
+        if kind == "mjx_sanma_prepare":
+            if os.name != "nt":
+                raise ValueError("The current MJX-Sanma preparation entry point targets Windows")
+            destination = str(args.get("root", "C:\\Mortal_ROGS\\mjx-sanma")).strip()
+            script = self.s.project_root / "scripts" / "prepare_mjx_sanma.ps1"
+            return [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-Destination",
+                destination,
+            ], self.s.project_root, {}
+
+        if kind in {"mjx_sanma_patch", "mjx_sanma_audit"}:
+            root = self._resolve_user_path(args.get("root"), must_exist=True)
+            if kind == "mjx_sanma_patch":
+                script = self.s.project_root / "scripts" / "patch_mjx_sanma.py"
+                through = int(args.get("through", 3))
+                if through not in (1, 2, 3):
+                    raise ValueError("MJX-Sanma patch stage must be 1, 2 or 3")
+                return [py, str(script), "--root", str(root), "--through", str(through)], self.s.project_root, {}
+            script = self.s.project_root / "scripts" / "audit_mjx_sanma.py"
+            return [
+                py,
+                str(script),
+                "--root",
+                str(root),
+                "--allow-changed",
+                "--allow-blockers",
+            ], self.s.project_root, {}
+
         if kind == "convert":
             source = self._resolve_user_path(args.get("source"), must_exist=True)
             output = self._resolve_user_path(args.get("output"), must_exist=False)
