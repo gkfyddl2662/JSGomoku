@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -236,3 +238,88 @@ def test_model_slot_keeps_published_model_available_during_reload(tmp_path, monk
     assert slot.get() is not old_model
     assert slot.get().payload == "new-checkpoint"
     assert len(created) == 2
+
+
+def test_cuda_memory_snapshot_and_oom_cleanup_are_lazy(monkeypatch) -> None:
+    import serving.resilient as inference
+
+    gib = 1024**3
+    cleared: list[bool] = []
+
+    class FakeOOM(RuntimeError):
+        pass
+
+    class FakeCuda:
+        OutOfMemoryError = FakeOOM
+
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def device_count():
+            return 1
+
+        @staticmethod
+        def mem_get_info(index):
+            assert index == 0
+            return 4 * gib, 16 * gib
+
+        @staticmethod
+        def get_device_name(index):
+            assert index == 0
+            return "NVIDIA GeForce RTX 5080"
+
+        @staticmethod
+        def memory_allocated(index):
+            return 8 * gib
+
+        @staticmethod
+        def memory_reserved(index):
+            return 10 * gib
+
+        @staticmethod
+        def max_memory_allocated(index):
+            return 9 * gib
+
+        @staticmethod
+        def max_memory_reserved(index):
+            return 11 * gib
+
+        @staticmethod
+        def empty_cache():
+            cleared.append(True)
+
+    class FakeTorch:
+        OutOfMemoryError = FakeOOM
+        cuda = FakeCuda()
+
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch())
+    memory = inference.cuda_memory_snapshot()
+    assert memory["available"] is True
+    assert len(memory["devices"]) == 1
+    device = memory["devices"][0]
+    assert device["name"] == "NVIDIA GeForce RTX 5080"
+    assert device["allocated_mib"] == 8192.0
+    assert device["reserved_mib"] == 10240.0
+    assert device["peak_reserved_mib"] == 11264.0
+    assert device["free_mib"] == 4096.0
+    assert device["total_mib"] == 16384.0
+    assert device["reserved_pct_total"] == 62.5
+
+    assert inference._clear_cuda_cache_after_oom(FakeOOM("CUDA out of memory")) is True
+    assert cleared == [True]
+    assert inference._clear_cuda_cache_after_oom(RuntimeError("ordinary reload failure")) is False
+    assert cleared == [True]
+
+
+def test_cuda_memory_metrics_are_wired_without_new_serving_subsystem() -> None:
+    root = Path(__file__).resolve().parents[1]
+    service = (root / "serving" / "resilient.py").read_text(encoding="utf-8")
+    ui = (root / "static" / "inference.js").read_text(encoding="utf-8")
+
+    assert '"cuda_memory": cuda_memory_snapshot()' in service
+    assert "cache_cleared = _clear_cuda_cache_after_oom(exc)" in service
+    assert 'result["cuda_cache_cleared"] = True' in service
+    assert "function inferenceCudaMemoryMetric" in ui
+    assert "<label>CUDA Memory</label>" in ui
