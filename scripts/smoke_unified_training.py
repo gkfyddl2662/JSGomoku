@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -12,6 +14,98 @@ import numpy as np
 
 def fail(msg: str) -> None:
     raise RuntimeError(msg)
+
+
+def probe_full_dataloader(
+    *,
+    mode: str,
+    contract: dict[str, int],
+    logs: list[Path],
+    example_cfg: Path,
+    output_root: Path,
+    mortal_dir: Path,
+    toml,
+    torch,
+    GRP,
+) -> dict[str, object]:
+    cfg = copy.deepcopy(toml.load(example_cfg))
+    cfg.setdefault("control", {})["version"] = 4
+    game = cfg.setdefault("game", {})
+    game.update(
+        {
+            "mode": mode,
+            "num_players": contract["players"],
+            "action_space": contract["actions"],
+            "obs_channels": contract["obs"],
+            "grp_input_size": 6 if mode == "3p" else 7,
+        }
+    )
+
+    grp_state = output_root / f"probe-grp-{mode}.pth"
+    cfg_path = output_root / f"probe-config-{mode}.toml"
+    cfg.setdefault("grp", {})["state_file"] = str(grp_state)
+    network_cfg = dict(cfg["grp"]["network"])
+    network_cfg["num_players"] = contract["players"]
+    network_cfg["input_size"] = game["grp_input_size"]
+    grp = GRP(**network_cfg).cpu().eval()
+    torch.save({"model": grp.state_dict()}, grp_state)
+    cfg_path.write_text(toml.dumps(cfg), encoding="utf-8")
+    del grp
+
+    old_cfg_env = os.environ.get("MORTAL_CFG")
+    old_config_module = sys.modules.pop("config", None)
+    old_dataloader_module = sys.modules.pop("dataloader", None)
+    try:
+        os.environ["MORTAL_CFG"] = str(cfg_path)
+        importlib.invalidate_caches()
+        dataloader = importlib.import_module("dataloader")
+        files = [str(path) for path in logs]
+        file_data = dataloader.FileDatasetsIter(
+            version=4,
+            file_list=files,
+            pts=cfg["env"]["pts"],
+            file_batch_size=max(1, len(files)),
+            reserve_ratio=0,
+            player_names=None,
+            num_epochs=1,
+            enable_augmentation=False,
+            augmented_first=False,
+        )
+        sample = next(iter(file_data))
+    finally:
+        sys.modules.pop("dataloader", None)
+        sys.modules.pop("config", None)
+        if old_dataloader_module is not None:
+            sys.modules["dataloader"] = old_dataloader_module
+        if old_config_module is not None:
+            sys.modules["config"] = old_config_module
+        if old_cfg_env is None:
+            os.environ.pop("MORTAL_CFG", None)
+        else:
+            os.environ["MORTAL_CFG"] = old_cfg_env
+
+    if len(sample) != 6:
+        fail(f"{mode} full dataloader returned unexpected entry size: {len(sample)}")
+    reward = float(sample[4])
+    rank = int(sample[5])
+    if not np.isfinite(reward):
+        fail(f"{mode} full dataloader produced non-finite kyoku reward: {reward}")
+    if not 0 <= rank < contract["players"]:
+        fail(f"{mode} full dataloader produced invalid next rank {rank} for {contract['players']} players")
+
+    reward_source = (mortal_dir / "reward_calculator.py").read_text(encoding="utf-8")
+    dataloader_source = (mortal_dir / "dataloader.py").read_text(encoding="utf-8")
+    if "MORTAL_ROGS_UNIFIED_REWARD_STAGE2" not in reward_source:
+        fail(f"{mode} unified reward Stage 2 marker missing")
+    if "MORTAL_ROGS_UNIFIED_DATALOADER_STAGE2" not in dataloader_source:
+        fail(f"{mode} unified dataloader Stage 2 marker missing")
+
+    return {
+        "reward": reward,
+        "next_rank": rank,
+        "players": contract["players"],
+        "grp_input_size": game["grp_input_size"],
+    }
 
 
 def main() -> int:
@@ -33,7 +127,7 @@ def main() -> int:
     import toml
     import torch
     import libriichi
-    from model import Brain, DQN
+    from model import Brain, DQN, GRP
 
     dataset = libriichi.dataset
     device = torch.device(args.device)
@@ -67,6 +161,18 @@ def main() -> int:
                 f"{mode} needs self-play logs from smoke_unified_gameplay.py; "
                 f"expected at least {c['players']}, got {len(logs)}"
             )
+
+        full_dataloader = probe_full_dataloader(
+            mode=mode,
+            contract=c,
+            logs=logs,
+            example_cfg=example_cfg,
+            output_root=output_root,
+            mortal_dir=mortal_dir,
+            toml=toml,
+            torch=torch,
+            GRP=GRP,
+        )
 
         loader = dataset.GameplayLoader(
             version=4,
@@ -183,6 +289,7 @@ def main() -> int:
                     "samples": len(action_samples),
                     "loss": float(loss.detach().cpu()),
                     "source_logs": [str(p) for p in logs],
+                    "full_dataloader": full_dataloader,
                 },
             },
             checkpoint,
@@ -228,6 +335,7 @@ def main() -> int:
             "strict_reload": True,
             "action_space": c["actions"],
             "obs": [c["obs"], 34],
+            "full_dataloader": full_dataloader,
         }
 
         del loader, loaded_files, obs, mask, action, brain, dqn, reload_brain, reload_dqn, state
@@ -235,6 +343,7 @@ def main() -> int:
             torch.cuda.empty_cache()
             torch.cuda.synchronize(device)
 
+    print("MORTAL_UNIFIED_FULL_DATALOADER_REWARD_E2E_OK")
     print("MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK")
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
