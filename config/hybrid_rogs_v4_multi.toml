@@ -25,6 +25,15 @@ conv_channels = 192
 num_blocks = 40
 norm = "BN"
 
+[rogs]
+enabled = true
+# Progress 0 -> 1 moves weight from teacher/BC/CQL anchors toward regret self-play.
+curriculum_steps = 1000000
+oracle_final_weight = 0.05
+bc_final_weight = 0.02
+cql_final_weight = 0.05
+regret_final_weight = 0.75
+
 [objective]
 value_weight = 1.0
 regret_weight = 0.50
@@ -87,6 +96,9 @@ snapshot_every_games = 2000
 [gating.3p]
 games = 12000
 seat_rotation = true
+paired_seeds = true
+bootstrap_samples = 5000
+confidence = 0.95
 primary_metric = "rating_utility"
 secondary_metric = "avg_rank"
 max_last_rate_regression = 0.003
@@ -94,6 +106,9 @@ max_last_rate_regression = 0.003
 [gating.4p]
 games = 16000
 seat_rotation = true
+paired_seeds = true
+bootstrap_samples = 5000
+confidence = 0.95
 primary_metric = "rating_utility"
 secondary_metric = "avg_rank"
 max_last_rate_regression = 0.003
