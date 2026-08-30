@@ -5,9 +5,7 @@ import gzip
 import json
 import os
 import sys
-import threading
 import time
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +17,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
+from serving.coordination import CoordinatedInferenceService, InferenceDrainingError
 from serving.inference import contract_for
 from serving.resilient import (
     InferenceBusyError,
@@ -70,6 +69,30 @@ def parse_args() -> argparse.Namespace:
         default=float(os.getenv("MORTAL_INFERENCE_RELOAD_POLL_MS", "500")),
         help="Background checkpoint change polling interval.",
     )
+    p.add_argument(
+        "--max-device-executions",
+        type=int,
+        default=int(os.getenv("MORTAL_INFERENCE_MAX_DEVICE_EXECUTIONS", "1")),
+        help="Maximum simultaneous 3P/4P model forwards on the shared device.",
+    )
+    p.add_argument(
+        "--reload-quiet-ms",
+        type=float,
+        default=float(os.getenv("MORTAL_INFERENCE_RELOAD_QUIET_MS", "150")),
+        help="Required device-idle window before hot-reload begins.",
+    )
+    p.add_argument(
+        "--reload-wait-ms",
+        type=float,
+        default=float(os.getenv("MORTAL_INFERENCE_RELOAD_WAIT_MS", "1000")),
+        help="Maximum explicit reload wait for a quiet device window.",
+    )
+    p.add_argument(
+        "--drain-timeout-ms",
+        type=float,
+        default=float(os.getenv("MORTAL_INFERENCE_DRAIN_TIMEOUT_MS", "3500")),
+        help="Default graceful drain window before process shutdown.",
+    )
     return p.parse_args()
 
 
@@ -113,10 +136,9 @@ def _model_identity(info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI:
-    app = FastAPI(title="Mortal-ROGS Inference API", version="1.4.0")
+def create_app(service: CoordinatedInferenceService, api_key: str = "") -> FastAPI:
+    app = FastAPI(title="Mortal-ROGS Inference API", version="1.5.0")
     expected_key = api_key.strip()
-    tuning_lock = threading.Lock()
 
     def authorize(request: Request) -> None:
         if not expected_key:
@@ -124,21 +146,6 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
         supplied = request.headers.get("Authorization", "")
         if supplied != expected_key:
             raise HTTPException(401, "Invalid API key")
-
-    def apply_live_micro_batch_wait(wait_ms: float) -> dict[str, Any]:
-        if not 0.0 <= wait_ms <= 100.0:
-            raise ValueError("micro_batch_ms must be between 0 and 100")
-        # DynamicBatcher._take_batch uses the same Condition lock while reading
-        # wait_s. Acquire every mode lock in stable order so 3P/4P switch to the
-        # same candidate atomically without touching loaded/compiled models.
-        batchers = [service.batchers[mode] for mode in sorted(service.batchers)]
-        with tuning_lock, ExitStack() as stack:
-            for batcher in batchers:
-                stack.enter_context(batcher._condition)
-            for batcher in batchers:
-                batcher.wait_s = wait_ms / 1000.0
-            service.micro_batch_ms = wait_ms
-        return dict(service.metrics()["micro_batch"])
 
     async def infer_request(request: Request, mode: str, *, detailed: bool) -> dict[str, Any]:
         authorize(request)
@@ -150,7 +157,7 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
         started = time.perf_counter()
         try:
             response = await run_in_threadpool(service.infer, contract.mode, payload["obs"], payload["masks"])
-        except (InferenceBusyError, InferenceDeadlineExceeded) as exc:
+        except (InferenceBusyError, InferenceDeadlineExceeded, InferenceDrainingError) as exc:
             raise HTTPException(503, str(exc)) from exc
         except FileNotFoundError as exc:
             raise HTTPException(503, str(exc)) from exc
@@ -236,8 +243,7 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
         if isinstance(value, bool):
             raise HTTPException(400, "micro_batch_ms must be numeric")
         try:
-            wait_ms = float(value)
-            tuning = apply_live_micro_batch_wait(wait_ms)
+            tuning = service.set_micro_batch_wait(float(value))
         except (TypeError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
         return {
@@ -246,6 +252,26 @@ def create_app(service: ResilientInferenceService, api_key: str = "") -> FastAPI
             "live": True,
             "models_reloaded": False,
             "micro_batch": tuning,
+        }
+
+    @app.post("/api/inference/drain")
+    async def managed_drain(request: Request) -> dict[str, Any]:
+        authorize(request)
+        payload = _decode_json(await request.body(), request.headers.get("Content-Encoding"))
+        timeout_ms = payload.get("timeout_ms", service.drain_timeout_ms)
+        if isinstance(timeout_ms, bool):
+            raise HTTPException(400, "timeout_ms must be numeric")
+        try:
+            timeout_ms = float(timeout_ms)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, "timeout_ms must be numeric") from exc
+        if not 0.0 <= timeout_ms <= 10000.0:
+            raise HTTPException(400, "timeout_ms must be between 0 and 10000")
+        result = await run_in_threadpool(service.drain, timeout_ms)
+        return {
+            "ok": bool(result.get("drained")),
+            "protocol": "mortal-rogs-inference-v1",
+            "drain": result,
         }
 
     @app.post("/api/inference/reload")
@@ -307,8 +333,17 @@ def main() -> int:
         )
     if args.reload_poll_ms < 50:
         raise SystemExit("--reload-poll-ms must be >= 50")
+    if args.max_device_executions < 1:
+        raise SystemExit("--max-device-executions must be >= 1")
+    if args.reload_quiet_ms < 0 or args.reload_wait_ms < 0:
+        raise SystemExit("--reload-quiet-ms and --reload-wait-ms must be >= 0")
+    if not 0 < args.drain_timeout_ms < AKAGI_READ_TIMEOUT_MS:
+        raise SystemExit(
+            f"--drain-timeout-ms must be >0 and <{AKAGI_READ_TIMEOUT_MS:.0f}ms "
+            "to complete before pinned AkagiOT's read timeout"
+        )
 
-    service = ResilientInferenceService(
+    base_service = ResilientInferenceService(
         args.runtime_root,
         device=args.device,
         model_3p=args.model_3p,
@@ -318,6 +353,13 @@ def main() -> int:
         max_pending_requests=args.max_pending_requests,
         request_deadline_ms=args.request_deadline_ms,
         reload_poll_ms=args.reload_poll_ms,
+    )
+    service = CoordinatedInferenceService(
+        base_service,
+        max_device_executions=args.max_device_executions,
+        reload_quiet_ms=args.reload_quiet_ms,
+        reload_wait_ms=args.reload_wait_ms,
+        drain_timeout_ms=args.drain_timeout_ms,
     )
 
     print("MORTAL_AKAGI_API_WARMUP_BEGIN", flush=True)
@@ -335,7 +377,9 @@ def main() -> int:
         f"device={args.device} auth={'on' if args.api_key.strip() else 'off'} "
         f"micro_batch_ms={args.micro_batch_ms} max_rows={args.micro_batch_max_rows} "
         f"pending={args.max_pending_requests} deadline_ms={args.request_deadline_ms} "
-        f"reload_poll_ms={args.reload_poll_ms}",
+        f"reload_poll_ms={args.reload_poll_ms} max_device_executions={args.max_device_executions} "
+        f"reload_quiet_ms={args.reload_quiet_ms} reload_wait_ms={args.reload_wait_ms} "
+        f"drain_timeout_ms={args.drain_timeout_ms}",
         flush=True,
     )
     uvicorn.run(app, host=args.host, port=args.port, reload=False, access_log=False)

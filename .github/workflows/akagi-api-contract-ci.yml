@@ -34,6 +34,7 @@ jobs:
             app/inference_benchmark.py \
             serving/inference.py \
             serving/resilient.py \
+            serving/coordination.py \
             scripts/serve_akagi_api.py \
             scripts/benchmark_inference_api.py \
             scripts/smoke_akagi_api.py \
@@ -49,7 +50,8 @@ jobs:
           python -m pytest -q \
             tests/test_akagi_api_only_contract.py \
             tests/test_inference_scheduler.py \
-            tests/test_inference_benchmark_contract.py
+            tests/test_inference_benchmark_contract.py \
+            tests/test_inference_coordination.py
 
       - name: Verify pinned untouched AkagiOT client source
         run: |
@@ -81,5 +83,9 @@ jobs:
           grep -q 'MORTAL_INFERENCE_BENCHMARK_OK' scripts/benchmark_inference_api.py
           grep -q 'MORTAL_INFERENCE_SWEEP_OK' scripts/benchmark_inference_api.py
           grep -q 'request_deadline_ms' serving/resilient.py
+          grep -q 'DeviceExecutionCoordinator' serving/coordination.py
+          grep -q 'RequestLifecycle' serving/coordination.py
           grep -q '/api/inference/metrics' scripts/serve_akagi_api.py
           grep -q '/api/inference/tuning' scripts/serve_akagi_api.py
+          grep -q '/api/inference/drain' scripts/serve_akagi_api.py
+          grep -q -- '--max-device-executions' scripts/serve_akagi_api.py
