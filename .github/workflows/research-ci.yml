@@ -100,10 +100,24 @@ jobs:
         run: |
           git clone https://github.com/Equim-chan/Mortal.git /tmp/mortal-unified
           git -C /tmp/mortal-unified checkout 0cff2b52982be5b1163aa9a62fb01f03ce91e0d2
-      - name: Apply unified model Stage 1
-        run: python scripts/patch_mortal_unified_stage1.py --root /tmp/mortal-unified
-      - name: Compile unified model
-        run: python -m py_compile /tmp/mortal-unified/mortal/model.py
+      - name: Apply unified model and trainer stages
+        run: |
+          python scripts/patch_mortal_unified_stage1.py --root /tmp/mortal-unified
+          python scripts/patch_mortal_unified_stage2.py --root /tmp/mortal-unified
+      - name: Apply shared RTX 5080 and ROGS patches
+        run: python scripts/patch_mortal_4p.py --root /tmp/mortal-unified
+      - name: Compile unified core Python
+        run: |
+          python -m py_compile /tmp/mortal-unified/mortal/model.py
+          python -m py_compile /tmp/mortal-unified/mortal/train.py
+          python -m py_compile /tmp/mortal-unified/mortal/train_grp.py
+      - name: Verify single trainer is mode-aware
+        run: |
+          grep -q "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" /tmp/mortal-unified/mortal/train.py
+          grep -q "game_mode = '3p'" /tmp/mortal-unified/mortal/train.py
+          grep -q "game_mode = '4p'" /tmp/mortal-unified/mortal/train.py
+          grep -q "DQN(version=version, action_space=action_space)" /tmp/mortal-unified/mortal/train.py
+          grep -q "compute_mortal_rogs_batch" /tmp/mortal-unified/mortal/train.py
       - name: Synthetic 3P and 4P model forward
         run: |
           mkdir -p /tmp/unified-stub/libriichi
