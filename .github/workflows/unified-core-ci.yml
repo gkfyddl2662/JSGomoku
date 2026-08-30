@@ -49,16 +49,17 @@ jobs:
           python scripts/patch_libriichi_unified_stage3d.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3e_fixed.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3f.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_arena_stage4a.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
         run: cargo check -p libriichi --no-default-features
 
-      - name: Run unified state ABI tests
+      - name: Run unified Rust ABI tests
         working-directory: /tmp/mortal-unified
-        run: cargo test -p libriichi --no-default-features unified_v4_ -- --nocapture
+        run: cargo test -p libriichi --no-default-features unified_ -- --nocapture
 
-      - name: Verify Rust dual-mode transport and state contracts
+      - name: Verify Rust dual-mode transport, state, and arena contracts
         run: |
           grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
@@ -87,6 +88,11 @@ jobs:
           grep -q "fn nukidora" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "nukidora_ron_chance" /tmp/mortal-unified/libriichi/src/state/player_state.rs
           ! grep -q "nukidora state transition is not installed yet" /tmp/mortal-unified/libriichi/src/state/update.rs
+          grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4A" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "pub num_players: u8" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "let live_tiles = if num_players == 3 { 55 } else { 70 }" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "self.tsumo_actor = (actor + 1) % self.num_players" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "Event::Nukidora { actor, .. }" /tmp/mortal-unified/libriichi/src/arena/board.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
