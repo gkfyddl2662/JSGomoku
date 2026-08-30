@@ -30,7 +30,7 @@ jobs:
       - name: Install validation stack
         run: |
           python -m pip install --upgrade pip
-          python -m pip install toml numpy
+          python -m pip install pytest toml numpy
           python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
 
       - name: Clone pinned canonical Mortal
@@ -39,9 +39,8 @@ jobs:
           git -C /tmp/mortal-unified-runtime checkout "$CANONICAL_MORTAL_SHA"
           test "$(git -C /tmp/mortal-unified-runtime rev-parse HEAD)" = "$CANONICAL_MORTAL_SHA"
 
-      - name: Apply exact single-runtime patch aggregator
-        run: |
-          python scripts/patch_mortal_unified_all.py --root /tmp/mortal-unified-runtime
+      - name: Apply exact production patch aggregator
+        run: python scripts/patch_mortal_unified_all.py --root /tmp/mortal-unified-runtime
 
       - name: Compile and test unified libriichi
         working-directory: /tmp/mortal-unified-runtime
@@ -53,7 +52,7 @@ jobs:
         run: |
           grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
-          grep -q "4 => Ok((1010, 34))" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
+          grep -q "(3, 4) => (1010, 34)" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
           grep -q "4 => Ok((170, 34))" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4C" /tmp/mortal-unified-runtime/libriichi/src/arena/board.rs
           grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5B" /tmp/mortal-unified-runtime/libriichi/src/arena/one_vs_two.rs
@@ -61,15 +60,17 @@ jobs:
           grep -q "m.add_class::<OneVsTwo>()" /tmp/mortal-unified-runtime/libriichi/src/arena/mod.rs
           grep -q "m.add_class::<OneVsThree>()" /tmp/mortal-unified-runtime/libriichi/src/arena/mod.rs
 
-      - name: Compile unified Python trainer
+      - name: Compile unified Python core and evaluator
         run: |
           python -m py_compile /tmp/mortal-unified-runtime/mortal/model.py
           python -m py_compile /tmp/mortal-unified-runtime/mortal/train.py
           python -m py_compile /tmp/mortal-unified-runtime/mortal/train_grp.py
           python -m py_compile /tmp/mortal-unified-runtime/mortal/engine.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/one_vs_two.py
           grep -q "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" /tmp/mortal-unified-runtime/mortal/model.py
           grep -q "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" /tmp/mortal-unified-runtime/mortal/train.py
           grep -q "MORTAL_ROGS_UNIFIED_GRP_TRAINER_STAGE6B" /tmp/mortal-unified-runtime/mortal/train_grp.py
+          grep -q "MORTAL_ROGS_UNIFIED_EVAL_STAGE5C" /tmp/mortal-unified-runtime/mortal/one_vs_two.py
           grep -q "compute_mortal_rogs_batch" /tmp/mortal-unified-runtime/mortal/train.py
 
       - name: Synthetic shared-process 3P and 4P model contracts
@@ -88,11 +89,10 @@ jobs:
           from model import Brain, DQN, GRP
           from engine import MortalEngine
 
-          contracts = (
+          for mode, players, actions, obs_channels, oracle_channels, grp_size in (
               ('3p', 3, 44, 1010, 170, 6),
               ('4p', 4, 46, 1012, 217, 7),
-          )
-          for mode, players, actions, obs_channels, oracle_channels, grp_size in contracts:
+          ):
               brain = Brain(version=4, conv_channels=16, num_blocks=1, obs_channels=obs_channels).eval()
               dqn = DQN(version=4, action_space=actions).eval()
               obs = torch.randn(2, obs_channels, 34)
@@ -114,8 +114,7 @@ jobs:
               ).eval()
               invisible = torch.randn(2, oracle_channels, 34)
               with torch.inference_mode():
-                  oracle_phi = oracle(obs, invisible)
-              assert oracle_phi.shape == (2, 1024)
+                  assert oracle(obs, invisible).shape == (2, 1024)
 
               engine = MortalEngine(
                   brain=brain,
@@ -145,31 +144,36 @@ jobs:
           print('MORTAL_UNIFIED_RUNTIME_CPU_CONTRACTS_OK')
           PY
 
-      - name: Validate production bootstrap and smoke syntax
+      - name: Test Control Center unified and legacy routing
+        run: python -m pytest -q tests/test_unified_runtime.py tests/test_dual_runtime.py
+
+      - name: Validate Windows bootstrap syntax and contract
         shell: pwsh
         run: |
-          $failed = $false
-          foreach ($path in @(
-            'scripts/bootstrap_unified_runtime.ps1'
-          )) {
-            $tokens = $null
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors) | Out-Null
-            if ($errors.Count -gt 0) {
-              Write-Host "PowerShell parse errors in $path"
-              $errors | ForEach-Object { Write-Host $_.Message }
-              $failed = $true
-            }
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/bootstrap_unified_runtime.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host $_.Message }
+            exit 1
           }
-          if ($failed) { exit 1 }
-          Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern 'MORTAL_UNIFIED_BOOTSTRAP_OK' -Quiet | ForEach-Object { if (-not $_) { exit 1 } }
-          Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern 'config\.3p\.toml' -Quiet | ForEach-Object { if (-not $_) { exit 1 } }
-          Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern 'config\.4p\.toml' -Quiet | ForEach-Object { if (-not $_) { exit 1 } }
-          Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern "control\['version'\] = 4" -Quiet | ForEach-Object { if (-not $_) { exit 1 } }
+          foreach ($pattern in @(
+            'MORTAL_UNIFIED_BOOTSTRAP_OK',
+            'config\.3p\.toml',
+            'config\.4p\.toml',
+            "control\['version'\] = 4"
+          )) {
+            if (-not (Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern $pattern -Quiet)) { exit 1 }
+          }
 
       - name: Compile unified runtime tools
         run: |
           python -m py_compile scripts/patch_mortal_unified_all.py
+          python -m py_compile scripts/patch_mortal_unified_eval_stage5c.py
           python -m py_compile scripts/smoke_unified_runtime.py
           grep -q "MORTAL_UNIFIED_RUNTIME_SMOKE_OK" scripts/smoke_unified_runtime.py
           grep -q "OneVsTwo" scripts/smoke_unified_runtime.py
