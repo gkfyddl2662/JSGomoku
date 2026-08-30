@@ -48,15 +48,13 @@ def patch_board(text: str) -> str:
     text = "// " + MARKER + "\n" + text
     text = replace_once(
         text,
-        "            scores: self.board.scores,\n",
-        "            scores: self.board.scores.to_vec(),\n",
-        "arena scores event",
-    )
-    text = replace_once(
-        text,
+        "            oya: self.oya,\n"
+        "            scores: self.board.scores,\n"
         "            tehais: self.board.haipai,\n",
+        "            oya: self.oya,\n"
+        "            scores: self.board.scores.to_vec(),\n"
         "            tehais: self.board.haipai.iter().map(|hand| hand.to_vec()).collect(),\n",
-        "arena hands event",
+        "arena StartKyoku payload",
     )
     text = replace_count(
         text,
