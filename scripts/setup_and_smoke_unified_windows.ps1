@@ -12,6 +12,7 @@ if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 }
 $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 $CanonicalSha = "0cff2b52982be5b1163aa9a62fb01f03ce91e0d2"
+$CanonicalRepo = "https://github.com/Equim-chan/Mortal.git"
 $ManagedMarker = Join-Path $InstallRoot ".mortal-rogs-unified-runtime.json"
 
 $Bootstrap = Join-Path $PSScriptRoot "bootstrap_unified_runtime.ps1"
@@ -22,36 +23,60 @@ foreach ($path in @($Bootstrap, $Smoke)) {
     }
 }
 
+function Get-GitText([string[]]$Args) {
+    $output = & git @Args 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "git command failed: git $($Args -join ' ')`n$($output | Out-String)"
+    }
+    return (($output | Out-String).Trim())
+}
+
 function Repair-PartialUnifiedBootstrap {
     if (-not (Test-Path $InstallRoot)) { return }
     if (-not (Test-Path (Join-Path $InstallRoot ".git"))) { return }
     if (Test-Path $ManagedMarker) { return }
 
-    $dirty = @(& git -C $InstallRoot status --porcelain)
-    if ($LASTEXITCODE -ne 0 -or $dirty.Count -eq 0) { return }
+    $dirtyText = Get-GitText @("-C", $InstallRoot, "status", "--porcelain=v1", "--untracked-files=all")
+    if ([string]::IsNullOrWhiteSpace($dirtyText)) { return }
 
-    $head = (& git -C $InstallRoot rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or $head -ne $CanonicalSha) {
-        throw "Partial unified runtime is dirty without a managed marker and is not at the pinned canonical SHA. Preserve it manually before rerunning: $InstallRoot"
+    $head = Get-GitText @("-C", $InstallRoot, "rev-parse", "HEAD")
+    if ($head -ne $CanonicalSha) {
+        throw "Unmarked dirty runtime is not at the pinned canonical SHA. Preserve it manually before rerunning: $InstallRoot"
+    }
+
+    $origin = Get-GitText @("-C", $InstallRoot, "config", "--get", "remote.origin.url")
+    $originNormalized = $origin.TrimEnd('/')
+    $canonicalNormalized = $CanonicalRepo.TrimEnd('/')
+    if ($originNormalized -ne $canonicalNormalized) {
+        throw "Unmarked dirty runtime does not point to the canonical Mortal repository. Preserve it manually: $InstallRoot"
     }
 
     $consts = Join-Path $InstallRoot "libriichi\src\consts.rs"
     $model = Join-Path $InstallRoot "mortal\model.py"
-    $looksManaged = `
-        (Test-Path $consts) -and `
-        (Test-Path $model) -and `
-        (Select-String -Path $consts -Pattern "MORTAL_ROGS_UNIFIED_ACTION_OBS_STAGE3E" -Quiet) -and `
-        (Select-String -Path $model -Pattern "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" -Quiet)
+    $venvPython = Join-Path $InstallRoot ".venv\Scripts\python.exe"
+    $pyproject = Join-Path $InstallRoot "libriichi\pyproject.toml"
+
+    $hasRustMarker = (Test-Path $consts) -and (Select-String -Path $consts -Pattern "MORTAL_ROGS_UNIFIED_ACTION_OBS_STAGE3E" -Quiet)
+    $hasModelMarker = (Test-Path $model) -and (Select-String -Path $model -Pattern "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" -Quiet)
+    $hasPackagingMarker = (Test-Path $pyproject) -and (Select-String -Path $pyproject -Pattern 'module-name\s*=\s*"libriichi"' -Quiet)
+    $looksManaged = (Test-Path $venvPython) -and ($hasRustMarker -or $hasModelMarker -or $hasPackagingMarker)
 
     if (-not $looksManaged) {
-        throw "Unified runtime has unmarked local changes that are not recognized as a partial Mortal-ROGS bootstrap. Preserve them manually before rerunning: $InstallRoot"
+        Write-Host "Unmarked dirty files detected:" -ForegroundColor Yellow
+        Write-Host $dirtyText
+        throw "Local changes are not recognized as a partial Mortal-ROGS bootstrap. Preserve them manually before rerunning: $InstallRoot"
     }
 
-    Write-Host "Detected a partial managed bootstrap; restoring canonical source before retry..."
+    Write-Host "Detected failed/partial Mortal-ROGS bootstrap. Restoring canonical source while preserving .venv and runtime data..."
     & git -C $InstallRoot reset --hard $CanonicalSha
     if ($LASTEXITCODE -ne 0) { throw "Failed to reset partial unified runtime" }
     & git -C $InstallRoot clean -fd -e ".venv/" -e "runtime/"
     if ($LASTEXITCODE -ne 0) { throw "Failed to clean partial unified runtime" }
+
+    $remaining = Get-GitText @("-C", $InstallRoot, "status", "--porcelain=v1", "--untracked-files=all")
+    if (-not [string]::IsNullOrWhiteSpace($remaining)) {
+        throw "Partial recovery left unexpected source changes:`n$remaining"
+    }
     Write-Host "MORTAL_UNIFIED_PARTIAL_RECOVERY_OK"
 }
 
