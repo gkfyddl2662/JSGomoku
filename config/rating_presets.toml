@@ -1,0 +1,383 @@
+# Rating objectives are intentionally external to Mortal's observation/model ABI.
+# Unknown room/rank combinations MUST fail instead of silently guessing.
+# Update this file when a platform changes its ranked-point rules.
+
+[catalog]
+version = 1
+strategy = "universal_then_specialize"
+normalize_clip = 6.0
+
+[universal.4p]
+mahjongsoul = 0.35
+tenhou_dan = 0.25
+tenhou_rate = 0.10
+riichi_city_galaxy = 0.20
+amatsuki = 0.10
+
+[universal.3p]
+mahjongsoul = 0.35
+tenhou_dan = 0.25
+tenhou_rate = 0.10
+riichi_city_galaxy = 0.20
+amatsuki = 0.10
+
+[profiles.tenhou_dan]
+kind = "tenhou_dan"
+normalization_scale = 100.0
+source = "https://tenhou.net/man/index.html"
+# Implemented from the official room/rank tables: 1dan..10dan,
+# General/Upper/Tokujou/Houou, East and South, both 3P and 4P.
+
+[profiles.tenhou_rate]
+kind = "tenhou_rate"
+normalization_scale = 30.0
+source = "https://tenhou.net/man/index.html"
+placement_4p = [30, 10, -10, -30]
+placement_3p = [30, 0, -30]
+minimum_table_rating = 1500.0
+rating_divisor = 40.0
+scaling = 1.0
+
+[profiles.mahjongsoul]
+kind = "decomposed_table"
+normalization_scale = 120.0
+source = "https://riichi.wiki/Mahjong_Soul"
+score_divisor = 1000.0
+score_weight = 1.0
+rounding = "ceil"
+uma_4p = [15, 5, -5, -15]
+uma_3p = [15, 0, -15]
+
+# Room-dependent RankPts. Last-place component is supplied separately by rank_rules.
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "east"
+room = "bronze"
+placement = [10, 5, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "south"
+room = "bronze"
+placement = [20, 10, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "east"
+room = "silver"
+placement = [20, 10, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "south"
+room = "silver"
+placement = [40, 20, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "east"
+room = "gold"
+placement = [40, 20, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "south"
+room = "gold"
+placement = [80, 40, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "east"
+room = "jade"
+placement = [55, 30, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "south"
+room = "jade"
+placement = [110, 55, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "east"
+room = "throne"
+placement = [60, 30, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 4
+round = "south"
+room = "throne"
+placement = [120, 60, 0, 0]
+
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "east"
+room = "bronze"
+placement = [15, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "south"
+room = "bronze"
+placement = [30, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "east"
+room = "silver"
+placement = [30, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "south"
+room = "silver"
+placement = [60, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "east"
+room = "gold"
+placement = [55, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "south"
+room = "gold"
+placement = [105, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "east"
+room = "jade"
+placement = [75, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "south"
+room = "jade"
+placement = [160, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "east"
+room = "throne"
+placement = [120, 0, 0]
+[[profiles.mahjongsoul.room_rules]]
+players = 3
+round = "south"
+room = "throne"
+placement = [240, 0, 0]
+
+# High-rank last-place penalties. Lower ranks can be added without code changes.
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "east"
+rank = "master1"
+placement = [0, 0, 0, -80]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "south"
+rank = "master1"
+placement = [0, 0, 0, -165]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "east"
+rank = "master2"
+placement = [0, 0, 0, -90]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "south"
+rank = "master2"
+placement = [0, 0, 0, -180]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "east"
+rank = "master3"
+placement = [0, 0, 0, -100]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "south"
+rank = "master3"
+placement = [0, 0, 0, -195]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "east"
+rank = "saint1"
+placement = [0, 0, 0, -110]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "south"
+rank = "saint1"
+placement = [0, 0, 0, -210]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "east"
+rank = "saint2"
+placement = [0, 0, 0, -120]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "south"
+rank = "saint2"
+placement = [0, 0, 0, -225]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "east"
+rank = "saint3"
+placement = [0, 0, 0, -130]
+[[profiles.mahjongsoul.rank_rules]]
+players = 4
+round = "south"
+rank = "saint3"
+placement = [0, 0, 0, -240]
+
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "east"
+rank = "master2"
+placement = [0, 0, -95]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "south"
+rank = "master2"
+placement = [0, 0, -190]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "east"
+rank = "master3"
+placement = [0, 0, -110]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "south"
+rank = "master3"
+placement = [0, 0, -215]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "east"
+rank = "saint1"
+placement = [0, 0, -125]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "south"
+rank = "saint1"
+placement = [0, 0, -240]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "east"
+rank = "saint2"
+placement = [0, 0, -140]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "south"
+rank = "saint2"
+placement = [0, 0, -265]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "east"
+rank = "saint3"
+placement = [0, 0, -160]
+[[profiles.mahjongsoul.rank_rules]]
+players = 3
+round = "south"
+rank = "saint3"
+placement = [0, 0, -290]
+
+[profiles.riichi_city_galaxy]
+kind = "table"
+normalization_scale = 200.0
+source = "https://riichi.wiki/Riichi_City"
+score_divisor = 0.0
+uma_4p = [0, 0, 0, 0]
+uma_3p = [0, 0, 0]
+
+# Current Galaxy-table ranked point changes for high-dan training targets.
+[[profiles.riichi_city_galaxy.rules]]
+players = 4
+round = "east"
+room = "galaxy"
+rank = "7dan"
+placement = [200, 65, -85, -185]
+[[profiles.riichi_city_galaxy.rules]]
+players = 4
+round = "south"
+room = "galaxy"
+rank = "7dan"
+placement = [300, 100, -130, -280]
+[[profiles.riichi_city_galaxy.rules]]
+players = 4
+round = "east"
+room = "galaxy"
+rank = "8dan"
+placement = [200, 65, -90, -190]
+[[profiles.riichi_city_galaxy.rules]]
+players = 4
+round = "south"
+room = "galaxy"
+rank = "8dan"
+placement = [300, 100, -135, -285]
+[[profiles.riichi_city_galaxy.rules]]
+players = 4
+round = "east"
+room = "galaxy"
+rank = "9dan"
+placement = [200, 65, -95, -200]
+[[profiles.riichi_city_galaxy.rules]]
+players = 4
+round = "south"
+room = "galaxy"
+rank = "9dan"
+placement = [300, 100, -140, -300]
+[[profiles.riichi_city_galaxy.rules]]
+players = 4
+round = "east"
+room = "galaxy"
+rank = "10dan"
+placement = [200, 65, -100, -220]
+[[profiles.riichi_city_galaxy.rules]]
+players = 4
+round = "south"
+room = "galaxy"
+rank = "10dan"
+placement = [300, 100, -150, -330]
+
+[[profiles.riichi_city_galaxy.rules]]
+players = 3
+round = "east"
+room = "galaxy"
+rank = "7dan"
+placement = [160, 0, -150]
+[[profiles.riichi_city_galaxy.rules]]
+players = 3
+round = "south"
+room = "galaxy"
+rank = "7dan"
+placement = [240, 0, -225]
+[[profiles.riichi_city_galaxy.rules]]
+players = 3
+round = "east"
+room = "galaxy"
+rank = "8dan"
+placement = [160, 0, -160]
+[[profiles.riichi_city_galaxy.rules]]
+players = 3
+round = "south"
+room = "galaxy"
+rank = "8dan"
+placement = [240, 0, -240]
+[[profiles.riichi_city_galaxy.rules]]
+players = 3
+round = "east"
+room = "galaxy"
+rank = "9dan"
+placement = [160, 0, -170]
+[[profiles.riichi_city_galaxy.rules]]
+players = 3
+round = "south"
+room = "galaxy"
+rank = "9dan"
+placement = [240, 0, -255]
+[[profiles.riichi_city_galaxy.rules]]
+players = 3
+round = "east"
+room = "galaxy"
+rank = "10dan"
+placement = [160, 0, -180]
+[[profiles.riichi_city_galaxy.rules]]
+players = 3
+round = "south"
+room = "galaxy"
+rank = "10dan"
+placement = [240, 0, -270]
+
+[profiles.amatsuki]
+kind = "table"
+normalization_scale = 180.0
+source = "https://riichi.wiki/Amatsuki_Mahjong"
+score_divisor = 1000.0
+score_weight = 1.0
+uma_4p = [10, 5, -5, -10]
+uma_3p = [10, 0, -10]
+# Amatsuki rules are intentionally strict and versioned. Add exact rank/subrank
+# rules here before using this profile; the engine must not guess a last-place penalty.
