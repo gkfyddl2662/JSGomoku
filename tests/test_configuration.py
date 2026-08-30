@@ -1,4 +1,8 @@
-from app.configuration import merge_preset
+from pathlib import Path
+
+import pytest
+
+from app.configuration import ConfigError, build_training_ablation_config, merge_preset
 
 
 def test_merge_preset_deep_merge():
@@ -9,3 +13,69 @@ def test_merge_preset_deep_merge():
     assert merged["control"]["online"] is False
     assert merged["control"]["batch_size"] == 512
     assert merged["env"]["gamma"] == 1
+
+
+def test_training_ablation_variants_are_isolated_and_non_mutating(tmp_path: Path):
+    base = {
+        "control": {
+            "online": True,
+            "state_file": "original.pth",
+            "best_state_file": "original-best.pth",
+            "tensorboard_dir": "original-runs",
+        },
+        "game": {"mode": "3p", "num_players": 3},
+        "rogs": {"enabled": True},
+        "global_reward": {"enabled": False, "score_delta_weight": 0.15},
+        "test_play": {"log_dir": "original-test"},
+        "dataset": {"globs": ["same-data/**/*.json.gz"]},
+    }
+    expected = {
+        "mortal": (False, False),
+        "rogs": (True, False),
+        "rogs-global": (True, True),
+    }
+
+    configs = {}
+    for variant, toggles in expected.items():
+        cfg = build_training_ablation_config(
+            base,
+            mode="3p",
+            variant=variant,
+            seed=17,
+            mode_root=tmp_path / "runtime" / "3p",
+        )
+        configs[variant] = cfg
+        assert (cfg["rogs"]["enabled"], cfg["global_reward"]["enabled"]) == toggles
+        assert cfg["control"]["online"] is False
+        assert cfg["control"]["training_seed"] == 17
+        assert cfg["dataset"]["globs"] == base["dataset"]["globs"]
+        assert cfg["experiment"]["variant"] == variant
+        assert cfg["experiment"]["seed"] == 17
+        assert f"seed-17/{variant}" in cfg["control"]["state_file"].replace("\\", "/")
+        assert f"seed-17/{variant}" in cfg["control"]["tensorboard_dir"].replace("\\", "/")
+
+    assert len({cfg["control"]["state_file"] for cfg in configs.values()}) == 3
+    assert base["control"]["online"] is True
+    assert base["control"]["state_file"] == "original.pth"
+    assert base["rogs"]["enabled"] is True
+    assert base["global_reward"]["enabled"] is False
+
+
+def test_training_ablation_rejects_mismatched_mode_and_unknown_variant(tmp_path: Path):
+    base = {"game": {"mode": "4p"}}
+    with pytest.raises(ConfigError, match="does not match"):
+        build_training_ablation_config(
+            base,
+            mode="3p",
+            variant="rogs",
+            seed=1,
+            mode_root=tmp_path,
+        )
+    with pytest.raises(ConfigError, match="Unknown training ablation variant"):
+        build_training_ablation_config(
+            {"game": {"mode": "3p"}},
+            mode="3p",
+            variant="mystery",
+            seed=1,
+            mode_root=tmp_path,
+        )
