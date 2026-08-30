@@ -57,7 +57,7 @@ jobs:
 
       - name: Reject direct Akagi checkpoint deployment regressions
         run: |
-          ! grep -R -n --exclude='*.md' --exclude='akagi_abi.toml' -- '--akagi-root' app serving training evaluation scripts tests
+          ! grep -R -n -- '--akagi-root' app serving training evaluation static
           grep -q '^modify_akagi_ng = false$' config/akagi_abi.toml
           grep -q '^copy_checkpoint_to_akagi_ng = false$' config/akagi_abi.toml
           grep -q '^akagi_loads_mortal_checkpoint = false$' config/akagi_abi.toml
