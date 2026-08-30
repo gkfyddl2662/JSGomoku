@@ -2,13 +2,37 @@ from __future__ import annotations
 
 import argparse
 import py_compile
+import re
 from pathlib import Path
 
 MARKER = "# MORTAL_ROGS_UNIFIED_PYTHON_ABI_STAGE8A"
+IMPORT_RE = re.compile(
+    r"^(?P<indent>[ \t]*)from libriichi\.(?P<submodule>[A-Za-z_][A-Za-z0-9_]*) import (?P<names>[^\n]+)$",
+    re.MULTILINE,
+)
 
 
-def replace(text: str, old: str, new: str) -> str:
-    return text.replace(old, new) if old in text else text
+def _rewrite_imports(text: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        indent = match.group("indent")
+        submodule = match.group("submodule")
+        raw_names = match.group("names")
+        alias = f"_libriichi_{submodule}"
+        lines = [f"{indent}from libriichi import {submodule} as {alias}"]
+        for item in raw_names.split(","):
+            part = item.strip()
+            if not part:
+                continue
+            if " as " in part:
+                source, local = (p.strip() for p in part.split(" as ", 1))
+            else:
+                source = local = part
+            if not source.isidentifier() or not local.isidentifier():
+                raise RuntimeError(f"unsupported libriichi import item: {part!r}")
+            lines.append(f"{indent}{local} = {alias}.{source}")
+        return "\n".join(lines)
+
+    return IMPORT_RE.sub(repl, text)
 
 
 def apply(root: Path) -> None:
@@ -16,44 +40,12 @@ def apply(root: Path) -> None:
     if not mortal.is_dir():
         raise RuntimeError(f"missing mortal dir: {mortal}")
 
-    replacements = {
-        "train.py": [
-            (
-                "    from libriichi.consts import obs_shape\n",
-                "    from libriichi import consts\n    obs_shape = consts.obs_shape\n",
-            ),
-        ],
-        "dataloader.py": [
-            ("from libriichi.dataset import GameplayLoader\n", "from libriichi import dataset as libriichi_dataset\nGameplayLoader = libriichi_dataset.GameplayLoader\n"),
-        ],
-        "train_grp.py": [
-            ("from libriichi.dataset import Grp\n", "from libriichi import dataset as libriichi_dataset\nGrp = libriichi_dataset.Grp\n"),
-        ],
-        "player.py": [
-            ("from libriichi.stat import Stat\n", "from libriichi import stat as libriichi_stat\nStat = libriichi_stat.Stat\n"),
-            ("from libriichi.arena import OneVsThree, OneVsTwo\n", "from libriichi import arena as libriichi_arena\nOneVsThree = libriichi_arena.OneVsThree\nOneVsTwo = libriichi_arena.OneVsTwo\n"),
-        ],
-        "one_vs_two.py": [
-            ("from libriichi.arena import OneVsTwo\n", "from libriichi import arena as libriichi_arena\nOneVsTwo = libriichi_arena.OneVsTwo\n"),
-        ],
-        "one_vs_three.py": [
-            ("from libriichi.arena import OneVsThree\n", "from libriichi import arena as libriichi_arena\nOneVsThree = libriichi_arena.OneVsThree\n"),
-        ],
-    }
-
-    for name, pairs in replacements.items():
-        path = mortal / name
-        if not path.is_file():
-            if name == "one_vs_two.py":
-                continue
-            raise RuntimeError(f"missing Mortal Python file: {path}")
+    for path in sorted(mortal.glob("*.py")):
         text = path.read_text(encoding="utf-8")
-        updated = text
-        for old, new in pairs:
-            updated = replace(updated, old, new)
-        if MARKER not in updated:
-            updated = MARKER + "\n" + updated
+        updated = _rewrite_imports(text)
         if updated != text:
+            if MARKER not in updated:
+                updated = MARKER + "\n" + updated
             path.write_text(updated, encoding="utf-8")
             print(f"patched: {path}")
         py_compile.compile(str(path), doraise=True)
@@ -61,16 +53,20 @@ def apply(root: Path) -> None:
     engine = mortal / "engine.py"
     text = engine.read_text(encoding="utf-8")
     if "game_mode = None," not in text:
-        text = text.replace(
-            "        top_p = 1,\n    ):\n",
-            "        top_p = 1,\n        game_mode = None,\n        action_space = None,\n    ):\n",
-            1,
+        old = "        top_p = 1,\n    ):\n"
+        new = "        top_p = 1,\n        game_mode = None,\n        action_space = None,\n    ):\n"
+        if old not in text:
+            raise RuntimeError("MortalEngine constructor anchor missing")
+        text = text.replace(old, new, 1)
+        old = "        self.top_p = top_p\n"
+        new = (
+            "        self.top_p = top_p\n"
+            "        self.game_mode = game_mode\n"
+            "        self.action_space = action_space\n"
         )
-        text = text.replace(
-            "        self.top_p = top_p\n",
-            "        self.top_p = top_p\n        self.game_mode = game_mode\n        self.action_space = action_space\n",
-            1,
-        )
+        if old not in text:
+            raise RuntimeError("MortalEngine metadata anchor missing")
+        text = text.replace(old, new, 1)
     if MARKER not in text:
         text = MARKER + "\n" + text
     engine.write_text(text, encoding="utf-8")
@@ -78,10 +74,11 @@ def apply(root: Path) -> None:
 
     for path in mortal.glob("*.py"):
         text = path.read_text(encoding="utf-8")
-        if "from libriichi." in text:
+        if IMPORT_RE.search(text) or "from libriichi." in text:
             raise RuntimeError(f"legacy PyO3 submodule import remains: {path}")
 
-    if "game_mode = None" not in engine.read_text(encoding="utf-8"):
+    engine_text = engine.read_text(encoding="utf-8")
+    if "game_mode = None" not in engine_text or "action_space = None" not in engine_text:
         raise RuntimeError("MortalEngine unified metadata kwargs missing")
     print("MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_OK")
 
