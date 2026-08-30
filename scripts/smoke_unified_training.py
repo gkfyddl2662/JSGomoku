@@ -1,0 +1,244 @@
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import shutil
+import sys
+from pathlib import Path
+
+import numpy as np
+
+
+def fail(msg: str) -> None:
+    raise RuntimeError(msg)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Run one real-data optimization step from unified 3P/4P self-play logs and save strict v4 checkpoints."
+    )
+    ap.add_argument("--runtime-root", type=Path, required=True)
+    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--batch-size", type=int, default=16)
+    args = ap.parse_args()
+
+    if args.batch_size <= 0:
+        fail("--batch-size must be positive")
+
+    root = args.runtime_root.expanduser().resolve()
+    mortal_dir = root / "mortal"
+    sys.path.insert(0, str(mortal_dir))
+
+    import toml
+    import torch
+    import libriichi
+    from model import Brain, DQN
+
+    dataset = libriichi.dataset
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        fail("CUDA training smoke requested but CUDA is unavailable")
+
+    contracts = {
+        "3p": {"actions": 44, "obs": 1010, "players": 3},
+        "4p": {"actions": 46, "obs": 1012, "players": 4},
+    }
+    gameplay_root = root / "runtime" / "smoke-gameplay"
+    output_root = root / "runtime" / "smoke-training"
+    if output_root.exists():
+        shutil.rmtree(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    example_cfg = mortal_dir / "config.example.toml"
+    if not example_cfg.is_file():
+        fail(f"missing Mortal example config: {example_cfg}")
+
+    torch.manual_seed(0x9017)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(0x9017)
+
+    results: dict[str, object] = {}
+
+    for mode, c in contracts.items():
+        logs = sorted((gameplay_root / mode).glob("*.json.gz"))
+        if len(logs) < c["players"]:
+            fail(
+                f"{mode} needs self-play logs from smoke_unified_gameplay.py; "
+                f"expected at least {c['players']}, got {len(logs)}"
+            )
+
+        loader = dataset.GameplayLoader(
+            version=4,
+            oracle=False,
+            player_names=None,
+            excludes=None,
+            augmented=False,
+        )
+        loaded_files = loader.load_gz_log_files([str(p) for p in logs])
+
+        obs_samples: list[np.ndarray] = []
+        mask_samples: list[np.ndarray] = []
+        action_samples: list[int] = []
+        for loaded_file in loaded_files:
+            for game in loaded_file:
+                obs_list = game.take_obs()
+                actions = game.take_actions()
+                masks = game.take_masks()
+                for obs, action, mask in zip(obs_list, actions, masks, strict=True):
+                    obs_arr = np.asarray(obs, dtype=np.float32)
+                    mask_arr = np.asarray(mask, dtype=np.bool_)
+                    action_i = int(action)
+                    # Kan-selection entries use a tile-selection mask rather than
+                    # the normal action ABI. They are valid training data, but are
+                    # intentionally excluded from this DQN-head optimization smoke.
+                    if obs_arr.shape != (c["obs"], 34):
+                        continue
+                    if mask_arr.shape != (c["actions"],):
+                        continue
+                    if not (0 <= action_i < c["actions"]):
+                        continue
+                    if not bool(mask_arr[action_i]):
+                        continue
+                    obs_samples.append(obs_arr)
+                    mask_samples.append(mask_arr)
+                    action_samples.append(action_i)
+                    if len(obs_samples) >= args.batch_size:
+                        break
+                if len(obs_samples) >= args.batch_size:
+                    break
+            if len(obs_samples) >= args.batch_size:
+                break
+
+        if len(obs_samples) < min(4, args.batch_size):
+            fail(f"{mode} produced too few normal-action samples for mini training: {len(obs_samples)}")
+
+        obs = torch.as_tensor(np.stack(obs_samples), device=device)
+        mask = torch.as_tensor(np.stack(mask_samples), device=device)
+        action = torch.as_tensor(action_samples, dtype=torch.long, device=device)
+
+        brain = Brain(
+            version=4,
+            conv_channels=16,
+            num_blocks=1,
+            obs_channels=c["obs"],
+        ).to(device).train()
+        dqn = DQN(version=4, action_space=c["actions"]).to(device).train()
+        parameters = list(brain.parameters()) + list(dqn.parameters())
+        optimizer = torch.optim.AdamW(parameters, lr=1e-3, weight_decay=0.0)
+
+        watched = next(p for p in parameters if p.requires_grad and p.numel() > 0)
+        before = watched.detach().clone()
+        optimizer.zero_grad(set_to_none=True)
+        phi = brain(obs)
+        q = dqn(phi, mask)
+        if q.shape != (len(action_samples), c["actions"]):
+            fail(f"{mode} Q shape {tuple(q.shape)} does not match action ABI")
+        target_q = q.gather(1, action[:, None]).squeeze(1)
+        log_norm = torch.logsumexp(q, dim=1)
+        loss = -(target_q - log_norm).mean()
+        if not bool(torch.isfinite(loss)):
+            fail(f"{mode} mini-training loss is non-finite: {loss.item()}")
+        loss.backward()
+
+        finite_grad = False
+        nonzero_grad = False
+        for p in parameters:
+            if p.grad is None:
+                continue
+            if not bool(torch.isfinite(p.grad).all()):
+                fail(f"{mode} mini-training produced non-finite gradients")
+            finite_grad = True
+            if bool(torch.count_nonzero(p.grad)):
+                nonzero_grad = True
+        if not finite_grad or not nonzero_grad:
+            fail(f"{mode} mini-training produced no usable gradient")
+
+        optimizer.step()
+        changed = not torch.equal(before, watched.detach())
+        if not changed:
+            fail(f"{mode} optimizer step did not change model parameters")
+
+        source_cfg = mortal_dir / f"config.{mode}.toml"
+        cfg_source = source_cfg if source_cfg.is_file() else example_cfg
+        cfg = copy.deepcopy(toml.load(cfg_source))
+        cfg.setdefault("control", {})["version"] = 4
+        cfg.setdefault("game", {})["mode"] = mode
+        cfg["game"]["num_players"] = c["players"]
+        cfg["game"]["action_space"] = c["actions"]
+        cfg["game"]["obs_channels"] = c["obs"]
+        cfg.setdefault("resnet", {})["conv_channels"] = 16
+        cfg["resnet"]["num_blocks"] = 1
+
+        checkpoint = output_root / f"smoke-trained-{mode}.pth"
+        brain.eval()
+        dqn.eval()
+        torch.save(
+            {
+                "config": cfg,
+                "mortal": brain.state_dict(),
+                "current_dqn": dqn.state_dict(),
+                "smoke_training": {
+                    "mode": mode,
+                    "samples": len(action_samples),
+                    "loss": float(loss.detach().cpu()),
+                    "source_logs": [str(p) for p in logs],
+                },
+            },
+            checkpoint,
+        )
+
+        state = torch.load(checkpoint, weights_only=True, map_location="cpu")
+        state_cfg = state["config"]
+        if int(state_cfg["control"]["version"]) != 4:
+            fail(f"{mode} trained checkpoint lost v4 ABI")
+        if state_cfg["game"]["mode"] != mode:
+            fail(f"{mode} trained checkpoint mode mismatch")
+        if int(state_cfg["game"]["action_space"]) != c["actions"]:
+            fail(f"{mode} trained checkpoint action-space mismatch")
+        if int(state_cfg["game"]["obs_channels"]) != c["obs"]:
+            fail(f"{mode} trained checkpoint observation ABI mismatch")
+
+        reload_brain = Brain(
+            version=4,
+            conv_channels=16,
+            num_blocks=1,
+            obs_channels=c["obs"],
+        ).eval()
+        reload_dqn = DQN(version=4, action_space=c["actions"]).eval()
+        reload_brain.load_state_dict(state["mortal"], strict=True)
+        reload_dqn.load_state_dict(state["current_dqn"], strict=True)
+
+        with torch.inference_mode():
+            probe_obs = obs[:1].detach().cpu()
+            probe_mask = mask[:1].detach().cpu()
+            probe_q = reload_dqn(reload_brain(probe_obs), probe_mask)
+        if probe_q.shape != (1, c["actions"]):
+            fail(f"{mode} strict-reloaded checkpoint Q shape mismatch: {tuple(probe_q.shape)}")
+        legal_probe = probe_q[probe_mask]
+        if legal_probe.numel() == 0 or not bool(torch.isfinite(legal_probe).all()):
+            fail(f"{mode} strict-reloaded checkpoint produced invalid legal Q values")
+
+        results[mode] = {
+            "logs": len(logs),
+            "samples": len(action_samples),
+            "loss": float(loss.detach().cpu()),
+            "parameter_changed": changed,
+            "checkpoint": str(checkpoint),
+            "strict_reload": True,
+            "action_space": c["actions"],
+            "obs": [c["obs"], 34],
+        }
+
+        del loader, loaded_files, obs, mask, action, brain, dqn, reload_brain, reload_dqn, state
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize(device)
+
+    print("MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK")
+    print(json.dumps(results, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
