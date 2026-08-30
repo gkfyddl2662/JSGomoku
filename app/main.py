@@ -25,9 +25,9 @@ app = FastAPI(title="Mortal ROGS Control Center", version="0.6.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
 
 # The inference server is a separate process. Remember the most recently launched
-# bind target and job so the Control Center can manage its full lifecycle without
-# ever handing Mortal checkpoint files to Akagi-NG.
-_inference_target: dict[str, Any] = {"host": "127.0.0.1", "port": 8190}
+# bind target, API key and job so the Control Center can manage its full lifecycle
+# without ever handing Mortal checkpoint files to Akagi-NG.
+_inference_target: dict[str, Any] = {"host": "127.0.0.1", "port": 8190, "api_key": ""}
 _inference_job_id: str | None = None
 
 
@@ -71,13 +71,15 @@ def _under(path: Path, root: Path) -> Path:
     return path
 
 
-def _probe_inference_health(host: str, port: int) -> dict[str, Any]:
+def _probe_inference_health(host: str, port: int, api_key: str = "") -> dict[str, Any]:
     normalized = host.strip().casefold()
     # 0.0.0.0/:: are valid bind addresses but not useful connect targets.
     connect_host = "127.0.0.1" if normalized in {"", "0.0.0.0", "::", "[::]"} else host.strip()
     url = f"http://{connect_host}:{port}/health"
+    headers = {"Authorization": api_key} if api_key else {}
+    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(url, timeout=0.6) as response:
+        with urllib.request.urlopen(request, timeout=0.6) as response:
             payload = json.loads(response.read().decode("utf-8"))
         return {"running": True, "url": f"http://{host}:{port}", "health_url": url, "health": payload, "error": None}
     except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -131,7 +133,8 @@ def api_inference_status() -> dict[str, Any]:
     unified = bool(r3.unified and r4.unified and r3.root == r4.root and r3.python_executable == r4.python_executable)
     host = str(_inference_target["host"])
     port = int(_inference_target["port"])
-    live = _probe_inference_health(host, port) if unified else {"running": False, "health": None, "error": "unified runtime unavailable"}
+    key = str(_inference_target.get("api_key", ""))
+    live = _probe_inference_health(host, port, key) if unified else {"running": False, "health": None, "error": "unified runtime unavailable"}
     return {
         "unified": unified,
         "runtime_root": str(r3.root) if unified else None,
@@ -194,6 +197,7 @@ def api_inference_start(body: InferenceBody) -> dict[str, Any]:
         job = jobs.start("inference_api", cmd, settings.project_root, controller._mortal_env(r3))
         _inference_target["host"] = host
         _inference_target["port"] = body.port
+        _inference_target["api_key"] = body.api_key
         _inference_job_id = job.id
         return job.snapshot()
     except Exception as exc:
