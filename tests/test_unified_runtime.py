@@ -117,3 +117,29 @@ def test_unified_bootstrap_routes_one_click_rust_install_flag(tmp_path: Path, mo
     assert "-Mode" not in cmd
     assert cwd == s.project_root
     assert env == {}
+
+
+def test_settings_adopts_sibling_unified_runtime_after_first_install(tmp_path: Path) -> None:
+    project = tmp_path / "mortal-rogs"
+    project.mkdir()
+    s = Settings(
+        project_root=project,
+        mortal_3p_root=tmp_path / "legacy-3p",
+        mortal_4p_root=tmp_path / "legacy-4p",
+        host="127.0.0.1",
+        port=8188,
+        runtime_root=tmp_path / "legacy-runtime",
+        mortal_unified_root=None,
+    )
+
+    assert s.runtime("3p").unified is False
+    unified = tmp_path / "Mortal_Unified"
+    unified.mkdir()
+
+    p3 = s.runtime("3p")
+    p4 = s.runtime("4p")
+    assert p3.unified and p4.unified
+    assert p3.root == p4.root == unified.resolve()
+    assert p3.python_executable == p4.python_executable
+    assert p3.config_file.name == "config.3p.toml"
+    assert p4.config_file.name == "config.4p.toml"
