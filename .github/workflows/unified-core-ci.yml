@@ -51,6 +51,7 @@ jobs:
           python scripts/patch_libriichi_unified_stage3f.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_arena_stage4a.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_arena_stage4b.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_arena_stage4c.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
@@ -66,6 +67,7 @@ jobs:
           grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "ACTION_NUKIDORA_3P: usize = 38" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "obs_shape_for_players" /tmp/mortal-unified/libriichi/src/consts.rs
+          grep -q "4 => Ok((170, 34))" /tmp/mortal-unified/libriichi/src/consts.rs
           grep -q "q_values: Vec<Vec<f32>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "masks_recv: Vec<Vec<bool>>" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
           grep -q "game_mode: String" /tmp/mortal-unified/libriichi/src/agent/mortal.rs
@@ -91,12 +93,15 @@ jobs:
           ! grep -q "nukidora state transition is not installed yet" /tmp/mortal-unified/libriichi/src/state/update.rs
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4A" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4B" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4C" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "pub num_players: u8" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "let live_tiles = if num_players == 3 { 55 } else { 70 }" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "self.tsumo_actor = (actor + 1) % self.num_players" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "Event::Nukidora { actor, .. }" /tmp/mortal-unified/libriichi/src/arena/board.rs
           grep -q "fn calc_tsumo_deltas" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          grep -q "hidden_live_cap" /tmp/mortal-unified/libriichi/src/arena/board.rs
           ! grep -q "3P arena Hora scoring requires unified arena Stage 4B" /tmp/mortal-unified/libriichi/src/arena/board.rs
+          ! grep -q "3P arena oracle encoding requires unified arena Stage 4C" /tmp/mortal-unified/libriichi/src/arena/board.rs
 
       - name: Apply one-model and one-trainer stages
         run: |
@@ -129,9 +134,9 @@ jobs:
           from model import Brain, DQN, GRP
           from engine import MortalEngine
 
-          for mode, players, actions, channels, grp_size in (
-              ('3p', 3, 44, 1010, 6),
-              ('4p', 4, 46, 1012, 7),
+          for mode, players, actions, channels, oracle_channels, grp_size in (
+              ('3p', 3, 44, 1010, 170, 6),
+              ('4p', 4, 46, 1012, 217, 7),
           ):
               brain = Brain(
                   version=4,
@@ -148,6 +153,20 @@ jobs:
               assert phi.shape == (2, 1024)
               assert q.shape == (2, actions)
               assert torch.isfinite(q).all()
+
+              oracle_brain = Brain(
+                  version=4,
+                  conv_channels=16,
+                  num_blocks=1,
+                  obs_channels=channels,
+                  oracle_obs_channels=oracle_channels,
+                  is_oracle=True,
+              ).eval()
+              invisible = torch.randn(2, oracle_channels, 34)
+              with torch.inference_mode():
+                  oracle_phi = oracle_brain(obs, invisible)
+              assert oracle_phi.shape == (2, 1024)
+              assert torch.isfinite(oracle_phi).all()
 
               engine = MortalEngine(
                   brain=brain,
