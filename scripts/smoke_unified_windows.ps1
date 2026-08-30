@@ -22,6 +22,47 @@ foreach ($path in @($Py, $Config3P, $Config4P)) {
     }
 }
 
+function Invoke-NativeCapture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Executable,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 can promote native stderr to NativeCommandError
+        # when ErrorActionPreference=Stop. Capture it as ordinary output and
+        # decide success exclusively from LASTEXITCODE instead.
+        $ErrorActionPreference = "Continue"
+        $output = & $Executable @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = (($output | Out-String).Trim())
+    }
+}
+
+function Get-TritonVersion {
+    $probe = Invoke-NativeCapture -Executable $Py -Arguments @(
+        "-c",
+        "import triton; print(triton.__version__)"
+    )
+    if ($probe.ExitCode -ne 0) {
+        return $null
+    }
+    $version = $probe.Output.Trim()
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        return $null
+    }
+    return $version
+}
+
 $env:MORTAL_UNIFIED_ROOT = $InstallRoot
 $existingPythonPath = $env:PYTHONPATH
 $parts = @($ProjectRoot, $MortalDir)
@@ -32,17 +73,26 @@ $env:PYTHONPATH = [string]::Join([System.IO.Path]::PathSeparator, $parts)
 
 if (-not $SkipCompile) {
     Write-Host "[0/2] Verifying Windows Triton for torch.compile..."
-    $tritonVersion = (& $Py -c "import triton; print(triton.__version__)" 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $tritonVersion.StartsWith("3.6")) {
+    $tritonVersion = Get-TritonVersion
+    if ([string]::IsNullOrWhiteSpace($tritonVersion) -or -not $tritonVersion.StartsWith("3.6")) {
         Write-Host "Installing compatible triton-windows 3.6.x for PyTorch 2.11..."
-        & $Py -m pip uninstall -y triton 2>$null | Out-Null
-        & $Py -m pip install -U "triton-windows>=3.6,<3.7"
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to install triton-windows 3.6.x into unified runtime venv"
+        $install = Invoke-NativeCapture -Executable $Py -Arguments @(
+            "-m", "pip", "install", "-U", "triton-windows>=3.6,<3.7"
+        )
+        if ($install.ExitCode -ne 0) {
+            throw "Failed to install triton-windows 3.6.x into unified runtime venv:`n$($install.Output)"
         }
-        $tritonVersion = (& $Py -c "import triton; print(triton.__version__)" 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not $tritonVersion.StartsWith("3.6")) {
-            throw "Triton import/version check failed after installation: $tritonVersion"
+        if (-not [string]::IsNullOrWhiteSpace($install.Output)) {
+            Write-Host $install.Output
+        }
+
+        $tritonVersion = Get-TritonVersion
+        if ([string]::IsNullOrWhiteSpace($tritonVersion) -or -not $tritonVersion.StartsWith("3.6")) {
+            $details = Invoke-NativeCapture -Executable $Py -Arguments @(
+                "-c",
+                "import sys, traceback; print(sys.executable); import triton; print(triton.__version__)"
+            )
+            throw "Triton import/version check failed after installation. Probe output:`n$($details.Output)"
         }
     }
     Write-Host "TRITON_WINDOWS_OK version=$tritonVersion"
