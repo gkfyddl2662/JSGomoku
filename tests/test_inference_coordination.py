@@ -65,6 +65,40 @@ def test_device_execution_coordinator_quiet_window() -> None:
     assert coordinator.wait_for_quiet(idle_ms=5, timeout_ms=100) is True
 
 
+def test_model_maintenance_is_serialized_across_modes() -> None:
+    coordinator = DeviceExecutionCoordinator(max_parallel=1)
+    barrier = threading.Barrier(3)
+    active = 0
+    peak_active = 0
+    lock = threading.Lock()
+
+    def maintenance_worker() -> None:
+        nonlocal active, peak_active
+        barrier.wait()
+        with coordinator.maintenance():
+            with lock:
+                active += 1
+                peak_active = max(peak_active, active)
+            time.sleep(0.03)
+            with lock:
+                active -= 1
+
+    threads = [threading.Thread(target=maintenance_worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert peak_active == 1
+    metrics = coordinator.snapshot()
+    assert metrics["maintenance_cycles_total"] == 2
+    assert metrics["maintenance_active"] is False
+    assert metrics["maintenance_waiting"] == 0
+    assert metrics["peak_maintenance_waiting"] >= 1
+    assert metrics["maintenance_wait_ms"]["p95"] is not None
+
+
 def test_request_lifecycle_drains_existing_and_rejects_new_requests() -> None:
     lifecycle = RequestLifecycle()
     entered = threading.Event()
