@@ -73,6 +73,7 @@ def probe_full_dataloader(
             augmented_first=False,
         )
         sample = next(iter(file_data))
+        global_reward_enabled = bool(getattr(file_data, "global_reward_enabled", False))
     finally:
         sys.modules.pop("dataloader", None)
         sys.modules.pop("config", None)
@@ -85,6 +86,8 @@ def probe_full_dataloader(
         else:
             os.environ["MORTAL_CFG"] = old_cfg_env
 
+    if global_reward_enabled:
+        fail(f"{mode} global reward must remain opt-in when config is absent")
     if len(sample) != 6:
         fail(f"{mode} full dataloader returned unexpected entry size: {len(sample)}")
     reward = float(sample[4])
@@ -106,6 +109,7 @@ def probe_full_dataloader(
         "next_rank": rank,
         "players": contract["players"],
         "grp_input_size": game["grp_input_size"],
+        "global_reward_enabled": False,
     }
 
 
@@ -183,7 +187,7 @@ def run_canonical_trainer_smoke(
         }
     )
 
-    cfg.setdefault("env", {})["pts"] = [6.0, 3.0, 0.0] if mode == "3p" else [6.0, 4.0, 2.0, 0.0]
+    cfg.setdefault("env", {})["pts"] = [6.0, 0.0, -6.0] if mode == "3p" else [6.0, 4.0, 2.0, 0.0]
     cfg.setdefault("resnet", {})["conv_channels"] = 8
     cfg["resnet"]["num_blocks"] = 1
     cfg.setdefault("freeze_bn", {})["mortal"] = False
@@ -206,6 +210,13 @@ def run_canonical_trainer_smoke(
         "cql_anchor_weight": 0.25,
         "regret_clip": 12.0,
         "teacher_temperature": 1.5,
+    }
+    cfg["global_reward"] = {
+        "enabled": True,
+        "rank_utility_3p": [6.0, 0.0, -6.0],
+        "rank_utility_4p": [6.0, 4.0, 2.0, 0.0],
+        "score_delta_weight": 0.15,
+        "score_scale": 12000.0,
     }
 
     # train.py constructs TestPlayer immediately, even when test_every is far
@@ -279,6 +290,8 @@ def run_canonical_trainer_smoke(
     state_cfg = state["config"]
     if not bool(state_cfg.get("rogs", {}).get("enabled", False)):
         fail(f"{mode} canonical trainer checkpoint lost ROGS enablement")
+    if not bool(state_cfg.get("global_reward", {}).get("enabled", False)):
+        fail(f"{mode} canonical trainer checkpoint lost global reward enablement")
     if state_cfg.get("game", {}).get("mode") != mode:
         fail(f"{mode} canonical trainer checkpoint lost game mode")
 
@@ -286,6 +299,7 @@ def run_canonical_trainer_smoke(
         "steps": steps,
         "checkpoint": str(checkpoint),
         "rogs_enabled": True,
+        "global_reward_enabled": True,
         "player_filter": f"smoke-{mode}-challenger",
     }
 
@@ -540,6 +554,7 @@ def main() -> int:
 
     print("MORTAL_UNIFIED_FULL_DATALOADER_REWARD_E2E_OK")
     print("MORTAL_UNIFIED_CANONICAL_TRAINER_ROGS_E2E_OK")
+    print("MORTAL_UNIFIED_GLOBAL_REWARD_E2E_OK")
     print("MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK")
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
