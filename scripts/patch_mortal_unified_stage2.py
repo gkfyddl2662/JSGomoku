@@ -139,6 +139,7 @@ def patch_dataloader(text: str) -> str:
         "            num_players, grp_input_size = 4, int(game_cfg.get('grp_input_size', 7))\n"
         "        else:\n"
         "            raise ValueError(f'Unsupported game mode: {game_mode!r}')\n"
+        "        self.num_players = num_players\n"
         "        network_cfg = dict(config['grp']['network'])\n"
         "        network_cfg['num_players'] = num_players\n"
         "        network_cfg['input_size'] = grp_input_size\n"
@@ -147,6 +148,14 @@ def patch_dataloader(text: str) -> str:
         "        self.grp.load_state_dict(grp_state['model'])\n"
         "        self.reward_calc = RewardCalculator(self.grp, self.pts, num_players=num_players)\n",
         "mode-aware gameplay reward construction",
+    )
+    text = replace_once(
+        text,
+        "                final_scores = grp.take_final_scores()\n"
+        "                scores_seq = np.concatenate((grp_feature[:, 3:] * 1e4, [final_scores]))\n",
+        "                final_scores = np.asarray(grp.take_final_scores())[:self.num_players]\n"
+        "                scores_seq = np.concatenate((grp_feature[:, 3:] * 1e4, [final_scores]))\n",
+        "mode-aware final score width",
     )
     return text
 
@@ -245,9 +254,11 @@ def apply(root: Path) -> None:
     )
     required_dataloader = (
         DATALOADER_MARKER,
+        "self.num_players = num_players",
         "network_cfg['num_players'] = num_players",
         "network_cfg['input_size'] = grp_input_size",
         "RewardCalculator(self.grp, self.pts, num_players=num_players)",
+        "np.asarray(grp.take_final_scores())[:self.num_players]",
     )
     required_reward = (
         REWARD_MARKER,
