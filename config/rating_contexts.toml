@@ -1,0 +1,78 @@
+# Contexts are sampled BEFORE a self-play game starts.
+# They determine the ladder objective metadata and, where relevant, game length.
+
+[[contexts.4p.mahjongsoul]]
+round = "south"
+room = "jade"
+rank = "saint3"
+
+[[contexts.4p.mahjongsoul]]
+round = "south"
+room = "throne"
+rank = "saint3"
+
+[[contexts.4p.tenhou_dan]]
+round = "south"
+room = "houou"
+rank = "7dan"
+
+[[contexts.4p.tenhou_dan]]
+round = "south"
+room = "houou"
+rank = "9dan"
+
+[[contexts.4p.tenhou_rate]]
+round = "south"
+room = "houou"
+rank = "7dan"
+self_rating = 2000.0
+table_average_rating = 2050.0
+games_played = 1200
+
+[[contexts.4p.riichi_city_galaxy]]
+round = "south"
+room = "galaxy"
+rank = "9dan"
+
+[[contexts.4p.riichi_city_galaxy]]
+round = "south"
+room = "galaxy"
+rank = "10dan"
+
+[[contexts.3p.mahjongsoul]]
+round = "south"
+room = "jade"
+rank = "saint3"
+
+[[contexts.3p.mahjongsoul]]
+round = "south"
+room = "throne"
+rank = "saint3"
+
+[[contexts.3p.tenhou_dan]]
+round = "south"
+room = "houou"
+rank = "7dan"
+
+[[contexts.3p.tenhou_dan]]
+round = "south"
+room = "houou"
+rank = "9dan"
+
+[[contexts.3p.tenhou_rate]]
+round = "south"
+room = "houou"
+rank = "7dan"
+self_rating = 2000.0
+table_average_rating = 2050.0
+games_played = 1200
+
+[[contexts.3p.riichi_city_galaxy]]
+round = "south"
+room = "galaxy"
+rank = "9dan"
+
+[[contexts.3p.riichi_city_galaxy]]
+round = "south"
+room = "galaxy"
+rank = "10dan"
