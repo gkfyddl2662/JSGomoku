@@ -12,12 +12,12 @@ from .evaluation import evaluation_status
 from .gpu import system_status
 from .jobs import JobManager
 from .mortal import MortalController
-from .settings import load_settings
+from .settings import load_settings, normalize_mode
 
 settings = load_settings()
 controller = MortalController(settings)
 jobs = JobManager()
-app = FastAPI(title="Mortal ROGS Control Center", version="0.3.0")
+app = FastAPI(title="Mortal ROGS Control Center", version="0.4.0")
 app.mount("/static", StaticFiles(directory=settings.project_root / "static"), name="static")
 
 
@@ -28,6 +28,13 @@ class ConfigBody(BaseModel):
 class JobBody(BaseModel):
     kind: str
     args: dict[str, Any] = Field(default_factory=dict)
+
+
+def _runtime(mode: str):
+    try:
+        return settings.runtime(normalize_mode(mode))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/")
@@ -41,8 +48,16 @@ def api_system() -> dict[str, Any]:
 
 
 @app.get("/api/setup/status")
-def api_setup_status() -> dict[str, Any]:
-    return controller.status()
+def api_setup_status(mode: str = "3p") -> dict[str, Any]:
+    try:
+        return controller.status(mode)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/setup/status/all")
+def api_setup_status_all() -> dict[str, Any]:
+    return controller.all_statuses()
 
 
 @app.get("/api/evaluation/backends")
@@ -54,50 +69,64 @@ def api_evaluation_backends() -> dict[str, Any]:
 
 
 @app.get("/api/config")
-def api_config() -> dict[str, Any]:
+def api_config(mode: str = "3p") -> dict[str, Any]:
+    runtime = _runtime(mode)
     try:
-        return {"path": str(settings.config_file), "config": read_toml(settings.config_file)}
+        return {
+            "mode": runtime.mode,
+            "path": str(runtime.config_file),
+            "config": read_toml(runtime.config_file),
+        }
     except ConfigError as exc:
         raise HTTPException(404, str(exc)) from exc
 
 
 @app.put("/api/config")
-def api_config_save(body: ConfigBody) -> dict[str, Any]:
+def api_config_save(body: ConfigBody, mode: str = "3p") -> dict[str, Any]:
+    runtime = _runtime(mode)
     try:
-        write_toml(settings.config_file, body.config)
-        return {"ok": True, "path": str(settings.config_file)}
+        write_toml(runtime.config_file, body.config)
+        return {"ok": True, "mode": runtime.mode, "path": str(runtime.config_file)}
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/config/preset/{name}")
-def api_config_preset(name: str) -> dict[str, Any]:
+def api_config_preset(name: str, mode: str = "3p") -> dict[str, Any]:
+    runtime = _runtime(mode)
     try:
-        return load_preset(settings.project_root, name)
+        return {"mode": runtime.mode, "preset": load_preset(settings.project_root, name, runtime.mode)}
     except ConfigError as exc:
         raise HTTPException(404, str(exc)) from exc
 
 
 @app.post("/api/config/preset/{name}/apply")
-def api_apply_preset(name: str) -> dict[str, Any]:
+def api_apply_preset(name: str, mode: str = "3p") -> dict[str, Any]:
+    runtime = _runtime(mode)
     try:
-        preset = load_preset(settings.project_root, name)
-        current = read_toml(settings.config_file) if settings.config_file.exists() else {}
+        preset = load_preset(settings.project_root, name, runtime.mode)
+        current = read_toml(runtime.config_file) if runtime.config_file.exists() else {}
         merged = merge_preset(current, preset)
-        write_toml(settings.config_file, merged)
-        return {"ok": True, "config": merged}
+        write_toml(runtime.config_file, merged)
+        return {"ok": True, "mode": runtime.mode, "config": merged}
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/data")
-def api_data() -> dict[str, Any]:
-    return controller.scan_data()
+def api_data(mode: str = "3p") -> dict[str, Any]:
+    try:
+        return controller.scan_data(mode)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/checkpoints")
-def api_checkpoints() -> list[dict[str, Any]]:
-    return controller.checkpoints()
+def api_checkpoints(mode: str = "3p") -> list[dict[str, Any]]:
+    try:
+        return controller.checkpoints(mode)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/jobs")
@@ -133,6 +162,7 @@ def api_stop_job(job_id: str) -> dict[str, Any]:
 
 def run() -> None:
     import uvicorn
+
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=False)
 
 
