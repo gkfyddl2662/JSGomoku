@@ -233,7 +233,7 @@ def test_control_center_production_apply_and_restore_contract() -> None:
     assert "restore_profile(path, previous_bytes)" in core
     assert "Rollback health verification failed" in core
     assert "max_device_executions=1" in core
-    assert "device:3p" in recovery and "device:4p" in recovery
+    assert 'errors.append(f"device:{mode}")' in recovery
 
     assert "applyInferenceProductionProfile" in ui
     assert "startInferenceProductionProfile" in ui
