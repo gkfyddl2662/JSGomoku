@@ -60,7 +60,8 @@ def main() -> int:
 
     paired_script = project_root / "scripts" / "build_paired_evaluation.py"
     native_stat_script = project_root / "scripts" / "build_mortal_stat_report.py"
-    for required_script in (paired_script, native_stat_script):
+    comparison_script = project_root / "scripts" / "run_model_comparison.py"
+    for required_script in (paired_script, native_stat_script, comparison_script):
         if not required_script.is_file():
             fail(f"evaluation report builder is missing: {required_script}")
 
@@ -258,6 +259,84 @@ def main() -> int:
         if not native_stat_output.with_suffix(".txt").is_file():
             fail(f"{mode} native Mortal Stat text table is missing")
 
+        # Exercise the user-facing bidirectional model-comparison runner itself,
+        # not only its individual report builders. Two distinct checkpoint paths
+        # with identical weights must produce zero paired delta when both
+        # directions use the same single duplicate seed. This keeps CI cheap
+        # while proving the Web-UI job entry point end-to-end for both modes.
+        comparison_baseline = smoke_root / f"comparison-baseline-{mode}.pth"
+        shutil.copy2(checkpoint, comparison_baseline)
+        comparison_runtime_cfg = mortal_dir / f"config.{mode}.toml"
+        if not comparison_runtime_cfg.is_file():
+            comparison_runtime_cfg.write_text(toml.dumps(cfg), encoding="utf-8")
+        comparison_root = smoke_root / f"comparison-{mode}"
+        comparison_proc = subprocess.run(
+            [
+                sys.executable,
+                str(comparison_script),
+                "--runtime-root",
+                str(root),
+                "--mode",
+                mode,
+                "--candidate",
+                str(checkpoint),
+                "--baseline",
+                str(comparison_baseline),
+                "--candidate-name",
+                f"comparison-{mode}-candidate",
+                "--baseline-name",
+                f"comparison-{mode}-baseline",
+                "--seed-start",
+                "25000" if mode == "3p" else "26000",
+                "--seed-count",
+                "1",
+                "--seed-key",
+                "0xE812",
+                "--device",
+                str(device),
+                "--no-compile",
+                "--no-amp",
+                "--output-root",
+                str(comparison_root),
+                "--name",
+                f"smoke-{mode}",
+                "--fresh",
+                "--room",
+                "smoke",
+                "--rank",
+                "smoke",
+            ],
+            cwd=project_root,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        if comparison_proc.returncode != 0:
+            fail(
+                f"{mode} bidirectional model comparison failed with exit {comparison_proc.returncode}\n"
+                f"STDOUT:\n{comparison_proc.stdout}\nSTDERR:\n{comparison_proc.stderr}"
+            )
+        if "MORTAL_BIDIRECTIONAL_MODEL_COMPARISON_OK" not in comparison_proc.stdout:
+            fail(f"{mode} bidirectional comparison success marker is missing")
+        comparison_manifest_path = comparison_root / "comparison.json"
+        if not comparison_manifest_path.is_file():
+            fail(f"{mode} bidirectional comparison manifest is missing")
+        comparison_manifest = json.loads(comparison_manifest_path.read_text(encoding="utf-8"))
+        if comparison_manifest.get("protocol") != "mortal-rogs-bidirectional-model-comparison-v1":
+            fail(f"{mode} bidirectional comparison protocol mismatch: {comparison_manifest}")
+        if int(comparison_manifest.get("contexts", -1)) != (3 if mode == "3p" else 4):
+            fail(f"{mode} bidirectional comparison context count mismatch: {comparison_manifest}")
+        comparison_rows = load_paired_records(comparison_root / "paired.jsonl")
+        if len(comparison_rows) != (3 if mode == "3p" else 4):
+            fail(f"{mode} bidirectional comparison paired-row count mismatch")
+        comparison_deltas = comparison_manifest.get("candidate_minus_baseline", {})
+        for metric in ("avg_rank", "avg_rank_pt", "avg_game_delta_score", "tobi_rate"):
+            if abs(float(comparison_deltas.get(metric, float("nan")))) > 1e-12:
+                fail(f"{mode} identical-weight bidirectional metric {metric} is not zero: {comparison_deltas}")
+        native_comparison_report = comparison_manifest.get("native_stat_report")
+        if not native_comparison_report or not Path(str(native_comparison_report)).is_file():
+            fail(f"{mode} bidirectional native Stat report is missing")
+
         results[mode] = {
             "checkpoint": str(checkpoint),
             "checkpoint_source": checkpoint_source,
@@ -269,6 +348,7 @@ def main() -> int:
             "paired_output": str(paired_output),
             "strength_summary": str(summary_json),
             "native_stat_report": str(native_stat_output),
+            "bidirectional_comparison": str(comparison_manifest_path),
             "stdout_tail": proc.stdout.strip().splitlines()[-3:],
         }
         del brain2, dqn2, state
@@ -277,6 +357,7 @@ def main() -> int:
     print("MORTAL_UNIFIED_EVALUATOR_E2E_OK")
     print("MORTAL_UNIFIED_PAIRED_STRENGTH_E2E_OK")
     print("MORTAL_UNIFIED_NATIVE_STAT_REPORT_E2E_OK")
+    print("MORTAL_UNIFIED_BIDIRECTIONAL_MODEL_COMPARISON_E2E_OK")
     if args.require_trained_checkpoints:
         print("MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK")
     print(json.dumps(results, ensure_ascii=False, indent=2))
