@@ -30,6 +30,24 @@ if (-not [string]::IsNullOrWhiteSpace($existingPythonPath)) {
 }
 $env:PYTHONPATH = [string]::Join([System.IO.Path]::PathSeparator, $parts)
 
+if (-not $SkipCompile) {
+    Write-Host "[0/2] Verifying Windows Triton for torch.compile..."
+    $tritonVersion = (& $Py -c "import triton; print(triton.__version__)" 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $tritonVersion.StartsWith("3.6")) {
+        Write-Host "Installing compatible triton-windows 3.6.x for PyTorch 2.11..."
+        & $Py -m pip uninstall -y triton 2>$null | Out-Null
+        & $Py -m pip install -U "triton-windows>=3.6,<3.7"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install triton-windows 3.6.x into unified runtime venv"
+        }
+        $tritonVersion = (& $Py -c "import triton; print(triton.__version__)" 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $tritonVersion.StartsWith("3.6")) {
+            throw "Triton import/version check failed after installation: $tritonVersion"
+        }
+    }
+    Write-Host "TRITON_WINDOWS_OK version=$tritonVersion"
+}
+
 Write-Host "[1/2] Running one-process 3P -> 4P CUDA/BF16 runtime smoke..."
 $smokeArgs = @(
     (Join-Path $ProjectRoot "scripts\smoke_unified_runtime.py"),
