@@ -5,6 +5,7 @@ import gzip
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 
-from serving.inference import InferenceService
+from serving.inference import InferenceService, contract_for
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,25 +34,50 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _decode_payload(raw: bytes, encoding: str | None) -> dict[str, Any]:
+def _decode_json(raw: bytes, encoding: str | None) -> dict[str, Any]:
     if encoding and encoding.casefold() == "gzip":
         try:
             raw = gzip.decompress(raw)
         except OSError as exc:
             raise HTTPException(400, f"Invalid gzip request body: {exc}") from exc
+    if not raw:
+        return {}
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HTTPException(400, f"Invalid JSON request body: {exc}") from exc
     if not isinstance(payload, dict):
         raise HTTPException(400, "Request JSON root must be an object")
+    return payload
+
+
+def _decode_payload(raw: bytes, encoding: str | None) -> dict[str, Any]:
+    payload = _decode_json(raw, encoding)
     if "obs" not in payload or "masks" not in payload:
         raise HTTPException(400, "Request must contain obs and masks")
     return payload
 
 
+def _model_identity(info: dict[str, Any]) -> dict[str, Any]:
+    path = Path(str(info["path"]))
+    signature = None
+    if path.is_file():
+        stat = path.stat()
+        signature = f"{stat.st_mtime_ns}:{stat.st_size}"
+    return {
+        "name": path.name,
+        "path": str(path),
+        "checkpoint_signature": signature,
+        "abi_version": 4,
+        "device": info.get("device"),
+        "compiled": info.get("compiled"),
+        "amp_dtype": info.get("amp_dtype"),
+        "current": info.get("current"),
+    }
+
+
 def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
-    app = FastAPI(title="Mortal-ROGS Akagi Inference API", version="1.1.0")
+    app = FastAPI(title="Mortal-ROGS Inference API", version="1.2.0")
     expected_key = api_key.strip()
 
     def authorize(request: Request) -> None:
@@ -61,11 +87,16 @@ def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
         if supplied != expected_key:
             raise HTTPException(401, "Invalid API key")
 
-    async def react(request: Request, mode: str) -> dict[str, Any]:
+    async def infer_request(request: Request, mode: str, *, detailed: bool) -> dict[str, Any]:
         authorize(request)
-        payload = _decode_payload(await request.body(), request.headers.get("Content-Encoding"))
         try:
-            return service.infer(mode, payload["obs"], payload["masks"])
+            contract = contract_for(mode)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        payload = _decode_payload(await request.body(), request.headers.get("Content-Encoding"))
+        started = time.perf_counter()
+        try:
+            response = service.infer(contract.mode, payload["obs"], payload["masks"])
         except FileNotFoundError as exc:
             raise HTTPException(503, str(exc)) from exc
         except (ValueError, TypeError) as exc:
@@ -73,18 +104,97 @@ def create_app(service: InferenceService, api_key: str = "") -> FastAPI:
         except Exception as exc:
             raise HTTPException(500, f"Mortal inference failed: {type(exc).__name__}: {exc}") from exc
 
+        if not detailed:
+            return response
+
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        info = service.slots[contract.mode].status()
+        response = dict(response)
+        response.update(
+            {
+                "mode": contract.mode,
+                "action_space": contract.action_space,
+                "obs_shape": [contract.obs_channels, 34],
+                "latency_ms": round(latency_ms, 3),
+                "model": _model_identity(info),
+                "protocol": "mortal-rogs-inference-v1",
+            }
+        )
+        if len(response.get("actions", [])) == 1:
+            response["selected_action"] = response["actions"][0]
+        return response
+
     @app.get("/health")
     def health(request: Request) -> dict[str, Any]:
+        """AkagiOT-compatible health endpoint kept for existing clients."""
         authorize(request)
         return service.health()
 
     @app.post("/react_batch")
     async def react_batch(request: Request) -> dict[str, Any]:
-        return await react(request, "4p")
+        return await infer_request(request, "4p", detailed=False)
 
     @app.post("/react_batch_3p")
     async def react_batch_3p(request: Request) -> dict[str, Any]:
-        return await react(request, "3p")
+        return await infer_request(request, "3p", detailed=False)
+
+    @app.get("/api/inference/health")
+    def managed_health(request: Request) -> dict[str, Any]:
+        authorize(request)
+        result = dict(service.health())
+        result["management_protocol"] = "mortal-rogs-inference-v1"
+        return result
+
+    @app.get("/api/inference/models")
+    def managed_models(request: Request) -> dict[str, Any]:
+        authorize(request)
+        health_state = service.health()
+        models = {
+            mode: {**info, "model": _model_identity(info)}
+            for mode, info in health_state["models"].items()
+        }
+        return {
+            "ok": True,
+            "degraded": health_state["degraded"],
+            "protocol": "mortal-rogs-inference-v1",
+            "models": models,
+        }
+
+    @app.post("/api/inference/reload")
+    async def managed_reload(request: Request) -> dict[str, Any]:
+        authorize(request)
+        payload = _decode_json(await request.body(), request.headers.get("Content-Encoding"))
+        requested_mode = payload.get("mode")
+        if requested_mode is None:
+            modes = ("3p", "4p")
+        elif isinstance(requested_mode, str):
+            try:
+                modes = (contract_for(requested_mode).mode,)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        else:
+            raise HTTPException(400, "reload mode must be a string when supplied")
+
+        results: dict[str, Any] = {}
+        for mode in modes:
+            slot = service.slots[mode]
+            try:
+                slot.get()
+            except Exception as exc:
+                results[mode] = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "status": slot.status()}
+                continue
+            info = slot.status()
+            ok = bool(info["loaded"] and info["current"] and info["last_error"] is None)
+            results[mode] = {"ok": ok, "status": info, "model": _model_identity(info)}
+
+        ok = all(result["ok"] for result in results.values())
+        if not ok:
+            raise HTTPException(409, detail={"ok": False, "results": results})
+        return {"ok": True, "protocol": "mortal-rogs-inference-v1", "results": results}
+
+    @app.post("/api/inference/{mode}")
+    async def managed_inference(mode: str, request: Request) -> dict[str, Any]:
+        return await infer_request(request, mode, detailed=True)
 
     return app
 
