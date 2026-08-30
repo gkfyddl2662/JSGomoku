@@ -74,6 +74,7 @@ class JobManager:
             errors="replace",
             bufsize=1,
             creationflags=flags,
+            start_new_session=os.name != "nt",
         )
         job = Job(
             id=uuid.uuid4().hex[:12],
@@ -108,7 +109,20 @@ class JobManager:
         if job.process.poll() is not None:
             return job.snapshot(include_logs=True)
 
+        # Inference serving owns a graceful drain path in its shutdown handler.
+        # Give uvicorn/Python a real termination signal first so already-accepted
+        # Akagi requests can complete before falling back to a hard process-tree kill.
+        graceful_inference = job.kind == "inference_api"
+        wait_timeout = 8.0 if graceful_inference else 5.0
+
         if os.name == "nt":
+            if graceful_inference:
+                try:
+                    job.process.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+                    job.process.wait(timeout=wait_timeout)
+                    return job.snapshot(include_logs=True)
+                except (ValueError, OSError, subprocess.TimeoutExpired):
+                    pass
             subprocess.run(
                 ["taskkill", "/PID", str(job.process.pid), "/T", "/F"],
                 capture_output=True,
@@ -120,10 +134,21 @@ class JobManager:
                 os.killpg(os.getpgid(job.process.pid), signal.SIGTERM)
             except ProcessLookupError:
                 pass
+
         try:
-            job.process.wait(timeout=5)
+            job.process.wait(timeout=wait_timeout)
         except subprocess.TimeoutExpired:
-            job.process.kill()
+            if os.name == "nt":
+                job.process.kill()
+            else:
+                try:
+                    os.killpg(os.getpgid(job.process.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    job.process.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    job.process.kill()
         return job.snapshot(include_logs=True)
 
     @staticmethod
