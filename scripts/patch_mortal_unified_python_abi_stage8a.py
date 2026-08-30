@@ -18,7 +18,10 @@ def apply(root: Path) -> None:
 
     replacements = {
         "train.py": [
-            ("from libriichi.consts import obs_shape\n", "from libriichi import consts\nobs_shape = consts.obs_shape\n"),
+            (
+                "    from libriichi.consts import obs_shape\n",
+                "    from libriichi import consts\n    obs_shape = consts.obs_shape\n",
+            ),
         ],
         "dataloader.py": [
             ("from libriichi.dataset import GameplayLoader\n", "from libriichi import dataset as libriichi_dataset\nGameplayLoader = libriichi_dataset.GameplayLoader\n"),
