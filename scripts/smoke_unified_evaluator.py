@@ -59,8 +59,10 @@ def main() -> int:
         fail(f"missing Mortal example config: {example_cfg}")
 
     paired_script = project_root / "scripts" / "build_paired_evaluation.py"
-    if not paired_script.is_file():
-        fail(f"paired evaluation builder is missing: {paired_script}")
+    native_stat_script = project_root / "scripts" / "build_mortal_stat_report.py"
+    for required_script in (paired_script, native_stat_script):
+        if not required_script.is_file():
+            fail(f"evaluation report builder is missing: {required_script}")
 
     for mode, c in contracts.items():
         trained_checkpoint = trained_root / f"smoke-trained-{mode}.pth"
@@ -219,6 +221,43 @@ def main() -> int:
             if float(deltas.get(metric, float("nan"))) != 0.0:
                 fail(f"{mode} identical-log strength metric {metric} is not zero: {deltas}")
 
+        native_stat_output = smoke_root / f"native-stat-{mode}.json"
+        challenger_name = f"eval-{mode}-challenger"
+        native_proc = subprocess.run(
+            [
+                sys.executable,
+                str(native_stat_script),
+                "--candidate-dir",
+                str(log_dir),
+                "--candidate-name",
+                challenger_name,
+                "--baseline-dir",
+                str(log_dir),
+                "--baseline-name",
+                challenger_name,
+                "--mode",
+                mode,
+                "--output",
+                str(native_stat_output),
+            ],
+            cwd=project_root,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        if native_proc.returncode != 0:
+            fail(
+                f"{mode} native Mortal Stat report failed with exit {native_proc.returncode}\n"
+                f"STDOUT:\n{native_proc.stdout}\nSTDERR:\n{native_proc.stderr}"
+            )
+        native_stat = json.loads(native_stat_output.read_text(encoding="utf-8"))
+        native_deltas = native_stat.get("candidate_minus_baseline", {})
+        for metric in ("avg_rank", "avg_rank_pt", "avg_game_delta_score", "win_rate", "deal_in_rate", "call_rate", "riichi_rate"):
+            if float(native_deltas.get(metric, float("nan"))) != 0.0:
+                fail(f"{mode} identical-log native Stat metric {metric} is not zero: {native_deltas}")
+        if not native_stat_output.with_suffix(".txt").is_file():
+            fail(f"{mode} native Mortal Stat text table is missing")
+
         results[mode] = {
             "checkpoint": str(checkpoint),
             "checkpoint_source": checkpoint_source,
@@ -229,6 +268,7 @@ def main() -> int:
             "paired_rows": len(paired_rows),
             "paired_output": str(paired_output),
             "strength_summary": str(summary_json),
+            "native_stat_report": str(native_stat_output),
             "stdout_tail": proc.stdout.strip().splitlines()[-3:],
         }
         del brain2, dqn2, state
@@ -236,6 +276,7 @@ def main() -> int:
     print("MORTAL_UNIFIED_CHECKPOINT_EVAL_E2E_OK")
     print("MORTAL_UNIFIED_EVALUATOR_E2E_OK")
     print("MORTAL_UNIFIED_PAIRED_STRENGTH_E2E_OK")
+    print("MORTAL_UNIFIED_NATIVE_STAT_REPORT_E2E_OK")
     if args.require_trained_checkpoints:
         print("MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK")
     print(json.dumps(results, ensure_ascii=False, indent=2))
