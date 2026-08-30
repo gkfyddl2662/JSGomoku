@@ -133,7 +133,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Run Mortal-docs-style bidirectional duplicate evaluation between two unified Mortal v4 checkpoints, "
-            "then emit paired JSONL and a strength comparison report."
+            "then emit paired JSONL, strength tables, and optional rating-gate results."
         )
     )
     parser.add_argument("--runtime-root", type=Path, required=True)
@@ -283,6 +283,30 @@ def main() -> int:
         builder_cmd.extend(["--rank-points", args.rank_points])
     _run_checked(builder_cmd, cwd=PROJECT_ROOT, env=env, label="paired strength builder")
 
+    native_stat_output = output_root / "native-stat.json"
+    _run_checked(
+        [
+            str(runtime_python),
+            str(PROJECT_ROOT / "scripts" / "build_mortal_stat_report.py"),
+            "--candidate-dir",
+            str(candidate_logs),
+            "--candidate-name",
+            candidate_name,
+            "--baseline-dir",
+            str(baseline_logs),
+            "--baseline-name",
+            baseline_name,
+            "--mode",
+            args.mode,
+            "--output",
+            str(native_stat_output),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        label="native Mortal Stat report",
+    )
+    native_stat = json.loads(native_stat_output.read_text(encoding="utf-8"))
+
     gate: dict[str, object] | None = None
     if args.profile:
         gate_output = output_root / "promotion-gate.json"
@@ -325,7 +349,10 @@ def main() -> int:
         "paired_output": str(paired_output),
         "strength_summary": str(strength_path),
         "strength_markdown": str(paired_output.with_suffix(".summary.md")),
+        "native_stat_report": str(native_stat_output),
+        "native_stat_text": str(native_stat_output.with_suffix(".txt")),
         "candidate_minus_baseline": strength.get("candidate_minus_baseline"),
+        "native_stat_candidate_minus_baseline": native_stat.get("candidate_minus_baseline"),
         "profile": args.profile,
         "promotion_gate": gate,
     }
