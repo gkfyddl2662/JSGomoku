@@ -127,6 +127,16 @@ function inferenceModeMetric(mode, metrics) {
   return `${mode.toUpperCase()} p95 ${p95}ms · GPU/model ${modelP95}ms · queue ${queueP95}ms · ${rate} rows/s · batch ${batch} · q ${depth}/${peak} · merged ${merged} · 503 ${rejects} · timeout ${timeouts}`;
 }
 
+function inferenceDeviceMetric(device) {
+  const wait = device?.wait_ms || {};
+  return `fair ${device?.policy || '-'} · active ${device?.active_executions ?? '-'}/${device?.max_parallel_executions ?? '-'} · waiting ${device?.waiting_executions ?? '-'} · peak ${device?.peak_active_executions ?? '-'} · contention ${device?.contended_acquisitions_total ?? '-'} · wait p95 ${inferenceMetricNumber(wait.p95,1)}ms`;
+}
+
+function inferenceLifecycleMetric(lifecycle) {
+  const state = String(lifecycle?.state || 'unknown').toUpperCase();
+  return `${state} · accepting ${lifecycle?.accepting ? 'YES' : 'NO'} · inflight ${lifecycle?.inflight_requests ?? '-'} · peak ${lifecycle?.peak_inflight_requests ?? '-'} · drain rejects ${lifecycle?.rejected_during_drain_total ?? '-'}`;
+}
+
 async function loadInferenceTelemetry() {
   const el = ensureInferenceTelemetryElement();
   if (!el) return;
@@ -153,12 +163,16 @@ async function loadInferenceTelemetry() {
     const schedule = serving.micro_batch || {};
     const reload = serving.reload || {};
     const modes = serving.modes || {};
+    const device = serving.device_scheduler || {};
+    const lifecycle = serving.lifecycle || health?.lifecycle || {};
     const deadline = inferenceMetricNumber(schedule.request_deadline_ms, 0);
     const wait = inferenceMetricNumber(schedule.wait_ms, 1);
     const reloadState = reload.background ? 'BG reload ON' : 'BG reload OFF';
     el.innerHTML = [
       `<div><label>Scheduler</label><strong>${wait}ms merge · max ${schedule.max_rows ?? '-'} rows · pending ${schedule.max_pending_requests ?? '-'} · deadline ${deadline}ms</strong></div>`,
-      `<div><label>Reload</label><strong>${reloadState} · poll ${inferenceMetricNumber(reload.poll_ms, 0)}ms</strong></div>`,
+      `<div><label>Shared Device</label><strong>${inferenceDeviceMetric(device)}</strong></div>`,
+      `<div><label>Lifecycle</label><strong>${inferenceLifecycleMetric(lifecycle)}</strong></div>`,
+      `<div><label>Reload</label><strong>${reloadState} · poll ${inferenceMetricNumber(reload.poll_ms, 0)}ms · quiet ${inferenceMetricNumber(reload.quiet_ms,0)}ms · wait ${inferenceMetricNumber(reload.wait_ms,0)}ms</strong></div>`,
       `<div><label>3P</label><strong>${inferenceModeMetric('3p', modes['3p'])}</strong></div>`,
       `<div><label>4P</label><strong>${inferenceModeMetric('4p', modes['4p'])}</strong></div>`,
     ].join('');
