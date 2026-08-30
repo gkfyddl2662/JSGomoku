@@ -26,10 +26,11 @@ def write_toml(path: Path, data: dict[str, Any], make_backup: bool = True) -> No
     temp.replace(path)
 
 
-def load_preset(project_root: Path, name: str = "rtx5080") -> dict[str, Any]:
-    path = project_root / "config" / f"{name}.sanma.toml"
+def load_preset(project_root: Path, name: str = "rtx5080", mode: str = "3p") -> dict[str, Any]:
+    suffix = "sanma" if mode == "3p" else "yonma"
+    path = project_root / "config" / f"{name}.{suffix}.toml"
     if not path.exists():
-        raise ConfigError(f"Unknown preset: {name}")
+        raise ConfigError(f"Unknown {mode} preset: {name}")
     return toml.load(path)
 
 
