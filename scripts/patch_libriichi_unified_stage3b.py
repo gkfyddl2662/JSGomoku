@@ -10,6 +10,7 @@ MARKER = "MORTAL_ROGS_UNIFIED_EVENT_BOUNDARY_STAGE3B"
 EXPECTED = {
     "libriichi/src/arena/board.rs": "5c52ab995ebb9584327a8b33cd1ecdbdf1050c6e",
     "libriichi/src/arena/result.rs": "452bb3ce9ed8815edc56d5c1ccd415257748cdf1",
+    "libriichi/src/bin/validate_logs.rs": "1d060bc4ae8b767fc8767cfcf9ae0e5c3f8e888e",
     "libriichi/src/dataset/grp.rs": "f2c257a563f76e3cee32cf31816d48ac1abd682f",
     "libriichi/src/state/update.rs": "7b6eca21c8e5a1a83a3642192b8f8c96034cacb2",
 }
@@ -42,10 +43,16 @@ def replace_count(text: str, old: str, new: str, count: int, label: str) -> str:
     return text.replace(old, new)
 
 
+def with_marker(text: str) -> str:
+    if MARKER in text:
+        return text
+    return "// " + MARKER + "\n" + text
+
+
 def patch_board(text: str) -> str:
     if MARKER in text:
         return text
-    text = "// " + MARKER + "\n" + text
+    text = with_marker(text)
     text = replace_once(
         text,
         "            oya: self.oya,\n"
@@ -75,7 +82,7 @@ def patch_board(text: str) -> str:
 def patch_result(text: str) -> str:
     if MARKER in text:
         return text
-    text = "// " + MARKER + "\n" + text
+    text = with_marker(text)
     return replace_once(
         text,
         "            names: self.names.clone(),\n",
@@ -84,10 +91,22 @@ def patch_result(text: str) -> str:
     )
 
 
+def patch_validate_logs(text: str) -> str:
+    if MARKER in text:
+        return text
+    text = with_marker(text)
+    return replace_once(
+        text,
+        "                let deltas = deltas.context(\"missing field `deltas`\")?;\n",
+        "                let deltas = deltas.as_ref().context(\"missing field `deltas`\")?;\n",
+        "validate_logs borrow deltas",
+    )
+
+
 def patch_grp(text: str) -> str:
     if MARKER in text:
         return text
-    text = "// " + MARKER + "\n" + text
+    text = with_marker(text)
     text = replace_once(
         text,
         "                Event::Hora { deltas, .. } | Event::Ryukyoku { deltas, .. } => {\n"
@@ -116,7 +135,7 @@ def patch_grp(text: str) -> str:
 def patch_stat(text: str) -> str:
     if MARKER in text:
         return text
-    text = "// " + MARKER + "\n" + text
+    text = with_marker(text)
     text = replace_once(
         text,
         "            Event::StartKyoku { oya, scores, .. } => {\n"
@@ -151,7 +170,7 @@ def patch_stat(text: str) -> str:
 def patch_update(text: str) -> str:
     if MARKER in text:
         return text
-    text = "// " + MARKER + "\n" + text
+    text = with_marker(text)
     text = replace_once(
         text,
         "                scores,\n                tehais,\n            } => self.start_kyoku(\n",
@@ -203,6 +222,7 @@ def patch_file(root: Path, rel: str, transform) -> None:
 def apply(root: Path) -> None:
     patch_file(root, "libriichi/src/arena/board.rs", patch_board)
     patch_file(root, "libriichi/src/arena/result.rs", patch_result)
+    patch_file(root, "libriichi/src/bin/validate_logs.rs", patch_validate_logs)
     patch_file(root, "libriichi/src/dataset/grp.rs", patch_grp)
     patch_file(root, "libriichi/src/stat.rs", patch_stat)
     patch_file(root, "libriichi/src/state/update.rs", patch_update)
@@ -210,6 +230,7 @@ def apply(root: Path) -> None:
     for rel in (
         "libriichi/src/arena/board.rs",
         "libriichi/src/arena/result.rs",
+        "libriichi/src/bin/validate_logs.rs",
         "libriichi/src/dataset/grp.rs",
         "libriichi/src/stat.rs",
         "libriichi/src/state/update.rs",
