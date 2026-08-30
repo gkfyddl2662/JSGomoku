@@ -1,0 +1,63 @@
+[upstream]
+repository = "https://github.com/mjx-project/mjx"
+ref = "v0.1.0"
+tree_sha = "f52e27c4bfc6eb107af767e06266e2ba1e4c9333"
+
+[policy]
+production_backend = false
+reference_backend = "libriichi3p"
+require_zero_parity_mismatches = true
+require_upstream_hash_match = true
+
+[files]
+"include/mjx/env.cpp" = "f4829438111bc85ec634b38060442c5dd8b8db3b"
+"include/mjx/env.h" = "f0ac190af83e3360a4606c5f5d10efae60541940"
+"include/mjx/internal/mjx.proto" = "b232eee7ec94cc0369781b9f604ec3c843402067"
+"include/mjx/internal/state.cpp" = "e184288b745b387ac9e755f1fe1e3d657b06a0b0"
+"include/mjx/internal/state.h" = "f5735475b3aed0cc1732db3a826ed0a02a94d8eb"
+"include/mjx/internal/tile.cpp" = "dffd5905fed2b32b036a1ec6b54600bf07b670e9"
+"include/mjx/internal/tile.h" = "d15f08309009af5d0a2e58d87725e68ff80cb103"
+"include/mjx/internal/types.h" = "35d53bcd9d557591451b62ff2f21201ae899b06c"
+"include/mjx/internal/wall.cpp" = "aee1fb0ae094e1b9b5e90495ac0727ce91bec19a"
+"include/mjx/internal/wall.h" = "7d66fe3d1d77193359b8d3c75bbfefc99454e6aa"
+"include/mjx/internal/win_score.cpp" = "7e29ce172d30687a45bcbc443eb781076e801075"
+"include/mjx/internal/yaku_evaluator.cpp" = "0dd0acda6cbecfc1eeecd369ae50b4151af65390"
+"include/mjx/internal/observation.cpp" = "47220040a1d66caca83b1d452087bb2635355969"
+"include/mjx/internal/action.cpp" = "5d35c4a6ce6ebaee6e2f0c8a9fed3d8b9d9a8b74"
+"mjx/env.py" = "a0981b9824fa303d1d32fd5f2f6680935662c635"
+"mjx/agents.py" = "331d6738ffcd6e398852b792294a8b650f2901e9"
+
+[[stages]]
+id = 1
+name = "rule_and_tile_set"
+required = true
+
+[[stages]]
+id = 2
+name = "wall_and_deal"
+required = true
+
+[[stages]]
+id = 3
+name = "protocol_nuki"
+required = true
+
+[[stages]]
+id = 4
+name = "state_scoring_and_game_flow"
+required = true
+
+[[stages]]
+id = 5
+name = "legal_actions_and_observation"
+required = true
+
+[[stages]]
+id = 6
+name = "python_bindings_and_parallel_runner"
+required = true
+
+[[stages]]
+id = 7
+name = "libriichi3p_parity"
+required = true
