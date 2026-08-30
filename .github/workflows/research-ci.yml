@@ -125,8 +125,15 @@ jobs:
           python scripts/audit_mjx_sanma.py \
             --root /tmp/mjx-sanma \
             --allow-blockers
-      - name: Apply sanma stages 1-3
-        run: python scripts/patch_mjx_sanma.py --root /tmp/mjx-sanma --through 3
+      - name: Apply sanma stages 1-4
+        run: python scripts/patch_mjx_sanma.py --root /tmp/mjx-sanma --through 4
+      - name: Verify Stage 4 state/scoring postconditions
+        run: |
+          grep -q "RuleConfig rule_" /tmp/mjx-sanma/include/mjx/internal/state.h
+          grep -q "rule_.rounds_per_wind" /tmp/mjx-sanma/include/mjx/internal/state.cpp
+          grep -q "rule_.return_points" /tmp/mjx-sanma/include/mjx/internal/state.cpp
+          grep -q "num_players - 2" /tmp/mjx-sanma/include/mjx/internal/win_score.cpp
+          grep -q "rule.tsumo_loss = true" /tmp/mjx-sanma/include/mjx/internal/rule.h
       - name: Reject whitespace-damaged C++ patch
         run: git -C /tmp/mjx-sanma diff --check
       - name: Show residual four-player blockers
