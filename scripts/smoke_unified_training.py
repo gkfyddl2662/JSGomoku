@@ -123,10 +123,13 @@ def run_canonical_trainer_smoke(
 ) -> dict[str, object]:
     """Run the patched upstream train.py, including FileDatasetsIter and ROGS."""
 
+    from model import Brain, DQN
+
     run_root = output_root / f"canonical-{mode}"
     run_root.mkdir(parents=True, exist_ok=True)
     checkpoint = run_root / "current.pth"
     best_checkpoint = run_root / "best.pth"
+    baseline_checkpoint = run_root / "baseline.pth"
     cfg_path = run_root / "config.toml"
     names_file = run_root / "players.txt"
     names_file.write_text(f"smoke-{mode}-challenger\n", encoding="utf-8")
@@ -204,6 +207,38 @@ def run_canonical_trainer_smoke(
         "regret_clip": 12.0,
         "teacher_temperature": 1.5,
     }
+
+    # train.py constructs TestPlayer immediately, even when test_every is far
+    # away. Seed a tiny ABI-correct baseline so this smoke exercises the real
+    # trainer instead of failing on config.example.toml's placeholder path.
+    baseline_brain = Brain(
+        version=4,
+        conv_channels=8,
+        num_blocks=1,
+        obs_channels=contract["obs"],
+    ).cpu().eval()
+    baseline_dqn = DQN(version=4, action_space=contract["actions"]).cpu().eval()
+    torch.save(
+        {
+            "config": copy.deepcopy(cfg),
+            "mortal": baseline_brain.state_dict(),
+            "current_dqn": baseline_dqn.state_dict(),
+        },
+        baseline_checkpoint,
+    )
+    del baseline_brain, baseline_dqn
+    baseline_root = cfg.setdefault("baseline", {})
+    for side_name in ("train", "test"):
+        side = baseline_root.setdefault(side_name, {})
+        side.update(
+            {
+                "device": device,
+                "enable_compile": False,
+                "enable_amp": False,
+                "state_file": str(baseline_checkpoint),
+            }
+        )
+
     cfg_path.write_text(toml.dumps(cfg), encoding="utf-8")
 
     project_root = Path(__file__).resolve().parents[1]
