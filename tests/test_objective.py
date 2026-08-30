@@ -12,14 +12,16 @@ def test_curriculum_moves_from_teacher_to_regret():
     assert late.cql < early.cql
 
 
-def test_objective_is_finite_with_masked_teacher_logits():
+def test_objective_is_finite_with_masked_teacher_logits_and_negative_q():
     value_pred = torch.tensor([0.2, -0.1], requires_grad=True)
     value_target = torch.tensor([1.0, -1.0])
     advantage = torch.tensor([[0.2, 0.0, -0.1], [0.1, -0.2, 0.0]], requires_grad=True)
     action_index = torch.tensor([0, 1])
-    regret_target = torch.tensor([0.8, -0.4])
+    # Deliberately exceed the clipping range on one sample.
+    regret_target = torch.tensor([80.0, -0.4])
     legal = torch.tensor([[True, True, False], [True, True, False]])
-    student_q = torch.tensor([[1.0, 0.5, -9.0], [0.4, 0.8, -9.0]], requires_grad=True)
+    # Q values are logits/scores and are allowed to be negative.
+    student_q = torch.tensor([[-2.0, -3.5, -99.0], [-4.0, -1.2, -99.0]], requires_grad=True)
     teacher_q = torch.tensor([[1.2, 0.2, -99.0], [0.3, 1.0, -99.0]])
 
     result = compose_rogs_objective(
@@ -35,8 +37,10 @@ def test_objective_is_finite_with_masked_teacher_logits():
         behavior_cloning_loss=torch.tensor(0.3),
         cql_loss=torch.tensor(0.2),
         weights=ROGSWeights(),
+        regret_clip=12.0,
     )
     assert torch.isfinite(result.total)
+    assert torch.isfinite(result.components["entropy"])
     result.total.backward()
     assert value_pred.grad is not None
     assert advantage.grad is not None
