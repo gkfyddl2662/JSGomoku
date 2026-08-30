@@ -98,3 +98,22 @@ def test_unified_status_exposes_shared_root_and_mode_root(tmp_path: Path) -> Non
     assert status3["mortal_root"] == status4["mortal_root"]
     assert status3["mode_root"].endswith(str(Path("runtime") / "3p"))
     assert status4["mode_root"].endswith(str(Path("runtime") / "4p"))
+
+
+def test_unified_bootstrap_routes_one_click_rust_install_flag(tmp_path: Path, monkeypatch) -> None:
+    s = make_unified_settings(tmp_path)
+    controller = MortalController(s)
+    monkeypatch.setattr("app.mortal.os.name", "nt")
+
+    cmd, cwd, env = controller.command_for(
+        "bootstrap_runtime",
+        {"mode": "3p", "install_rust_if_missing": True},
+    )
+
+    assert Path(cmd[6]).name == "bootstrap_unified_runtime.ps1"
+    assert "-InstallRoot" in cmd
+    assert str(s.mortal_unified_root) in cmd
+    assert "-InstallRustIfMissing" in cmd
+    assert "-Mode" not in cmd
+    assert cwd == s.project_root
+    assert env == {}
