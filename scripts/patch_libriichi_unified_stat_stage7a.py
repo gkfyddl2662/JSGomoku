@@ -26,12 +26,15 @@ def patch_stat(text: str) -> str:
         raise RuntimeError("Stage 7A requires normalized variable-length events from Stage 3B")
     text = "// " + MARKER + "\n" + text
 
+    # Stat derives Add/AddAssign/Sum, so store an additive player-count total.
+    # A plain `num_players = 3` field would become 6 after summing two sanma
+    # games. `player_count_sum / game` remains exactly 3 or 4 after aggregation.
     text = replace_once(
         text,
         "    #[pyo3(get, set)]\n    pub game: i64,\n",
         "    #[pyo3(get, set)]\n    pub game: i64,\n"
-        "    #[pyo3(get, set)]\n    pub num_players: u8,\n",
-        "Stat num_players",
+        "    #[pyo3(get, set)]\n    pub player_count_sum: i64,\n",
+        "Stat additive player count",
     )
 
     text = replace_once(
@@ -39,7 +42,7 @@ def patch_stat(text: str) -> str:
         "                let active = scores.len().min(cur_scores.len());\n"
         "                cur_scores[..active].copy_from_slice(&scores[..active]);\n",
         "                let active = scores.len().min(cur_scores.len());\n"
-        "                stat.num_players = active as u8;\n"
+        "                stat.player_count_sum = active as i64;\n"
         "                cur_scores[..active].copy_from_slice(&scores[..active]);\n",
         "capture active player count",
     )
@@ -55,8 +58,7 @@ def patch_stat(text: str) -> str:
         "        // assume the starting point to be 25000\n"
         "        let final_score = cur_scores[player_id as usize];\n"
         "        stat.point = final_score as i64 - 25000;\n",
-        "        let n = if stat.num_players == 3 { 3 } else { 4 };\n"
-        "        stat.num_players = n as u8;\n"
+        "        let n = stat.active_players();\n"
         "        let rk = Rankings::new_n(&cur_scores, n);\n\n"
         "        let target_total = if n == 3 { 105_000 } else { 100_000 };\n"
         "        let sum: i32 = cur_scores[..n].iter().sum();\n"
@@ -85,7 +87,11 @@ def patch_stat(text: str) -> str:
         "impl Stat {\n"
         "    #[inline]\n"
         "    fn active_players(&self) -> usize {\n"
-        "        if self.num_players == 3 { 3 } else { 4 }\n"
+        "        if self.game > 0 && self.player_count_sum == 3 * self.game {\n"
+        "            3\n"
+        "        } else {\n"
+        "            4\n"
+        "        }\n"
         "    }\n\n"
         "    #[inline]\n"
         "    fn total_pt_slice(&self, pts: &[i64]) -> i64 {\n"
@@ -173,13 +179,14 @@ mod unified_stat_stage7a_tests {
     fn unified_stat_sanma_rank_metrics_ignore_fourth_slot() {
         let stat = Stat {
             game: 6,
-            num_players: 3,
+            player_count_sum: 18,
             rank_1: 3,
             rank_2: 2,
             rank_3: 1,
             rank_4: 99,
             ..Default::default()
         };
+        assert_eq!(stat.active_players(), 3);
         assert_eq!(stat.total_pt_slice(&[6, 0, -6]), 12);
         assert!((stat.avg_rank() - (10.0 / 6.0)).abs() < 1e-12);
     }
@@ -188,15 +195,36 @@ mod unified_stat_stage7a_tests {
     fn unified_stat_yonma_rank_metrics_keep_fourth_slot() {
         let stat = Stat {
             game: 4,
-            num_players: 4,
+            player_count_sum: 16,
             rank_1: 1,
             rank_2: 1,
             rank_3: 1,
             rank_4: 1,
             ..Default::default()
         };
+        assert_eq!(stat.active_players(), 4);
         assert_eq!(stat.total_pt_slice(&[90, 45, 0, -135]), 0);
         assert!((stat.avg_rank() - 2.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn unified_stat_player_count_survives_sum() {
+        let a = Stat {
+            game: 1,
+            player_count_sum: 3,
+            rank_1: 1,
+            ..Default::default()
+        };
+        let b = Stat {
+            game: 1,
+            player_count_sum: 3,
+            rank_2: 1,
+            ..Default::default()
+        };
+        let sum = a + b;
+        assert_eq!(sum.game, 2);
+        assert_eq!(sum.player_count_sum, 6);
+        assert_eq!(sum.active_players(), 3);
     }
 }
 '''
@@ -221,11 +249,11 @@ def apply(root: Path) -> None:
     post = path.read_text(encoding="utf-8")
     for token in (
         MARKER,
-        "pub num_players: u8",
+        "pub player_count_sum: i64",
         "Rankings::new_n(&cur_scores, n)",
         "target_total = if n == 3 { 105_000 } else { 100_000 }",
         "pub fn avg_pt(&self, pts: Vec<i64>)",
-        "unified_stat_sanma_rank_metrics_ignore_fourth_slot",
+        "unified_stat_player_count_survives_sum",
     ):
         if token not in post:
             raise RuntimeError(f"Stage 7A postcondition missing: {token}")
