@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import importlib.machinery
+import importlib.util
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -42,6 +45,54 @@ def wait_ready(proc: subprocess.Popen[str], base: str, api_key: str) -> dict:
             pass
         time.sleep(0.25)
     raise RuntimeError("Mortal inference API did not become ready")
+
+
+def akagi_binary_path(akagi_root: Path, module_name: str) -> Path:
+    py_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    machine = platform.machine().lower()
+    if machine in {"amd64", "x86_64"}:
+        arch = "x86_64"
+    elif machine in {"arm64", "aarch64"}:
+        arch = "aarch64"
+    else:
+        raise RuntimeError(f"Unsupported architecture for pinned Akagi native smoke: {machine}")
+
+    if sys.platform == "win32":
+        platform_tag = f"{arch}-pc-windows-msvc"
+        suffix = ".pyd"
+    elif sys.platform == "darwin":
+        platform_tag = f"{arch}-apple-darwin"
+        suffix = ".so"
+    elif sys.platform.startswith("linux"):
+        platform_tag = f"{arch}-unknown-linux-gnu"
+        suffix = ".so"
+    else:
+        raise RuntimeError(f"Unsupported platform for pinned Akagi native smoke: {sys.platform}")
+
+    path = akagi_root / "lib" / f"{module_name}-{py_version}-{platform_tag}{suffix}"
+    if not path.is_file():
+        raise RuntimeError(f"Pinned Akagi bundled native module is missing: {path}")
+    return path
+
+
+def load_akagi_native_module(akagi_root: Path, module_name: str):
+    """Load Akagi's own bundled extension without copying or renaming its files."""
+    path = akagi_binary_path(akagi_root, module_name)
+    existing = sys.modules.pop(module_name, None)
+    try:
+        loader = importlib.machinery.ExtensionFileLoader(module_name, str(path))
+        spec = importlib.util.spec_from_file_location(module_name, str(path), loader=loader)
+        if spec is None:
+            raise RuntimeError(f"Could not create import spec for {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        loader.exec_module(module)
+        return module, path
+    except Exception:
+        sys.modules.pop(module_name, None)
+        if existing is not None:
+            sys.modules[module_name] = existing
+        raise
 
 
 def main() -> int:
@@ -120,9 +171,19 @@ def main() -> int:
         backend = akagi_root / "akagi_backend"
         if not (backend / "akagi_ng" / "mjai_bot" / "engine" / "akagi_ot.py").is_file():
             raise SystemExit(f"Pinned Akagi-NG backend is incomplete: {backend}")
+
+        # A source checkout contains the same native modules as an Akagi release,
+        # but with Python/platform-qualified filenames. Load those untouched files
+        # directly into memory so Akagi's own core.lib_loader sees the exact module
+        # names it expects. No Akagi file is copied, renamed, patched or written.
+        akagi_riichi, riichi_path = load_akagi_native_module(akagi_root, "libriichi")
+        akagi_riichi3p, riichi3p_path = load_akagi_native_module(akagi_root, "libriichi3p")
+        if not hasattr(akagi_riichi, "consts") or not hasattr(akagi_riichi3p, "consts"):
+            raise SystemExit("Pinned Akagi native modules did not expose consts")
+
         sys.path.insert(0, str(backend))
 
-        # These imports come directly from the untouched Akagi-NG checkout.
+        # These classes come directly from the untouched Akagi-NG checkout.
         from akagi_ng.mjai_bot.engine.akagi_ot import AkagiOTClient, AkagiOTEngine
         from akagi_ng.mjai_bot.status import BotStatusContext
 
@@ -136,6 +197,10 @@ def main() -> int:
             "akagi_sha": actual_sha,
             "server": base,
             "akagi_modified": False,
+            "akagi_native": {
+                "4p": str(riichi_path),
+                "3p": str(riichi3p_path),
+            },
             "modes": {},
         }
         for mode, is_3p, obs_channels, action_space, endpoint in (
@@ -167,6 +232,7 @@ def main() -> int:
         if after_status:
             raise SystemExit(f"Vanilla Akagi-NG checkout was modified by integration smoke:\n{after_status}")
 
+        print("MORTAL_VANILLA_AKAGI_NATIVE_READONLY_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_3P_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_4P_OK")
         print("MORTAL_VANILLA_AKAGI_CLIENT_E2E_OK")
