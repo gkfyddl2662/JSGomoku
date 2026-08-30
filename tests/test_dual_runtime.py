@@ -80,7 +80,10 @@ def test_controller_routes_4p_evaluation_to_stock_mortal(tmp_path: Path) -> None
 def test_controller_routes_3p_evaluation_to_sanma_mortal(tmp_path: Path) -> None:
     s = make_settings(tmp_path)
     runtime = s.runtime("3p")
-    touch(runtime.python_executable)
+    # On POSIX the 3P runtime intentionally falls back to the active Python
+    # interpreter when the project venv is absent. Never overwrite that binary.
+    if not runtime.python_executable.exists():
+        touch(runtime.python_executable)
     touch(runtime.config_file)
     touch(runtime.mortal_dir / "one_vs_two.py")
 
