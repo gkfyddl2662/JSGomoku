@@ -37,14 +37,17 @@ jobs:
             serving/coordination.py \
             scripts/serve_akagi_api.py \
             scripts/benchmark_inference_api.py \
+            scripts/soak_inference_api.py \
             scripts/smoke_akagi_api.py \
             scripts/smoke_inference_coordination.py \
+            scripts/smoke_inference_soak.py \
             scripts/smoke_vanilla_akagi_client.py \
             scripts/check_mortal_api_checkpoint.py \
             scripts/export_akagi_mortal.py \
             scripts/check_akagi_compat.py \
             scripts/check_akagi_compat_dual.py
           node --check static/inference.js
+          node --check static/inference_soak.js
 
       - name: Enforce API-only architecture and serving scheduler
         run: |
@@ -52,7 +55,8 @@ jobs:
             tests/test_akagi_api_only_contract.py \
             tests/test_inference_scheduler.py \
             tests/test_inference_benchmark_contract.py \
-            tests/test_inference_coordination.py
+            tests/test_inference_coordination.py \
+            tests/test_inference_soak_contract.py
 
       - name: Verify pinned untouched AkagiOT client source
         run: |
@@ -85,6 +89,11 @@ jobs:
           grep -q 'MORTAL_INFERENCE_GRACEFUL_DRAIN_OK' scripts/smoke_inference_coordination.py
           grep -q 'MORTAL_INFERENCE_BENCHMARK_OK' scripts/benchmark_inference_api.py
           grep -q 'MORTAL_INFERENCE_SWEEP_OK' scripts/benchmark_inference_api.py
+          grep -q 'MORTAL_INFERENCE_SOAK_OK' scripts/soak_inference_api.py
+          grep -q 'MORTAL_INFERENCE_PRODUCTION_PRESET_OK' scripts/soak_inference_api.py
+          grep -q 'MORTAL_INFERENCE_SOAK_E2E_OK' scripts/smoke_inference_soak.py
+          grep -q 'MORTAL_INFERENCE_PRODUCTION_PRESET_E2E_OK' scripts/smoke_inference_soak.py
+          grep -q 'mortal-rogs-serving-soak-v1' scripts/soak_inference_api.py
           grep -q 'request_deadline_ms' serving/resilient.py
           grep -q 'DeviceExecutionCoordinator' serving/coordination.py
           grep -q 'RequestLifecycle' serving/coordination.py
@@ -92,3 +101,4 @@ jobs:
           grep -q '/api/inference/tuning' scripts/serve_akagi_api.py
           grep -q '/api/inference/drain' scripts/serve_akagi_api.py
           grep -q -- '--max-device-executions' scripts/serve_akagi_api.py
+          grep -q 'inference_soak.js' static/index.html
