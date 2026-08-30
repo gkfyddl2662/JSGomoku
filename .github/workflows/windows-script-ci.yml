@@ -77,7 +77,12 @@ jobs:
             'Invoke-NativeCapture',
             'Get-TritonVersion',
             'MORTAL_UNIFIED_MODEL_IMPORT_OK',
-            'patch_mortal_unified_stage1\.py'
+            'patch_mortal_unified_stage1\.py',
+            'Get-InstalledGameplayAbi',
+            'UNIFIED_GAMEPLAY_ABI',
+            'patch_libriichi_unified_dataset_stage8b\.py',
+            'MORTAL_UNIFIED_DATASET_STAGE8B_REBUILT',
+            'maturin develop --release'
           )) {
             if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
               throw "Missing Windows smoke contract: $pattern"
@@ -91,6 +96,9 @@ jobs:
           }
           if (-not (Select-String -Path scripts/patch_mortal_unified_stage1.py -Pattern 'legacy libriichi\.consts import remains' -Quiet)) {
             throw 'Unified model Stage 1 must reject legacy libriichi.consts imports'
+          }
+          if (-not (Select-String -Path scripts/patch_libriichi_unified_dataset_stage8b.py -Pattern 'UNIFIED_GAMEPLAY_ABI' -Quiet)) {
+            throw 'Unified dataset Stage 8B must expose an installed gameplay ABI marker'
           }
           if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
             throw 'Missing Python unified runtime smoke success marker'
