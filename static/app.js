@@ -109,7 +109,7 @@ function mjxSanmaArgs(){
   };
 }
 
-async function bootstrapRuntime(){ return startJob('bootstrap_runtime',{mode:currentMode()}); }
+async function bootstrapRuntime(){ return startJob('bootstrap_runtime',{mode:currentMode(),install_rust_if_missing:true}); }
 async function setupMjx(){ return startJob('mjx_setup', mjxArgs()); }
 async function probeMjx(){ return startJob('mjx_probe', mjxArgs()); }
 async function prepareMjxSanma(){ return startJob('mjx_sanma_prepare', mjxSanmaArgs()); }
