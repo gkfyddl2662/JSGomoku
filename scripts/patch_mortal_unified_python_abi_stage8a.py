@@ -52,24 +52,23 @@ def apply(root: Path) -> None:
 
     engine = mortal / "engine.py"
     text = engine.read_text(encoding="utf-8")
-    if "game_mode = None," not in text:
-        old = "        top_p = 1,\n    ):\n"
-        new = "        top_p = 1,\n        game_mode = None,\n        action_space = None,\n    ):\n"
-        if old not in text:
-            raise RuntimeError("MortalEngine constructor anchor missing")
-        text = text.replace(old, new, 1)
-        old = "        self.top_p = top_p\n"
-        new = (
-            "        self.top_p = top_p\n"
-            "        self.game_mode = game_mode\n"
-            "        self.action_space = action_space\n"
-        )
-        if old not in text:
-            raise RuntimeError("MortalEngine metadata anchor missing")
-        text = text.replace(old, new, 1)
+    has_stage2_contract = (
+        "game_mode = '4p'," in text
+        and "action_space = None," in text
+        and "self.game_mode = mode" in text
+        and "self.action_space" in text
+    )
+    has_legacy_stage8_contract = (
+        "game_mode = None," in text
+        and "action_space = None," in text
+        and "self.game_mode = game_mode" in text
+        and "self.action_space = action_space" in text
+    )
+    if not (has_stage2_contract or has_legacy_stage8_contract):
+        raise RuntimeError("MortalEngine unified runtime-mode contract missing")
     if MARKER not in text:
         text = MARKER + "\n" + text
-    engine.write_text(text, encoding="utf-8")
+        engine.write_text(text, encoding="utf-8")
     py_compile.compile(str(engine), doraise=True)
 
     for path in mortal.glob("*.py"):
@@ -77,9 +76,6 @@ def apply(root: Path) -> None:
         if IMPORT_RE.search(text) or "from libriichi." in text:
             raise RuntimeError(f"legacy PyO3 submodule import remains: {path}")
 
-    engine_text = engine.read_text(encoding="utf-8")
-    if "game_mode = None" not in engine_text or "action_space = None" not in engine_text:
-        raise RuntimeError("MortalEngine unified metadata kwargs missing")
     print("MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_OK")
 
 
