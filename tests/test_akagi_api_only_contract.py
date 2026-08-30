@@ -82,6 +82,8 @@ def test_managed_inference_api_preserves_akagiot_compatibility() -> None:
     assert '"policy": "fair-fifo"' in coordination
     assert "max_device_executions" in source
     assert "drain_timeout_ms" in source
+    assert "signal.SIGBREAK" in source
+    assert "server.should_exit = True" in source
 
 
 def test_control_center_can_manage_reload_telemetry_and_scheduler_without_exposing_model_ownership_to_akagi() -> None:
@@ -101,7 +103,6 @@ def test_control_center_can_manage_reload_telemetry_and_scheduler_without_exposi
     assert "busy_rejections_total" in ui
     assert "timeouts_total" in ui
 
-    # Control Center owns serving tuning and enforces Akagi's 4s read timeout boundary.
     assert "micro_batch_ms: float = Field(default=1.0" in backend
     assert "micro_batch_max_rows: int = Field(default=64" in backend
     assert "max_pending_requests: int = Field(default=128" in backend
@@ -126,13 +127,11 @@ def test_control_center_can_manage_reload_telemetry_and_scheduler_without_exposi
     assert "body.request_deadline_ms >= 4000" in ui
     assert "window.startInferenceApi = startInferenceApi" in ui
 
-    # Inference jobs get a graceful signal first; only timeout falls back to hard kill.
     assert 'job.kind == "inference_api"' in jobs
     assert "signal.CTRL_BREAK_EVENT" in jobs
     assert 'start_new_session=os.name != "nt"' in jobs
     assert "wait_timeout = 8.0 if graceful_inference else 5.0" in jobs
 
-    # Operators can see single-GPU contention and drain state in the Control Center.
     assert "Shared Device" in ui
     assert "Lifecycle" in ui
     assert "contended_acquisitions_total" in ui
