@@ -33,6 +33,7 @@ PYTHON_STAGES = (
     "patch_mortal_unified_eval_stage5c.py",
     "patch_mortal_unified_grp_stage6b.py",
     "patch_mortal_4p.py",
+    "patch_mortal_unified_eval_stage8c.py",
     "patch_mortal_unified_online_stage7b.py",
     "patch_mortal_unified_python_abi_stage8a.py",
 )
@@ -89,7 +90,8 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
         model = (root / "mortal/model.py").read_text(encoding="utf-8")
         train = (root / "mortal/train.py").read_text(encoding="utf-8")
         train_grp = (root / "mortal/train_grp.py").read_text(encoding="utf-8")
-        evaluator = (root / "mortal/one_vs_two.py").read_text(encoding="utf-8")
+        evaluator3 = (root / "mortal/one_vs_two.py").read_text(encoding="utf-8")
+        evaluator4 = (root / "mortal/one_vs_three.py").read_text(encoding="utf-8")
         player = (root / "mortal/player.py").read_text(encoding="utf-8")
         client = (root / "mortal/client.py").read_text(encoding="utf-8")
         engine = (root / "mortal/engine.py").read_text(encoding="utf-8")
@@ -99,8 +101,10 @@ def apply(root: Path, *, rust_only: bool = False, python_only: bool = False) -> 
             raise RuntimeError("unified trainer postcondition failed")
         if "MORTAL_ROGS_UNIFIED_GRP_TRAINER_STAGE6B" not in train_grp:
             raise RuntimeError("unified GRP trainer postcondition failed")
-        if "MORTAL_ROGS_UNIFIED_EVAL_STAGE5C" not in evaluator:
+        if "MORTAL_ROGS_UNIFIED_EVAL_STAGE5C" not in evaluator3:
             raise RuntimeError("unified 3P evaluator postcondition failed")
+        if "MORTAL_ROGS_UNIFIED_EVAL_STAGE8C" not in evaluator4:
+            raise RuntimeError("unified 4P evaluator Stage 8C postcondition failed")
         for name, text in (("train", train), ("player", player), ("client", client)):
             if "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" not in text:
                 raise RuntimeError(f"unified online stage postcondition failed: {name}")
