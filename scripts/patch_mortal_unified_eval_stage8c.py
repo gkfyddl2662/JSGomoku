@@ -2,10 +2,23 @@ from __future__ import annotations
 
 import argparse
 import py_compile
+import subprocess
 from pathlib import Path
 
 
 MARKER = "# MORTAL_ROGS_UNIFIED_EVAL_STAGE8C"
+STAGE8A_MARKER = "# MORTAL_ROGS_UNIFIED_PYTHON_ABI_STAGE8A"
+UPSTREAM_SHA = "23ecb3bd5710f6092e71b6215fe1ab9f4cbb8c86"
+
+
+def git_blob_sha(path: Path) -> str:
+    return subprocess.run(
+        ["git", "hash-object", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
 
 ONE_VS_THREE = r'''import prelude
 
@@ -99,7 +112,7 @@ def main():
         ako_dir = ako_cfg.get('dir')
         ako_tactics = ako_cfg.get('tactics')
         if not ako_dir or not ako_tactics:
-            raise ValueError('1v3 Akochan mode requires akocha[n].dir and tactics')
+            raise ValueError('1v3 Akochan mode requires akochan.dir and tactics')
         os.environ['AKOCHAN_DIR'] = str(ako_dir)
         os.environ['AKOCHAN_TACTICS'] = str(ako_tactics)
         engine_cham = None
@@ -159,6 +172,12 @@ def apply(root: Path) -> None:
 
     existing = target.read_text(encoding="utf-8")
     if MARKER not in existing:
+        actual = git_blob_sha(target)
+        if actual != UPSTREAM_SHA and STAGE8A_MARKER not in existing:
+            raise RuntimeError(
+                f"refusing to overwrite unexpected 4P evaluator: expected upstream {UPSTREAM_SHA} "
+                f"or managed Stage 8A file, got {actual}"
+            )
         target.write_text(ONE_VS_THREE, encoding="utf-8")
         print(f"patched: {target}")
     elif existing != ONE_VS_THREE:
