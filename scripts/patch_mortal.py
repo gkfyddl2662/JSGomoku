@@ -118,8 +118,17 @@ def patch_grp(text: str) -> str:
     yonma_ctor_new = "    grp = GRP(**cfg['network'], dtype=dtype).to(device)\n"
     unified_ctor = "    grp = GRP(**cfg['network'], num_players=num_players, input_size=grp_input_size).to(device)\n"
     unified_ctor_new = "    grp = GRP(**cfg['network'], num_players=num_players, input_size=grp_input_size, dtype=dtype).to(device)\n"
-    if sanma_ctor_new not in text and yonma_ctor_new not in text and unified_ctor_new not in text:
-        if unified_ctor in text:
+    network_cfg_ctor = "    grp = GRP(**network_cfg).to(device)\n"
+    network_cfg_ctor_new = "    grp = GRP(**network_cfg, dtype=dtype).to(device)\n"
+    if (
+        sanma_ctor_new not in text
+        and yonma_ctor_new not in text
+        and unified_ctor_new not in text
+        and network_cfg_ctor_new not in text
+    ):
+        if network_cfg_ctor in text:
+            text = text.replace(network_cfg_ctor, network_cfg_ctor_new, 1)
+        elif unified_ctor in text:
             text = text.replace(unified_ctor, unified_ctor_new, 1)
         elif sanma_ctor in text:
             text = text.replace(sanma_ctor, sanma_ctor_new, 1)
