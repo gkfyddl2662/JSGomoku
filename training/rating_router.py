@@ -32,18 +32,14 @@ class RoutedUtility:
 
 
 class RatingObjectiveRouter:
-    """Choose a rating objective before a self-play game begins.
-
-    Rating/platform metadata stays outside Mortal observations. The selected
-    ObjectiveContext is attached to the generated game and reused when terminal
-    utility is calculated.
-    """
+    """Choose and bind a rating objective before each generated game."""
 
     def __init__(
         self,
         catalog: Mapping[str, Any],
         *,
         players: int,
+        contexts: Mapping[str, Any] | None = None,
         strategy: str = "universal",
         target_profile: str | None = None,
         specialize_start: float = 0.70,
@@ -60,7 +56,8 @@ class RatingObjectiveRouter:
         self.specialize_start = specialize_start
         self.rng = random.Random(seed)
         self.profiles = catalog.get("profiles", {})
-        self.contexts = catalog.get("contexts", {}).get(f"{players}p", {})
+        context_root = contexts if contexts is not None else catalog.get("contexts", {})
+        self.contexts = context_root.get(f"{players}p", {})
         self.universal_weights = {
             k: float(v) for k, v in catalog.get("universal", {}).get(f"{players}p", {}).items()
         }
@@ -74,9 +71,20 @@ class RatingObjectiveRouter:
             raise RatingPresetError(f"No universal {players}P mixture configured")
 
     @classmethod
-    def from_toml(cls, path: str | Path, **kwargs: Any) -> "RatingObjectiveRouter":
+    def from_toml(
+        cls,
+        path: str | Path,
+        *,
+        contexts_path: str | Path | None = None,
+        **kwargs: Any,
+    ) -> "RatingObjectiveRouter":
         with Path(path).open("rb") as f:
-            return cls(tomllib.load(f), **kwargs)
+            catalog = tomllib.load(f)
+        contexts = None
+        if contexts_path is not None:
+            with Path(contexts_path).open("rb") as f:
+                contexts = tomllib.load(f).get("contexts", {})
+        return cls(catalog, contexts=contexts, **kwargs)
 
     def specialization_probability(self, progress: float) -> float:
         progress = max(0.0, min(1.0, float(progress)))
@@ -86,11 +94,25 @@ class RatingObjectiveRouter:
             return 0.0
         return min(1.0, (progress - self.specialize_start) / max(1e-9, 1.0 - self.specialize_start))
 
+    def _profile_is_ready(self, name: str) -> bool:
+        profile = self.profiles.get(name)
+        if not profile or not self.contexts.get(name):
+            return False
+        kind = str(profile.get("kind", "table")).casefold()
+        if kind == "table" and not profile.get("rules"):
+            return False
+        if kind == "decomposed_table" and (not profile.get("room_rules") or not profile.get("rank_rules")):
+            return False
+        return True
+
     def _sample_universal(self) -> str:
-        names = [name for name, weight in self.universal_weights.items() if weight > 0]
+        names = [
+            name for name, weight in self.universal_weights.items()
+            if weight > 0 and self._profile_is_ready(name)
+        ]
         weights = [self.universal_weights[name] for name in names]
         if not names:
-            raise RatingPresetError("Universal mixture contains no positive-weight profile")
+            raise RatingPresetError("Universal mixture contains no ready positive-weight profile")
         return self.rng.choices(names, weights=weights, k=1)[0]
 
     def choose_profile(self, progress: float) -> tuple[str, float]:
@@ -98,15 +120,14 @@ class RatingObjectiveRouter:
         if self.strategy == "specialized" or (
             self.strategy == "curriculum" and self.rng.random() < p_special
         ):
+            if not self._profile_is_ready(str(self.target_profile)):
+                raise RatingPresetError(f"Target profile {self.target_profile!r} is not ready for {self.players}P")
             return str(self.target_profile), p_special
         return self._sample_universal(), p_special
 
     def sample_objective(self, progress: float = 0.0) -> ObjectiveContext:
         profile, p_special = self.choose_profile(progress)
-        options = self.contexts.get(profile, [])
-        if not options:
-            raise RatingPresetError(f"No {self.players}P training context configured for profile={profile!r}")
-        row = self.rng.choice(options)
+        row = self.rng.choice(self.contexts[profile])
         return ObjectiveContext(
             profile=profile,
             players=self.players,
@@ -128,6 +149,19 @@ class RatingObjectiveRouter:
             objective.rank,
         ):
             raise ValueError("GameResult context does not match the objective sampled before the game")
+        if objective.profile == "tenhou_rate":
+            result = GameResult(
+                players=result.players,
+                placement=result.placement,
+                raw_score=result.raw_score,
+                starting_score=result.starting_score,
+                round_kind=result.round_kind,
+                room=result.room,
+                rank=result.rank,
+                self_rating=objective.self_rating,
+                table_average_rating=objective.table_average_rating,
+                games_played=objective.games_played,
+            )
         profile = self.profiles[objective.profile]
         raw = evaluate_platform_profile(objective.profile, profile, result)
         scale = float(profile.get("normalization_scale", 100.0))
