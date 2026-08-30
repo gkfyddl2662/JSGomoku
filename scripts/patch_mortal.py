@@ -64,6 +64,16 @@ def patch_train(text: str) -> str:
 
 
 def patch_model(text: str) -> str:
+    # Unified-core Stage 1 already exposes a configurable GRP dtype and player
+    # count. Keep it intact so the generic RTX patch can be applied after the
+    # model-generalization patch.
+    unified_signature = (
+        "    def __init__(self, hidden_size=64, num_layers=2, num_players=4, "
+        "input_size=None, dtype=torch.float64):\n"
+    )
+    if unified_signature in text and "            mod.to(dtype=dtype)\n" in text:
+        return text
+
     sanma_old = "    def __init__(self, hidden_size=64, num_layers=2, num_players=4):\n"
     sanma_new = "    def __init__(self, hidden_size=64, num_layers=2, num_players=4, dtype=torch.float64):\n"
     yonma_old = "    def __init__(self, hidden_size=64, num_layers=2):\n"
@@ -75,7 +85,7 @@ def patch_model(text: str) -> str:
         elif yonma_old in text:
             text = text.replace(yonma_old, yonma_new, 1)
         else:
-            raise RuntimeError("Patch anchor not found: GRP dtype argument (3P/4P)")
+            raise RuntimeError("Patch anchor not found: GRP dtype argument (3P/4P/unified)")
 
     text = replace_once(
         text,
@@ -106,13 +116,17 @@ def patch_grp(text: str) -> str:
     sanma_ctor_new = "    grp = GRP(**cfg['network'], num_players=num_players, dtype=dtype).to(device)\n"
     yonma_ctor = "    grp = GRP(**cfg['network']).to(device)\n"
     yonma_ctor_new = "    grp = GRP(**cfg['network'], dtype=dtype).to(device)\n"
-    if sanma_ctor_new not in text and yonma_ctor_new not in text:
-        if sanma_ctor in text:
+    unified_ctor = "    grp = GRP(**cfg['network'], num_players=num_players, input_size=grp_input_size).to(device)\n"
+    unified_ctor_new = "    grp = GRP(**cfg['network'], num_players=num_players, input_size=grp_input_size, dtype=dtype).to(device)\n"
+    if sanma_ctor_new not in text and yonma_ctor_new not in text and unified_ctor_new not in text:
+        if unified_ctor in text:
+            text = text.replace(unified_ctor, unified_ctor_new, 1)
+        elif sanma_ctor in text:
             text = text.replace(sanma_ctor, sanma_ctor_new, 1)
         elif yonma_ctor in text:
             text = text.replace(yonma_ctor, yonma_ctor_new, 1)
         else:
-            raise RuntimeError("Patch anchor not found: GRP dtype construction (3P/4P)")
+            raise RuntimeError("Patch anchor not found: GRP dtype construction (3P/4P/unified)")
 
     text = text.replace(
         "dtype=np.float64",
@@ -134,10 +148,13 @@ def patch_grp(text: str) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", required=True, help="Path to Lawrencelea/Mortal_Sanma clone")
+    ap.add_argument("--root", required=True, help="Path to Mortal or Mortal_Sanma clone")
     args = ap.parse_args()
     root = Path(args.root).expanduser().resolve()
-    mortal = root / "Mortal" / "mortal"
+
+    stock = root / "mortal"
+    sanma = root / "Mortal" / "mortal"
+    mortal = stock if stock.is_dir() else sanma
     for required in (mortal / "train.py", mortal / "train_grp.py", mortal / "model.py"):
         if not required.exists():
             raise SystemExit(f"Missing expected upstream file: {required}")
