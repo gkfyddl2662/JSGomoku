@@ -26,6 +26,24 @@ def make_settings(tmp_path: Path) -> Settings:
     )
 
 
+def make_unified_settings(tmp_path: Path) -> Settings:
+    project = tmp_path / "control"
+    legacy = tmp_path / "legacy"
+    unified = tmp_path / "Mortal_Unified"
+    project.mkdir()
+    legacy.mkdir()
+    unified.mkdir()
+    return Settings(
+        project_root=project,
+        mortal_3p_root=legacy / "3p",
+        mortal_4p_root=legacy / "4p",
+        host="127.0.0.1",
+        port=8188,
+        runtime_root=legacy,
+        mortal_unified_root=unified,
+    )
+
+
 def touch(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("", encoding="utf-8")
@@ -100,3 +118,99 @@ def test_controller_routes_3p_evaluation_to_sanma_mortal(tmp_path: Path) -> None
     assert cwd == runtime.mortal_dir
     assert env["MORTAL_GAME_MODE"] == "3p"
     assert env["MORTAL_PLAYER_COUNT"] == "3"
+    assert env["MORTAL_CFG"] == str(runtime.config_file)
+
+
+def test_controller_routes_unified_training_ablation(tmp_path: Path) -> None:
+    s = make_unified_settings(tmp_path)
+    runtime = s.runtime("3p")
+    touch(runtime.python_executable)
+    touch(runtime.config_file)
+    touch(runtime.mortal_dir / "train.py")
+    runner = s.project_root / "scripts" / "run_training_ablation.py"
+    touch(runner)
+
+    controller = MortalController(s)
+    cmd, cwd, env = controller.command_for(
+        "train_ablation",
+        {"mode": "3p", "variant": "rogs-global", "seed": 17, "fresh": True},
+    )
+
+    assert Path(cmd[0]) == runtime.python_executable
+    assert Path(cmd[1]) == runner
+    assert cmd[cmd.index("--runtime-root") + 1] == str(runtime.root)
+    assert cmd[cmd.index("--mode") + 1] == "3p"
+    assert cmd[cmd.index("--variant") + 1] == "rogs-global"
+    assert cmd[cmd.index("--seed") + 1] == "17"
+    assert "--fresh" in cmd
+    assert cwd == s.project_root
+    assert env["MORTAL_GAME_MODE"] == "3p"
+
+
+def test_controller_routes_unified_bidirectional_model_comparison(tmp_path: Path) -> None:
+    s = make_unified_settings(tmp_path)
+    runtime = s.runtime("4p")
+    touch(runtime.python_executable)
+    touch(runtime.config_file)
+    touch(runtime.mortal_dir / "one_vs_three.py")
+    runner = s.project_root / "scripts" / "run_model_comparison.py"
+    touch(runner)
+    touch(runtime.models_dir / "candidate.pth")
+    touch(runtime.models_dir / "baseline.pth")
+
+    controller = MortalController(s)
+    cmd, cwd, env = controller.command_for(
+        "model_compare",
+        {
+            "mode": "4p",
+            "candidate": "candidate.pth",
+            "baseline": "baseline.pth",
+            "seed_start": 23000,
+            "seed_count": 12,
+            "seed_key": "0x1234",
+            "profile": "mahjongsoul",
+            "device": "cuda:0",
+            "enable_compile": True,
+            "enable_amp": False,
+            "fresh": True,
+        },
+    )
+
+    assert Path(cmd[0]) == runtime.python_executable
+    assert Path(cmd[1]) == runner
+    assert cmd[cmd.index("--mode") + 1] == "4p"
+    assert cmd[cmd.index("--candidate") + 1] == "candidate.pth"
+    assert cmd[cmd.index("--baseline") + 1] == "baseline.pth"
+    assert cmd[cmd.index("--seed-start") + 1] == "23000"
+    assert cmd[cmd.index("--seed-count") + 1] == "12"
+    assert cmd[cmd.index("--seed-key") + 1] == "0x1234"
+    assert cmd[cmd.index("--profile") + 1] == "mahjongsoul"
+    assert cmd[cmd.index("--device") + 1] == "cuda:0"
+    assert "--compile" in cmd
+    assert "--no-amp" in cmd
+    assert "--fresh" in cmd
+    assert cwd == s.project_root
+    assert env["MORTAL_GAME_MODE"] == "4p"
+
+
+def test_controller_rejects_model_comparison_path_escape(tmp_path: Path) -> None:
+    s = make_unified_settings(tmp_path)
+    runtime = s.runtime("3p")
+    touch(runtime.python_executable)
+    touch(runtime.config_file)
+    touch(runtime.mortal_dir / "one_vs_two.py")
+    touch(s.project_root / "scripts" / "run_model_comparison.py")
+    touch(runtime.models_dir / "baseline.pth")
+    outside = runtime.models_dir.parent / "outside.pth"
+    touch(outside)
+
+    controller = MortalController(s)
+    with pytest.raises(ValueError, match="escapes"):
+        controller.command_for(
+            "model_compare",
+            {
+                "mode": "3p",
+                "candidate": "../outside.pth",
+                "baseline": "baseline.pth",
+            },
+        )
