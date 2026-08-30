@@ -14,7 +14,12 @@ if ($Distro) {
 # by PowerShell before the script is sent into WSL.
 $script = @'
 set -euo pipefail
-ROOT='__LINUX_ROOT__'
+ROOT_RAW='__LINUX_ROOT__'
+if [[ "$ROOT_RAW" == "~/"* ]]; then
+  ROOT="$HOME/${ROOT_RAW:2}"
+else
+  ROOT="$ROOT_RAW"
+fi
 mkdir -p "$ROOT"
 cd "$ROOT"
 
