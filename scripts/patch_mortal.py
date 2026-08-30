@@ -64,12 +64,19 @@ def patch_train(text: str) -> str:
 
 
 def patch_model(text: str) -> str:
-    text = replace_once(
-        text,
-        "    def __init__(self, hidden_size=64, num_layers=2, num_players=4):\n",
-        "    def __init__(self, hidden_size=64, num_layers=2, num_players=4, dtype=torch.float64):\n",
-        "GRP dtype argument",
-    )
+    sanma_old = "    def __init__(self, hidden_size=64, num_layers=2, num_players=4):\n"
+    sanma_new = "    def __init__(self, hidden_size=64, num_layers=2, num_players=4, dtype=torch.float64):\n"
+    yonma_old = "    def __init__(self, hidden_size=64, num_layers=2):\n"
+    yonma_new = "    def __init__(self, hidden_size=64, num_layers=2, dtype=torch.float64):\n"
+
+    if sanma_new not in text and yonma_new not in text:
+        if sanma_old in text:
+            text = text.replace(sanma_old, sanma_new, 1)
+        elif yonma_old in text:
+            text = text.replace(yonma_old, yonma_new, 1)
+        else:
+            raise RuntimeError("Patch anchor not found: GRP dtype argument (3P/4P)")
+
     text = replace_once(
         text,
         "            mod.to(torch.float64)\n",
@@ -94,14 +101,31 @@ def patch_grp(text: str) -> str:
         "        torch.set_float32_matmul_precision('high')\n",
         "GRP performance setup",
     )
-    text = replace_once(
-        text,
-        "    grp = GRP(**cfg['network'], num_players=num_players).to(device)\n",
-        "    grp = GRP(**cfg['network'], num_players=num_players, dtype=dtype).to(device)\n",
-        "GRP dtype construction",
+
+    sanma_ctor = "    grp = GRP(**cfg['network'], num_players=num_players).to(device)\n"
+    sanma_ctor_new = "    grp = GRP(**cfg['network'], num_players=num_players, dtype=dtype).to(device)\n"
+    yonma_ctor = "    grp = GRP(**cfg['network']).to(device)\n"
+    yonma_ctor_new = "    grp = GRP(**cfg['network'], dtype=dtype).to(device)\n"
+    if sanma_ctor_new not in text and yonma_ctor_new not in text:
+        if sanma_ctor in text:
+            text = text.replace(sanma_ctor, sanma_ctor_new, 1)
+        elif yonma_ctor in text:
+            text = text.replace(yonma_ctor, yonma_ctor_new, 1)
+        else:
+            raise RuntimeError("Patch anchor not found: GRP dtype construction (3P/4P)")
+
+    text = text.replace(
+        "dtype=np.float64",
+        "dtype=np.float32 if config['grp']['control'].get('dtype', 'float64') == 'float32' else np.float64",
     )
-    text = text.replace("dtype=np.float64", "dtype=np.float32 if config['grp']['control'].get('dtype', 'float64') == 'float32' else np.float64")
-    text = text.replace("num_workers = 1,\n        collate_fn = collate,", "num_workers = num_workers,\n        pin_memory = cfg['control'].get('pin_memory', True),\n        persistent_workers = cfg['control'].get('persistent_workers', num_workers > 0) if num_workers > 0 else False,\n        prefetch_factor = cfg['control'].get('prefetch_factor', 2) if num_workers > 0 else None,\n        collate_fn = collate,")
+    text = text.replace(
+        "num_workers = 1,\n        collate_fn = collate,",
+        "num_workers = num_workers,\n"
+        "        pin_memory = cfg['control'].get('pin_memory', True),\n"
+        "        persistent_workers = cfg['control'].get('persistent_workers', num_workers > 0) if num_workers > 0 else False,\n"
+        "        prefetch_factor = cfg['control'].get('prefetch_factor', 2) if num_workers > 0 else None,\n"
+        "        collate_fn = collate,",
+    )
     text = text.replace("inputs = inputs.to(dtype=torch.float64, device=device)", "inputs = inputs.to(dtype=dtype, device=device, non_blocking=True)")
     text = text.replace("rank_by_players = rank_by_players.to(dtype=torch.int64, device=device)", "rank_by_players = rank_by_players.to(dtype=torch.int64, device=device, non_blocking=True)")
     text = text.replace(".to(torch.float64).mean()", ".to(dtype).mean()")
