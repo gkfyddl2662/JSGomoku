@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import py_compile
 import shutil
 import subprocess
 from pathlib import Path
@@ -83,10 +84,15 @@ def patch_model(text: str) -> str:
     dqn = dqn.replace("nn.Linear(512, ACTION_SPACE)", "nn.Linear(512, self.action_space)")
     dqn = dqn.replace("nn.Linear(hidden_size, ACTION_SPACE)", "nn.Linear(hidden_size, self.action_space)")
     dqn = dqn.replace("nn.Linear(1024, 1 + ACTION_SPACE)", "nn.Linear(1024, 1 + self.action_space)")
-    dqn = dqn.replace("v, a = self.net(phi).split((1, ACTION_SPACE), dim=-1)",
-                      "v, a = self.net(phi).split((1, self.action_space), dim=-1)")
+    dqn = dqn.replace(
+        "v, a = self.net(phi).split((1, ACTION_SPACE), dim=-1)",
+        "v, a = self.net(phi).split((1, self.action_space), dim=-1)",
+    )
     text = text[:dqn_start] + dqn + text[grp_start:]
 
+    # The DQN substitutions change source length, so locate GRP again before
+    # replacing it. Reusing the old offset can splice `class GRP` into DQN.
+    grp_start = text.index("class GRP(nn.Module):", dqn_start)
     grp = '''class GRP(nn.Module):
     def __init__(self, hidden_size=64, num_layers=2, num_players=4, input_size=None, dtype=torch.float64):
         super().__init__()
@@ -148,8 +154,7 @@ def patch_model(text: str) -> str:
         labels[mappings[:, 1]] = mappings[:, 0]
         return labels
 '''
-    text = text[:grp_start] + grp
-    return text
+    return text[:grp_start] + grp
 
 
 def apply(root: Path) -> None:
@@ -187,6 +192,8 @@ def apply(root: Path) -> None:
     missing = [needle for needle in required if needle not in post]
     if missing:
         raise RuntimeError(f"unified model Stage 1 postconditions failed: {missing}")
+
+    py_compile.compile(str(model), doraise=True)
     print("MORTAL_UNIFIED_MODEL_STAGE1_OK")
 
 
