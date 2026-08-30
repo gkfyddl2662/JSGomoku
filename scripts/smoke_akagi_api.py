@@ -146,24 +146,36 @@ def main() -> int:
     )
     base = f"http://127.0.0.1:{port}"
     try:
-        deadline = time.time() + 60
+        # CUDA torch.compile can take materially longer than normal HTTP startup.
+        # The API intentionally does not bind until that cost has been paid.
+        deadline = time.time() + 180
         health = None
         while time.time() < deadline:
             if proc.poll() is not None:
                 output = proc.stdout.read() if proc.stdout else ""
                 raise SystemExit(f"Inference API exited before readiness ({proc.returncode}):\n{output}")
             try:
-                status, health = request_json(f"{base}/health")
+                status, health = request_json(f"{base}/health", api_key=args.api_key)
                 if status == 200:
                     break
             except OSError:
                 pass
             time.sleep(0.25)
         else:
-            raise SystemExit("Inference API did not become ready")
+            raise SystemExit("Inference API did not become ready after prewarm")
 
         if health.get("protocol") != "akagiot-v1":
             raise SystemExit(f"Unexpected API protocol health marker: {health}")
+        if health.get("degraded"):
+            raise SystemExit(f"Prewarmed API should start healthy with both smoke checkpoints: {health}")
+        for mode in ("3p", "4p"):
+            info = health["models"][mode]
+            if not info["loaded"] or not info["current"] or info["last_error"] is not None:
+                raise SystemExit(f"{mode} was not prewarmed before HTTP readiness: {info}")
+
+        health_bad_status, _ = request_json(f"{base}/health", api_key="wrong-key")
+        if health_bad_status != 401:
+            raise SystemExit(f"Protected health endpoint should return 401 for a bad key, got {health_bad_status}")
 
         bad_status, _ = request_json(
             f"{base}/react_batch_3p",
@@ -205,14 +217,14 @@ def main() -> int:
                 "actions": body["actions"],
             }
 
-        status, loaded_health = request_json(f"{base}/health")
+        status, loaded_health = request_json(f"{base}/health", api_key=args.api_key)
         if status != 200:
-            raise SystemExit("Health failed after initial model loads")
+            raise SystemExit("Health failed after initial model requests")
         cuda_expected = args.device.strip().casefold().startswith("cuda")
         for mode in ("3p", "4p"):
             info = loaded_health["models"][mode]
             if not info["loaded"] or not info["current"] or info["last_error"] is not None:
-                raise SystemExit(f"{mode} model did not become current after load: {info}")
+                raise SystemExit(f"{mode} model did not remain current after load: {info}")
             if cuda_expected:
                 if info.get("compiled") is not True:
                     raise SystemExit(f"{mode} CUDA API model did not enable torch.compile: {info}")
@@ -232,7 +244,7 @@ def main() -> int:
             raise SystemExit(f"3P hot-reload fallback should keep serving, got HTTP {status}: {body}")
         assert_mode_response("3p-hot-reload-fallback", body, actions=actions, expected_actions=expected_actions)
 
-        _, degraded_health = request_json(f"{base}/health")
+        _, degraded_health = request_json(f"{base}/health", api_key=args.api_key)
         info = degraded_health["models"]["3p"]
         if not degraded_health.get("degraded") or info["current"] or not info["last_error"]:
             raise SystemExit(f"Rejected 3P replacement was not reported as degraded: {degraded_health}")
@@ -246,11 +258,12 @@ def main() -> int:
         if status != 200:
             raise SystemExit(f"3P hot-reload recovery failed HTTP {status}: {body}")
         assert_mode_response("3p-hot-reload-recovery", body, actions=actions, expected_actions=expected_actions)
-        _, recovered_health = request_json(f"{base}/health")
+        _, recovered_health = request_json(f"{base}/health", api_key=args.api_key)
         info = recovered_health["models"]["3p"]
         if recovered_health.get("degraded") or not info["current"] or info["last_error"] is not None:
             raise SystemExit(f"3P slot did not recover after restoring checkpoint: {recovered_health}")
 
+        results["prewarm"] = {"ready_only_after_models_loaded": True, "health_requires_auth": True}
         results["performance"] = {
             "device": args.device,
             "cuda_compile_required": cuda_expected,
@@ -263,6 +276,7 @@ def main() -> int:
             "health_degraded_on_reject": True,
             "automatic_recovery": True,
         }
+        print("MORTAL_AKAGI_API_PREWARM_OK")
         print("MORTAL_AKAGI_API_PERFORMANCE_OK")
         print("MORTAL_AKAGI_API_HOT_RELOAD_OK")
         print("MORTAL_AKAGI_API_E2E_OK")
