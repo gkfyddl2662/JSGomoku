@@ -57,6 +57,17 @@ function Get-TritonVersion {
     return $version
 }
 
+function Get-InstalledGameplayAbi {
+    $probe = Invoke-NativeCapture -Executable $Py -Arguments @(
+        "-c",
+        "import libriichi; print(getattr(libriichi.dataset, 'UNIFIED_GAMEPLAY_ABI', 0))"
+    )
+    if ($probe.ExitCode -ne 0) { return 0 }
+    $value = 0
+    if (-not [int]::TryParse($probe.Output.Trim(), [ref]$value)) { return 0 }
+    return $value
+}
+
 $env:MORTAL_UNIFIED_ROOT = $InstallRoot
 $existingPythonPath = $env:PYTHONPATH
 $parts = @($ProjectRoot, $MortalDir)
@@ -89,6 +100,45 @@ if (-not $SkipCompile) {
     Write-Host "TRITON_WINDOWS_OK version=$tritonVersion"
 }
 
+$gameplayAbi = Get-InstalledGameplayAbi
+if ($gameplayAbi -lt 2) {
+    Write-Host "[0.25/3] Upgrading unified native gameplay dataset ABI to v2..."
+    & $Py (Join-Path $ProjectRoot "scripts\patch_libriichi_unified_dataset_stage8b.py") --root $InstallRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to apply unified gameplay dataset Stage 8B"
+    }
+
+    $cargoBin = Join-Path $HOME ".cargo\bin"
+    if (Test-Path $cargoBin) {
+        $pathParts = @($env:PATH -split ';')
+        if ($pathParts -notcontains $cargoBin) {
+            $env:PATH = "$cargoBin;$env:PATH"
+        }
+    }
+    $MsvcHelper = Join-Path $ProjectRoot "scripts\windows_msvc.ps1"
+    if (-not (Test-Path $MsvcHelper)) { throw "Missing MSVC helper: $MsvcHelper" }
+    . $MsvcHelper
+    Ensure-MortalRogsMsvcBuildEnvironment
+
+    Push-Location (Join-Path $InstallRoot "libriichi")
+    try {
+        & $Py -m maturin develop --release
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to rebuild libriichi after Stage 8B gameplay ABI patch"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    $gameplayAbi = Get-InstalledGameplayAbi
+    if ($gameplayAbi -lt 2) {
+        throw "Rebuilt libriichi does not expose UNIFIED_GAMEPLAY_ABI=2 (got $gameplayAbi)"
+    }
+    Write-Host "MORTAL_UNIFIED_DATASET_STAGE8B_REBUILT abi=$gameplayAbi"
+} else {
+    Write-Host "MORTAL_UNIFIED_DATASET_STAGE8B_OK abi=$gameplayAbi"
+}
+
 Write-Host "[0.5/3] Repairing/verifying unified Python ABI imports..."
 foreach ($patch in @(
     "patch_mortal_unified_stage1.py",
@@ -102,7 +152,7 @@ foreach ($patch in @(
 }
 $modelImportProbe = Invoke-NativeCapture -Executable $Py -Arguments @(
     "-c",
-    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts, arena, dataset, stat; import model, engine, player, dataloader, train_grp; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION); print('MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK')"
+    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts, arena, dataset, stat; import model, engine, player, dataloader, train_grp; assert getattr(dataset, 'UNIFIED_GAMEPLAY_ABI', 0) >= 2; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION); print('MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK'); print('MORTAL_UNIFIED_DATASET_STAGE8B_IMPORT_OK', dataset.UNIFIED_GAMEPLAY_ABI)"
 )
 if ($modelImportProbe.ExitCode -ne 0) {
     throw "Unified Python ABI import probe failed:`n$($modelImportProbe.Output)"
