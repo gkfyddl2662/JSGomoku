@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -8,6 +10,18 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+from .inference_production import (
+    LifecycleOps,
+    ProductionApplyError,
+    ProductionProfileError,
+    apply_profile_transaction,
+    build_profile,
+    latest_eligible_soak,
+    normalize_serving_settings,
+    profile_path,
+    read_profile,
+)
 
 
 class InferenceBenchmarkBody(BaseModel):
@@ -34,29 +48,66 @@ class InferenceSoakBody(BaseModel):
     require_gpu_telemetry: bool = True
 
 
+class InferenceProductionApplyBody(BaseModel):
+    verify_timeout_s: float = Field(default=180.0, ge=10.0, le=600.0)
+
+
 def _connect_host(host: str) -> str:
     normalized = host.strip().casefold()
     return "127.0.0.1" if normalized in {"", "0.0.0.0", "::", "[::]"} else host.strip()
 
 
-def _probe(server: str, api_key: str) -> dict[str, Any]:
+def _request_json(
+    url: str,
+    *,
+    api_key: str,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 0.8,
+) -> tuple[int, dict[str, Any]]:
     headers = {"Authorization": api_key} if api_key else {}
-    request = urllib.request.Request(f"{server}/health", headers=headers)
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
     try:
-        with urllib.request.urlopen(request, timeout=0.8) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            body = json.loads(raw) if raw else {}
+            return int(response.status), body if isinstance(body, dict) else {"raw": body}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError:
+            body = {"raw": raw}
+        return int(exc.code), body if isinstance(body, dict) else {"raw": body}
+
+
+def _probe(server: str, api_key: str) -> dict[str, Any]:
+    try:
+        status, payload = _request_json(f"{server}/health", api_key=api_key, timeout=0.8)
     except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise HTTPException(409, f"Inference API must be running before benchmark: {exc}") from exc
-    if payload.get("protocol") != "akagiot-v1":
-        raise HTTPException(409, "Target is not the Mortal-ROGS Akagi inference API")
+    if status != 200 or payload.get("protocol") != "akagiot-v1":
+        raise HTTPException(409, f"Target is not the Mortal-ROGS Akagi inference API: HTTP {status}")
     lifecycle = payload.get("lifecycle", {}) or {}
     if lifecycle.get("state") not in {None, "running"}:
         raise HTTPException(409, f"Inference API is not accepting requests: {lifecycle.get('state')}")
     return payload
 
 
+def _device_from_health(health: dict[str, Any]) -> str:
+    for mode in ("3p", "4p"):
+        device = str((health.get("models", {}).get(mode, {}) or {}).get("device", "")).strip()
+        if device:
+            return device
+    return "auto"
+
+
 def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any, inference_target: dict[str, Any]) -> APIRouter:
     router = APIRouter()
+    production_lock = threading.Lock()
 
     def unified_runtime():
         r3 = settings.runtime("3p")
@@ -74,6 +125,105 @@ def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any,
         server = f"http://{_connect_host(host)}:{port}"
         _probe(server, api_key)
         return server, api_key
+
+    def current_inference_job() -> dict[str, Any] | None:
+        for row in jobs.list():
+            if row.get("kind") == "inference_api" and row.get("running"):
+                return row
+        return None
+
+    def publish_job_id(job_id: str | None) -> None:
+        # main.py owns the legacy lifecycle id. Publish transaction-created jobs
+        # back to it so the existing Status/Stop buttons continue to manage them.
+        module = sys.modules.get("app.main")
+        if module is not None:
+            setattr(module, "_inference_job_id", job_id)
+
+    def update_target(new_target: dict[str, Any]) -> None:
+        inference_target["host"] = str(new_target.get("host", "127.0.0.1"))
+        inference_target["port"] = int(new_target.get("port", 8190))
+        inference_target["api_key"] = str(new_target.get("api_key", ""))
+        inference_target["device"] = str(new_target.get("device", "auto"))
+        inference_target["serving"] = normalize_serving_settings(new_target.get("serving"))
+
+    def server_command(runtime: Any, new_target: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+        serving = normalize_serving_settings(new_target.get("serving"))
+        script = settings.project_root / "scripts" / "serve_akagi_api.py"
+        if not script.is_file():
+            raise RuntimeError(f"Inference API script is missing: {script}")
+        command = [
+            str(runtime.python_executable),
+            str(script),
+            "--runtime-root",
+            str(runtime.root),
+            "--host",
+            str(new_target.get("host", "127.0.0.1")),
+            "--port",
+            str(int(new_target.get("port", 8190))),
+            "--device",
+            str(new_target.get("device", "auto")),
+            "--micro-batch-ms",
+            str(serving["micro_batch_ms"]),
+            "--micro-batch-max-rows",
+            str(serving["micro_batch_max_rows"]),
+            "--max-pending-requests",
+            str(serving["max_pending_requests"]),
+            "--request-deadline-ms",
+            str(serving["request_deadline_ms"]),
+            "--reload-poll-ms",
+            str(serving["reload_poll_ms"]),
+            "--max-device-executions",
+            str(serving["max_device_executions"]),
+            "--reload-quiet-ms",
+            str(serving["reload_quiet_ms"]),
+            "--reload-wait-ms",
+            str(serving["reload_wait_ms"]),
+            "--drain-timeout-ms",
+            str(serving["drain_timeout_ms"]),
+        ]
+        env = controller._mortal_env(runtime)
+        api_key = str(new_target.get("api_key", ""))
+        if api_key:
+            env["MORTAL_INFERENCE_API_KEY"] = api_key
+        return command, env
+
+    def start_server(runtime: Any, new_target: dict[str, Any]) -> dict[str, Any]:
+        command, env = server_command(runtime, new_target)
+        job = jobs.start("inference_api", command, settings.project_root, env)
+        publish_job_id(job.id)
+        update_target(new_target)
+        return job.snapshot()
+
+    def stop_server() -> dict[str, Any]:
+        row = current_inference_job()
+        if row is None:
+            publish_job_id(None)
+            return {"stopped": False, "reason": "no running Control-Center-managed inference API"}
+        result = jobs.stop(str(row["id"]))
+        publish_job_id(None)
+        return result
+
+    def wait_healthy(new_target: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+        host = str(new_target.get("host", "127.0.0.1"))
+        port = int(new_target.get("port", 8190))
+        api_key = str(new_target.get("api_key", ""))
+        server = f"http://{_connect_host(host)}:{port}"
+        deadline = time.monotonic() + timeout_s
+        latest: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            row = current_inference_job()
+            if row is None:
+                raise RuntimeError("Inference API process exited before health verification")
+            try:
+                status, latest = _request_json(f"{server}/health", api_key=api_key, timeout=1.0)
+                if status == 200 and latest.get("protocol") == "akagiot-v1":
+                    lifecycle = latest.get("lifecycle", {}) or {}
+                    if lifecycle.get("state") == "running" and lifecycle.get("accepting") is True:
+                        return latest
+            except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            time.sleep(0.25)
+        raise RuntimeError(f"Inference API did not become healthy within {timeout_s:g}s: {latest}")
 
     @router.post("/api/inference/benchmark/start")
     def start_benchmark(body: InferenceBenchmarkBody) -> dict[str, Any]:
@@ -229,5 +379,103 @@ def create_inference_benchmark_router(settings: Any, controller: Any, jobs: Any,
         if not isinstance(payload, dict) or payload.get("protocol") != "mortal-rogs-serving-soak-v1":
             raise HTTPException(500, "Latest inference soak report has an unexpected schema")
         return {"available": True, "report": payload, "path": str(latest)}
+
+    @router.get("/api/inference/production/status")
+    def production_status() -> dict[str, Any]:
+        runtime = unified_runtime()
+        path = profile_path(runtime.root)
+        try:
+            profile = read_profile(path)
+        except ProductionProfileError as exc:
+            raise HTTPException(500, str(exc)) from exc
+        return {"available": profile is not None, "profile": profile, "path": str(path)}
+
+    @router.post("/api/inference/production/apply")
+    def apply_production(body: InferenceProductionApplyBody) -> dict[str, Any]:
+        runtime = unified_runtime()
+        if not production_lock.acquire(blocking=False):
+            raise HTTPException(409, "A production serving profile transaction is already running")
+        try:
+            running = current_inference_job()
+            if running is None:
+                raise HTTPException(409, "Production apply requires a Control-Center-managed inference API job")
+            for row in jobs.list():
+                if row.get("running") and row.get("kind") in {"inference_soak", "inference_benchmark", "inference_benchmark_sweep"}:
+                    raise HTTPException(409, f"Stop {row.get('kind')} before applying a production profile")
+
+            host = str(inference_target.get("host", "127.0.0.1"))
+            port = int(inference_target.get("port", 8190))
+            api_key = str(inference_target.get("api_key", ""))
+            server = f"http://{_connect_host(host)}:{port}"
+            live_health = _probe(server, api_key)
+
+            previous_target = {
+                "host": host,
+                "port": port,
+                "api_key": api_key,
+                "device": str(inference_target.get("device") or _device_from_health(live_health)),
+                "serving": normalize_serving_settings(inference_target.get("serving")),
+            }
+            report_path, report, serving = latest_eligible_soak(runtime.root)
+            candidate_target = {
+                **previous_target,
+                "serving": serving,
+            }
+            candidate_profile = build_profile(
+                candidate_target,
+                serving,
+                source_report=report_path,
+                source_payload=report,
+            )
+
+            def drain_current(timeout_ms: float) -> dict[str, Any]:
+                try:
+                    status, payload = _request_json(
+                        f"{server}/api/inference/drain",
+                        api_key=api_key,
+                        payload={"timeout_ms": timeout_ms},
+                        timeout=max(5.0, timeout_ms / 1000.0 + 2.0),
+                    )
+                except (OSError, urllib.error.URLError) as exc:
+                    raise RuntimeError(f"Could not request graceful drain: {exc}") from exc
+                if status != 200 or payload.get("ok") is not True:
+                    raise RuntimeError(f"Graceful drain failed: HTTP {status}: {payload}")
+                return dict(payload.get("drain", {}) or {})
+
+            ops = LifecycleOps(
+                drain=drain_current,
+                stop=stop_server,
+                start=lambda new_target: start_server(runtime, new_target),
+                wait_healthy=wait_healthy,
+            )
+            try:
+                result = apply_profile_transaction(
+                    path=profile_path(runtime.root),
+                    candidate_profile=candidate_profile,
+                    previous_target=previous_target,
+                    candidate_target=candidate_target,
+                    ops=ops,
+                    verify_timeout_s=body.verify_timeout_s,
+                )
+            except ProductionApplyError as exc:
+                if exc.rollback.get("ok") is True:
+                    update_target(previous_target)
+                raise HTTPException(
+                    409,
+                    detail={
+                        "message": str(exc),
+                        "rolled_back": bool(exc.rollback.get("ok")),
+                        "rollback": exc.rollback,
+                    },
+                ) from exc
+
+            update_target(candidate_target)
+            result["source_report"] = str(report_path)
+            result["job"] = current_inference_job()
+            return result
+        except ProductionProfileError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        finally:
+            production_lock.release()
 
     return router
