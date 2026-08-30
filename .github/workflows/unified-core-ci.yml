@@ -47,7 +47,7 @@ jobs:
           python scripts/patch_libriichi_unified_stage3b.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3c.py --root /tmp/mortal-unified
           python scripts/patch_libriichi_unified_stage3d.py --root /tmp/mortal-unified
-          python scripts/patch_libriichi_unified_stage3e.py --root /tmp/mortal-unified
+          python scripts/patch_libriichi_unified_stage3e_fixed.py --root /tmp/mortal-unified
 
       - name: Compile unified libriichi Rust crate
         working-directory: /tmp/mortal-unified
