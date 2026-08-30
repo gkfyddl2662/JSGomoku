@@ -1,0 +1,22 @@
+# Minimal overlay merged into the actual Mortal train config.
+# It intentionally contains no deployment paths, mode routing, or platform
+# metadata; those remain in the Control Center config layer.
+
+[rogs]
+enabled = true
+curriculum_steps = 1000000
+oracle_final_weight = 0.05
+bc_final_weight = 0.02
+cql_final_weight = 0.05
+regret_final_weight = 0.75
+
+[objective]
+value_weight = 1.0
+regret_weight = 0.50
+teacher_kl_weight = 0.30
+entropy_weight = 0.002
+bc_anchor_weight = 0.10
+cql_anchor_weight = 0.25
+regret_clip = 12.0
+hedge_eta = 0.75
+teacher_temperature = 1.5
