@@ -1,0 +1,34 @@
+# Current Akagi-NG deployment contract used by Mortal-ROGS exports.
+# Update this file only after reviewing the upstream loader/network changes and
+# rerunning both 3P/4P compatibility smoke tests.
+
+[upstream]
+repository = "https://github.com/Xe-Persistent/Akagi-NG"
+branch = "master"
+tree_sha = "11c0ffc0d70bf8142585b92405b4412976c9e205"
+mortal_loader_path = "akagi_backend/akagi_ng/mjai_bot/engine/mortal.py"
+mortal_loader_sha = "b9923d9f7cc971610fdb93ef304843b37dba629f"
+network_path = "akagi_backend/akagi_ng/mjai_bot/network.py"
+network_sha = "cebe5fa4f30006c6bc431ae75c2d4e292539b9cc"
+constants_path = "akagi_backend/akagi_ng/schema/constants.py"
+constants_sha = "a045d1c11b98d99d709ef252e2f136ff5600aded"
+
+[checkpoint]
+required_keys = ["config", "mortal", "current_dqn"]
+model_version = 4
+norm_type = "BN"
+
+[mode.3p]
+action_space = 44
+library = "libriichi3p"
+export_name = "mortal3p.pth"
+
+[mode.4p]
+action_space = 46
+library = "libriichi"
+export_name = "mortal.pth"
+
+[policy]
+strict_state_dict = true
+require_finite_smoke_inference = true
+reject_version_5 = true
