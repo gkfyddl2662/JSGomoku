@@ -71,7 +71,9 @@ jobs:
           foreach ($pattern in @(
             'smoke_unified_runtime\.py',
             'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
-            'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK'
+            'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK',
+            'triton-windows>=3\.6,<3\.7',
+            'TRITON_WINDOWS_OK'
           )) {
             if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
               throw "Missing Windows smoke contract: $pattern"
@@ -82,6 +84,9 @@ jobs:
           }
           if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'TRITON_WINDOWS_OK' -Quiet)) {
             throw 'Windows compile smoke must verify Triton before torch.compile'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'descriptive_names = False' -Quiet)) {
+            throw 'Windows compile smoke must disable long descriptive Triton kernel names'
           }
           if (-not (Select-String -Path requirements.txt -Pattern 'triton-windows>=3\.6,<3\.7; sys_platform == "win32"' -Quiet)) {
             throw 'PyTorch 2.11 Windows runtime must install Triton 3.6.x'
