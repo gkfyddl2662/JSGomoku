@@ -1,0 +1,104 @@
+# Shared training algorithm, separate Mortal-v4 deployment checkpoints per mode.
+
+[compat]
+model_version = 4
+checkpoint_brain_key = "mortal"
+checkpoint_dqn_key = "current_dqn"
+require_akagi_smoke_test = true
+
+[modes.3p]
+players = 3
+akagi_lib = "libriichi3p"
+action_space = 44
+checkpoint = "models/rogs_3p/mortal3p.pth"
+best_checkpoint = "models/rogs_3p/best_mortal3p.pth"
+
+[modes.4p]
+players = 4
+akagi_lib = "libriichi"
+action_space = 46
+checkpoint = "models/rogs_4p/mortal.pth"
+best_checkpoint = "models/rogs_4p/best_mortal.pth"
+
+[student]
+conv_channels = 192
+num_blocks = 40
+norm = "BN"
+
+[objective]
+value_weight = 1.0
+regret_weight = 0.50
+teacher_kl_weight = 0.30
+entropy_weight = 0.002
+bc_anchor_weight = 0.10
+cql_anchor_weight = 0.25
+regret_clip = 12.0
+hedge_eta = 0.75
+teacher_temperature = 1.5
+
+[rating]
+presets_file = "config/rating_presets.toml"
+# universal | specialized | curriculum
+strategy = "curriculum"
+target_profile = "mahjongsoul"
+specialize_start = 0.70
+# Context (room/rank/round) is supplied by each training/evaluation job and is
+# never injected into the Mortal observation tensor.
+
+[global_reward]
+enabled = true
+potential_gamma = 1.0
+# Terminal target is platform rating utility after preset normalization.
+use_rating_utility = true
+
+[oracle]
+enabled = true
+start_weight = 0.50
+final_weight = 0.05
+decay_steps = 250000
+hidden_info_dropout_start = 0.0
+hidden_info_dropout_final = 1.0
+
+[search_teacher]
+enabled = true
+determinizations = 64
+rollouts_per_action = 4
+max_candidate_actions = 8
+sample_ratio = 0.10
+focus_riichi = true
+focus_final_round = true
+focus_push_fold = true
+
+[amortized_pmcp]
+enabled = true
+worlds_per_hand = 64
+inner_steps = 4
+inner_lr = 0.00002
+sample_ratio = 0.025
+
+[selfplay]
+enabled = true
+league_size = 12
+latest_probability = 0.45
+champion_probability = 0.30
+historical_probability = 0.25
+snapshot_every_games = 2000
+
+[gating.3p]
+games = 12000
+seat_rotation = true
+primary_metric = "rating_utility"
+secondary_metric = "avg_rank"
+max_last_rate_regression = 0.003
+
+[gating.4p]
+games = 16000
+seat_rotation = true
+primary_metric = "rating_utility"
+secondary_metric = "avg_rank"
+max_last_rate_regression = 0.003
+
+[deployment]
+# Exporter strips Oracle/Search/League state and keeps only the standard Mortal ABI.
+export_3p_name = "mortal3p.pth"
+export_4p_name = "mortal.pth"
