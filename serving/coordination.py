@@ -108,9 +108,6 @@ class DeviceExecutionCoordinator:
         )
         self._last_release = time.monotonic()
 
-        # 3P/4P checkpoint loads and torch.compile warmups can briefly require a
-        # second model's worth of device memory. Keep only one replacement build
-        # active at a time even though inference of the published model may continue.
         self._maintenance_lock = threading.Lock()
         self._maintenance_active = 0
         self._maintenance_waiting = 0
@@ -333,12 +330,23 @@ class CoordinatedInferenceService:
             needs_reload = bool(info["exists"] and (not info["loaded"] or not info["current"]) and not info["reloading"])
             if not needs_reload:
                 continue
-            if not self.device.wait_for_quiet(idle_ms=self.reload_quiet_ms, timeout_ms=0.0):
-                continue
-            self._reload_now(mode, force=False)
+            self._reload_now(mode, force=False, quiet_wait_ms=0.0)
 
-    def _reload_now(self, mode: str, *, force: bool) -> dict[str, Any]:
+    def _reload_now(self, mode: str, *, force: bool, quiet_wait_ms: float) -> dict[str, Any]:
         with self.device.maintenance():
+            # Quiet admission is deliberately checked after acquiring the shared
+            # maintenance lock. Otherwise a 4P reload waiting behind a long 3P
+            # compile could act on a stale pre-lock idle observation.
+            if not self.device.wait_for_quiet(idle_ms=self.reload_quiet_ms, timeout_ms=quiet_wait_ms):
+                return {
+                    "ok": False,
+                    "deferred": True,
+                    "error": (
+                        f"InferenceBusyError: {mode} reload deferred because the shared device "
+                        f"did not stay quiet for {self.reload_quiet_ms:.0f} ms"
+                    ),
+                    "status": self.slots[mode].status(),
+                }
             return self._service.reload(mode, force=force)
 
     def reload(self, mode: str, *, force: bool = True) -> dict[str, Any]:
@@ -349,16 +357,7 @@ class CoordinatedInferenceService:
                 "error": "InferenceDrainingError: reload rejected while service is draining",
                 "status": self.slots[contract.mode].status(),
             }
-        if not self.device.wait_for_quiet(idle_ms=self.reload_quiet_ms, timeout_ms=self.reload_wait_ms):
-            return {
-                "ok": False,
-                "error": (
-                    f"InferenceBusyError: {contract.mode} reload deferred because the shared device "
-                    f"did not stay quiet for {self.reload_quiet_ms:.0f} ms"
-                ),
-                "status": self.slots[contract.mode].status(),
-            }
-        return self._reload_now(contract.mode, force=force)
+        return self._reload_now(contract.mode, force=force, quiet_wait_ms=self.reload_wait_ms)
 
     def infer(self, mode: str, obs: Any, masks: Any) -> dict[str, Any]:
         contract = contract_for(mode)
