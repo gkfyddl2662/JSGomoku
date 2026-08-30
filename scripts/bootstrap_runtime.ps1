@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$InstallRoot,
     [switch]$SkipRustBuild,
-    [switch]$InstallRustIfMissing
+    [switch]$InstallRustIfMissing,
+    [switch]$SkipPatch
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,9 +23,7 @@ function Refresh-RustPath {
 }
 
 function Ensure-RustToolchain {
-    if ($SkipRustBuild) {
-        return
-    }
+    if ($SkipRustBuild) { return }
 
     Refresh-RustPath
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
@@ -37,11 +36,9 @@ Then open a new PowerShell, or rerun this bootstrap with -InstallRustIfMissing.
 Do not use -SkipRustBuild for the ABI smoke test.
 "@
         }
-
         if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
             throw "winget is not available. Install Rust from https://rustup.rs and rerun this bootstrap."
         }
-
         Write-Host "[0/8] Rust/Cargo missing; installing rustup with WinGet..."
         & winget install `
             --id Rustlang.Rustup `
@@ -58,18 +55,14 @@ Do not use -SkipRustBuild for the ABI smoke test.
         Refresh-RustPath
     }
 
-    if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
-        Refresh-RustPath
-    }
+    if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) { Refresh-RustPath }
     if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
         throw "rustup is not available after Rust installation. Open a new PowerShell and rerun the bootstrap."
     }
 
     Write-Host "[0/8] Ensuring stable MSVC Rust toolchain..."
     & rustup default stable-msvc
-    if ($LASTEXITCODE -ne 0) {
-        throw "rustup failed to activate stable-msvc"
-    }
+    if ($LASTEXITCODE -ne 0) { throw "rustup failed to activate stable-msvc" }
     Refresh-RustPath
 
     foreach ($cmd in @("cargo", "rustc")) {
@@ -77,7 +70,6 @@ Do not use -SkipRustBuild for the ABI smoke test.
             throw "$cmd is still unavailable after rustup setup"
         }
     }
-
     Write-Host "Rust toolchain ready:"
     & cargo --version
     & rustc --version
@@ -91,9 +83,6 @@ function Enter-IsolatedVenv([string]$VenvRoot) {
         throw "Virtualenv Python is missing after creation: $pythonExe"
     }
 
-    # maturin develop requires an activated venv/conda marker even when it is
-    # invoked via that venv's python.exe. Expose the same environment markers
-    # that Activate.ps1 would set, without mutating the user's shell profile.
     $env:VIRTUAL_ENV = $VenvRoot
     if (Test-Path Env:CONDA_PREFIX) {
         Remove-Item Env:CONDA_PREFIX -ErrorAction SilentlyContinue
@@ -102,7 +91,6 @@ function Enter-IsolatedVenv([string]$VenvRoot) {
     if ($pathParts -notcontains $venvScripts) {
         $env:PATH = "$venvScripts;$env:PATH"
     }
-
     Write-Host "Activated isolated venv for build: $VenvRoot"
 }
 
@@ -127,7 +115,10 @@ if (-not (Test-Path $InstallRoot)) {
     Write-Host "[1/7] Runtime already exists: $InstallRoot"
 }
 
-$VenvRoot = if ($Mode -eq "3p") { "$ProjectRoot\.venv" } else { "$InstallRoot\.venv" }
+# Both modes always own their Python environment. They intentionally cannot
+# share a venv because both extensions are named `libriichi` but expose
+# different ABIs (3P=44 actions, 4P=46 actions).
+$VenvRoot = "$InstallRoot\.venv"
 $Py = "$VenvRoot\Scripts\python.exe"
 if (-not (Test-Path $Py)) {
     Write-Host "[2/7] Creating isolated Python environment: $VenvRoot"
@@ -144,6 +135,8 @@ if ($LASTEXITCODE -ne 0) { throw "PyTorch cu128 installation failed" }
 & $Py -m pip install tqdm toml tensorboard maturin numpy pytest
 if ($LASTEXITCODE -ne 0) { throw "Python dependency installation failed" }
 if ($Mode -eq "3p") {
+    # The 3P runtime can also launch the Control Center for a self-contained
+    # Windows install; training/runtime packages remain isolated by mode.
     & $Py -m pip install -r "$ProjectRoot\requirements.txt"
     if ($LASTEXITCODE -ne 0) { throw "Control Center dependency installation failed" }
 }
@@ -181,13 +174,17 @@ If the log mentions link.exe, cl.exe, Windows SDK, or MSVC, install Visual Studi
     Write-Host "[5/7] Skipping optional Rust tools (-SkipRustBuild)."
 }
 
-Write-Host "[6/7] Applying RTX 5080 + ROGS patches..."
-if ($Mode -eq "3p") {
-    & $Py "$ProjectRoot\scripts\patch_mortal_all.py" --root $InstallRoot
+if ($SkipPatch) {
+    Write-Host "[6/7] Skipping Mortal patch pipeline (-SkipPatch)."
 } else {
-    & $Py "$ProjectRoot\scripts\patch_mortal_4p.py" --root $InstallRoot
+    Write-Host "[6/7] Applying RTX 5080 + ROGS patches..."
+    if ($Mode -eq "3p") {
+        & $Py "$ProjectRoot\scripts\patch_mortal_all.py" --root $InstallRoot
+    } else {
+        & $Py "$ProjectRoot\scripts\patch_mortal_4p.py" --root $InstallRoot
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Mortal patch pipeline failed" }
 }
-if ($LASTEXITCODE -ne 0) { throw "Mortal patch pipeline failed" }
 
 Write-Host "[7/7] Creating runtime directories and config overlays..."
 $env:ROGS_PROJECT_ROOT = $ProjectRoot
@@ -281,8 +278,9 @@ if ($LASTEXITCODE -ne 0) { throw "Runtime config generation failed" }
 
 Write-Host ""
 Write-Host "MORTAL_RUNTIME_OK mode=$Mode root=$InstallRoot python=$Py"
+Write-Host "Runtime ABI isolation: $VenvRoot"
 if ($Mode -eq "3p") {
-    Write-Host "Set: `$env:MORTAL_3P_ROOT='$InstallRoot'"
+    Write-Host "Override (optional): `$env:MORTAL_3P_ROOT='$InstallRoot'"
 } else {
-    Write-Host "Set: `$env:MORTAL_4P_ROOT='$InstallRoot'"
+    Write-Host "Override (optional): `$env:MORTAL_4P_ROOT='$InstallRoot'"
 }
