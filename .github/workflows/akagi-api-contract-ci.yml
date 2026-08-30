@@ -32,6 +32,7 @@ jobs:
         run: |
           python -m py_compile \
             app/inference_benchmark.py \
+            app/inference_production.py \
             serving/inference.py \
             serving/resilient.py \
             serving/coordination.py \
@@ -41,6 +42,7 @@ jobs:
             scripts/smoke_akagi_api.py \
             scripts/smoke_inference_coordination.py \
             scripts/smoke_inference_soak.py \
+            scripts/smoke_inference_production_profile.py \
             scripts/smoke_vanilla_akagi_client.py \
             scripts/check_mortal_api_checkpoint.py \
             scripts/export_akagi_mortal.py \
@@ -56,7 +58,8 @@ jobs:
             tests/test_inference_scheduler.py \
             tests/test_inference_benchmark_contract.py \
             tests/test_inference_coordination.py \
-            tests/test_inference_soak_contract.py
+            tests/test_inference_soak_contract.py \
+            tests/test_inference_production_contract.py
 
       - name: Verify pinned untouched AkagiOT client source
         run: |
@@ -93,7 +96,13 @@ jobs:
           grep -q 'MORTAL_INFERENCE_PRODUCTION_PRESET_OK' scripts/soak_inference_api.py
           grep -q 'MORTAL_INFERENCE_SOAK_E2E_OK' scripts/smoke_inference_soak.py
           grep -q 'MORTAL_INFERENCE_PRODUCTION_PRESET_E2E_OK' scripts/smoke_inference_soak.py
+          grep -q 'MORTAL_INFERENCE_PRODUCTION_APPLY_E2E_OK' scripts/smoke_inference_production_profile.py
+          grep -q 'MORTAL_INFERENCE_PRODUCTION_ROLLBACK_E2E_OK' scripts/smoke_inference_production_profile.py
           grep -q 'mortal-rogs-serving-soak-v1' scripts/soak_inference_api.py
+          grep -q 'mortal-rogs-serving-profile-v1' app/inference_production.py
+          grep -q 'restore_profile(path, previous_bytes)' app/inference_production.py
+          grep -q '/api/inference/production/apply' app/inference_benchmark.py
+          grep -q '/api/inference/production/status' app/inference_benchmark.py
           grep -q 'request_deadline_ms' serving/resilient.py
           grep -q 'DeviceExecutionCoordinator' serving/coordination.py
           grep -q 'RequestLifecycle' serving/coordination.py

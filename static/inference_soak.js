@@ -1,4 +1,5 @@
 let latestInferenceSoak = null;
+let latestInferenceProductionProfile = null;
 
 function soakNumber(id, fallback) {
   const value = Number(document.getElementById(id)?.value);
@@ -32,10 +33,13 @@ function ensureInferenceSoakControls() {
     '<div class="button-row top-gap">',
     '<button class="secondary" onclick="startInferenceSoak()">RTX 5080 Production Soak 시작</button>',
     '<button class="secondary" onclick="loadInferenceSoak()">최신 Soak 결과</button>',
-    '<button class="secondary" onclick="applyInferenceSoakPreset()">Production preset을 Tuning에 적용</button>',
+    '<button class="secondary" onclick="applyInferenceSoakPreset()">Preset을 Tuning에 복사</button>',
+    '<button onclick="applyInferenceProductionProfile()">Production preset 원자 적용</button>',
+    '<button class="secondary" onclick="loadInferenceProductionProfile()">Production profile 상태</button>',
     '</div>',
-    '<div class="subtle top-gap">Production gate는 최소 30분 실측을 요구합니다. 더 짧은 실행도 smoke report로 저장되지만 production eligible로 판정하지 않습니다. Reload stress는 기본 OFF입니다.</div>',
+    '<div class="subtle top-gap">Production gate는 최소 30분 실측을 요구합니다. 원자 적용은 profile 저장 → graceful drain → 재시작 → health/모델/serving 설정 검증 순서로 수행하며, 실패하면 이전 profile과 서버 설정으로 자동 rollback합니다.</div>',
     '<div id="inferenceSoakResult" class="subtle top-gap">Soak 미실행</div>',
+    '<div id="inferenceProductionProfileResult" class="subtle top-gap">Production profile 확인 중…</div>',
   ].join('');
   anchor.insertAdjacentElement('afterend', root);
   return root;
@@ -66,6 +70,22 @@ function renderInferenceSoak(report, path='') {
     : `GPU telemetry ${gpu.last_error || 'unavailable'}`;
   const deviceText = `device peak ${device.peak_active_executions ?? '-'} · waiting peak ${device.peak_waiting_executions ?? '-'} · contention ${device.contended_acquisitions_total ?? '-'} · wait p95 ${inferenceMetricNumber(device.wait_ms?.p95,1)}ms`;
   el.textContent = `${gateText} · ${elapsedMin.toFixed(1)}m · ${modeText} · ${gpuText} · ${deviceText} · preset ${preset.eligible ? 'READY' : 'BLOCKED'}${path ? ` · ${path}` : ''}${observed.failed_requests ? ` · failed ${observed.failed_requests}` : ''}`;
+}
+
+function renderInferenceProductionProfile(result) {
+  ensureInferenceSoakControls();
+  latestInferenceProductionProfile = result?.profile || null;
+  const el = document.getElementById('inferenceProductionProfileResult');
+  if (!el) return;
+  if (!result?.available || !result.profile) {
+    el.textContent = `Production profile 없음${result?.path ? ` · ${result.path}` : ''}`;
+    return;
+  }
+  const profile = result.profile;
+  const serving = profile.serving || {};
+  const target = profile.target || {};
+  const source = profile.source || {};
+  el.textContent = `Production ${String(profile.status || 'unknown').toUpperCase()} · ${target.device || '-'} · ${target.host || '-'}:${target.port || '-'} · merge ${serving.micro_batch_ms ?? '-'}ms · pending ${serving.max_pending_requests ?? '-'} · deadline ${serving.request_deadline_ms ?? '-'}ms · reload quiet/wait ${serving.reload_quiet_ms ?? '-'}/${serving.reload_wait_ms ?? '-'}ms · source ${source.report || '-'}${result.path ? ` · ${result.path}` : ''}`;
 }
 
 function inferenceSoakBody() {
@@ -112,6 +132,19 @@ async function loadInferenceSoak() {
   }
 }
 
+async function loadInferenceProductionProfile() {
+  ensureInferenceSoakControls();
+  try {
+    const result = await api('/api/inference/production/status');
+    renderInferenceProductionProfile(result);
+    return result;
+  } catch (e) {
+    const el = document.getElementById('inferenceProductionProfileResult');
+    if (el) el.textContent = `Production profile 오류 · ${e.message}`;
+    throw e;
+  }
+}
+
 function applyInferenceSoakPreset() {
   const preset = latestInferenceSoak?.production_preset;
   if (!preset?.eligible || !preset.settings) {
@@ -133,13 +166,46 @@ function applyInferenceSoakPreset() {
   }
   const tuning = document.getElementById('inferenceTuning');
   if (tuning) tuning.dataset.dirty = '1';
-  toast(`Production preset 적용 · shared-device=${settings.max_device_executions ?? 1} 고정 · API 시작/재시작으로 적용하세요.`);
+  toast(`Production preset을 입력값에 복사했습니다. shared-device=${settings.max_device_executions ?? 1}은 production 경로에서 1로 고정됩니다.`);
+}
+
+async function applyInferenceProductionProfile() {
+  const preset = latestInferenceSoak?.production_preset;
+  if (!preset?.eligible || latestInferenceSoak?.production_gate?.passed !== true) {
+    toast('최신 30분 Production PASS soak 결과를 먼저 불러오세요.', true);
+    return;
+  }
+  try {
+    toast('Production preset 적용 시작 · graceful drain/restart/검증 후 실패 시 자동 rollback');
+    const result = await api('/api/inference/production/apply', {
+      method:'POST',
+      body:JSON.stringify({verify_timeout_s:180}),
+    });
+    await Promise.all([
+      typeof loadInference === 'function' ? loadInference() : Promise.resolve(),
+      typeof loadInferenceTelemetry === 'function' ? loadInferenceTelemetry() : Promise.resolve(),
+      loadInferenceProductionProfile(),
+    ]);
+    toast(`Production preset 적용 완료 · rollback ${result.rolled_back ? 'YES' : 'NO'}`);
+    return result;
+  } catch (e) {
+    await Promise.allSettled([
+      typeof loadInference === 'function' ? loadInference() : Promise.resolve(),
+      typeof loadInferenceTelemetry === 'function' ? loadInferenceTelemetry() : Promise.resolve(),
+      loadInferenceProductionProfile(),
+    ]);
+    toast(`Production preset 적용 실패 · 서버 rollback 결과를 확인하세요: ${e.message}`, true);
+    throw e;
+  }
 }
 
 window.startInferenceSoak = startInferenceSoak;
 window.loadInferenceSoak = loadInferenceSoak;
 window.applyInferenceSoakPreset = applyInferenceSoakPreset;
+window.applyInferenceProductionProfile = applyInferenceProductionProfile;
+window.loadInferenceProductionProfile = loadInferenceProductionProfile;
 window.addEventListener('DOMContentLoaded', () => {
   ensureInferenceSoakControls();
   loadInferenceSoak();
+  loadInferenceProductionProfile();
 });

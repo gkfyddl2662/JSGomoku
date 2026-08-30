@@ -128,6 +128,14 @@ jobs:
             --runtime-root /tmp/mortal-libriichi-package \
             --device cpu
 
+      - name: Run production serving profile apply and rollback E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_inference_production_profile.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
+
       - name: Run untouched vanilla AkagiOT client against Mortal API
         env:
           PYTHONDONTWRITEBYTECODE: '1'
