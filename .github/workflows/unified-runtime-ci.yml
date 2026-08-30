@@ -152,20 +152,29 @@ jobs:
       - name: Test Control Center unified and legacy routing
         run: python -m pytest -q tests/test_unified_runtime.py tests/test_dual_runtime.py
 
-      - name: Validate Windows bootstrap syntax and managed-runtime contract
+      - name: Validate Windows bootstrap and smoke launchers
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path 'scripts/bootstrap_unified_runtime.ps1'),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Host $_.Message }
-            exit 1
+          $failed = $false
+          foreach ($path in @(
+            'scripts/bootstrap_unified_runtime.ps1',
+            'scripts/smoke_unified_windows.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "PowerShell parse errors in $path"
+              $errors | ForEach-Object { Write-Host $_.Message }
+              $failed = $true
+            }
           }
+          if ($failed) { exit 1 }
+
           foreach ($pattern in @(
             'MORTAL_UNIFIED_BOOTSTRAP_OK',
             'config\.3p\.toml',
@@ -178,6 +187,17 @@ jobs:
             'Write-ManagedMarker'
           )) {
             if (-not (Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern $pattern -Quiet)) { exit 1 }
+          }
+
+          foreach ($pattern in @(
+            'MORTAL_UNIFIED_ROOT',
+            'MORTAL_UNIFIED_RUNTIME_SMOKE_OK',
+            'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
+            'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK',
+            'one_vs_two\.py',
+            'one_vs_three\.py'
+          )) {
+            if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) { exit 1 }
           }
 
       - name: Verify production patch chain can be refreshed and reapplied
