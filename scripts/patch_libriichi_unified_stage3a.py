@@ -60,10 +60,15 @@ def patch_event(text: str) -> str:
     text = text.replace("        deltas: Option<[i32; 4]>,\n", "        deltas: Option<Vec<i32>>,\n")
     text = replace_once(
         text,
-        "            | Self::Ankan { actor, .. }\n            | Self::Reach { actor, .. } => Some(actor),\n",
+        "            | Self::Ankan { actor, .. }\n"
+        "            | Self::Reach { actor, .. }\n"
+        "            | Self::ReachAccepted { actor, .. }\n"
+        "            | Self::Hora { actor, .. } => Some(actor),\n",
         "            | Self::Ankan { actor, .. }\n"
         "            | Self::Nukidora { actor, .. }\n"
-        "            | Self::Reach { actor, .. } => Some(actor),\n",
+        "            | Self::Reach { actor, .. }\n"
+        "            | Self::ReachAccepted { actor, .. }\n"
+        "            | Self::Hora { actor, .. } => Some(actor),\n",
         "nukidora actor",
     )
     text = replace_once(
