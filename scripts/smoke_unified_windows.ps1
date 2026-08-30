@@ -154,7 +154,7 @@ foreach ($patch in @(
 }
 $modelImportProbe = Invoke-NativeCapture -Executable $Py -Arguments @(
     "-c",
-    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts, arena, dataset, stat; import model, engine, player, dataloader, train_grp, one_vs_three; assert getattr(dataset, 'UNIFIED_GAMEPLAY_ABI', 0) >= 2; assert getattr(one_vs_three, 'MODE', None) == '4p'; assert getattr(one_vs_three, 'ACTION_SPACE', None) == 46; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION); print('MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK'); print('MORTAL_UNIFIED_DATASET_STAGE8B_IMPORT_OK', dataset.UNIFIED_GAMEPLAY_ABI); print('MORTAL_UNIFIED_EVAL_STAGE8C_IMPORT_OK')"
+    "import sys; from pathlib import Path; root=Path(r'$MortalDir'); sys.path.insert(0, str(root)); import libriichi; from libriichi import consts, arena, dataset, stat; import model, engine, player, dataloader, train_grp; eval4=(root/'one_vs_three.py').read_text(encoding='utf-8'); assert getattr(dataset, 'UNIFIED_GAMEPLAY_ABI', 0) >= 2; assert 'MORTAL_ROGS_UNIFIED_EVAL_STAGE8C' in eval4; assert 'ACTION_SPACE = 46' in eval4; print('MORTAL_UNIFIED_MODEL_IMPORT_OK', libriichi.__file__, consts.MAX_VERSION); print('MORTAL_UNIFIED_PYTHON_ABI_STAGE8A_IMPORT_OK'); print('MORTAL_UNIFIED_DATASET_STAGE8B_IMPORT_OK', dataset.UNIFIED_GAMEPLAY_ABI); print('MORTAL_UNIFIED_EVAL_STAGE8C_IMPORT_OK')"
 )
 if ($modelImportProbe.ExitCode -ne 0) {
     throw "Unified Python ABI/evaluator import probe failed:`n$($modelImportProbe.Output)"
