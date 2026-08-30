@@ -32,7 +32,9 @@ class MortalController:
         return {
             "mode": runtime.mode,
             "players": runtime.players,
+            "unified": runtime.unified,
             "mortal_root": str(runtime.root),
+            "mode_root": str(runtime.mode_root),
             "mortal_dir": str(runtime.mortal_dir),
             "python": str(runtime.python_executable),
             "config_file": str(runtime.config_file),
@@ -46,13 +48,19 @@ class MortalController:
     def _mortal_env(self, runtime: MortalRuntime) -> dict[str, str]:
         existing = os.environ.get("PYTHONPATH", "")
         project = str(self.s.project_root)
-        pythonpath = project if not existing else project + os.pathsep + existing
-        return {
+        mortal_dir = str(runtime.mortal_dir)
+        components = [project, mortal_dir]
+        if existing:
+            components.append(existing)
+        env = {
             "MORTAL_CFG": str(runtime.config_file),
             "MORTAL_GAME_MODE": runtime.mode,
             "MORTAL_PLAYER_COUNT": str(runtime.players),
-            "PYTHONPATH": pythonpath,
+            "PYTHONPATH": os.pathsep.join(components),
         }
+        if runtime.unified:
+            env["MORTAL_UNIFIED_ROOT"] = str(runtime.root)
+        return env
 
     def command_for(self, kind: str, args: dict[str, Any] | None = None) -> tuple[list[str], Path, dict[str, str]]:
         args = args or {}
@@ -85,7 +93,9 @@ class MortalController:
             return table[kind], md, env
 
         if kind == "patch":
-            if mode == "3p":
+            if runtime.unified:
+                script = self.s.project_root / "scripts" / "patch_mortal_unified_all.py"
+            elif mode == "3p":
                 script = self.s.project_root / "scripts" / "patch_mortal_all.py"
             else:
                 script = self.s.project_root / "scripts" / "patch_mortal_4p.py"
@@ -93,8 +103,44 @@ class MortalController:
 
         if kind == "bootstrap_runtime":
             if os.name != "nt":
-                raise ValueError("Dual Mortal bootstrap currently targets Windows")
-            script = self.s.project_root / "scripts" / "bootstrap_runtime.ps1"
+                raise ValueError("Mortal bootstrap currently targets Windows")
+            if runtime.unified:
+                script = self.s.project_root / "scripts" / "bootstrap_unified_runtime.ps1"
+                cmd = [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script),
+                    "-InstallRoot",
+                    str(runtime.root),
+                ]
+            else:
+                script = self.s.project_root / "scripts" / "bootstrap_runtime.ps1"
+                cmd = [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script),
+                    "-Mode",
+                    mode,
+                    "-InstallRoot",
+                    str(runtime.root),
+                ]
+            if bool(args.get("skip_rust_build", False)):
+                cmd.append("-SkipRustBuild")
+            if bool(args.get("install_rust_if_missing", False)):
+                cmd.append("-InstallRustIfMissing")
+            return cmd, self.s.project_root, {}
+
+        if kind == "bootstrap_unified_runtime":
+            if os.name != "nt":
+                raise ValueError("Unified Mortal bootstrap currently targets Windows")
+            root = self.s.mortal_unified_root or (self.s.project_root.parent / "Mortal_Unified").resolve()
+            script = self.s.project_root / "scripts" / "bootstrap_unified_runtime.ps1"
             cmd = [
                 "powershell.exe",
                 "-NoProfile",
@@ -102,13 +148,13 @@ class MortalController:
                 "Bypass",
                 "-File",
                 str(script),
-                "-Mode",
-                mode,
                 "-InstallRoot",
-                str(runtime.root),
+                str(root),
             ]
             if bool(args.get("skip_rust_build", False)):
                 cmd.append("-SkipRustBuild")
+            if bool(args.get("install_rust_if_missing", False)):
+                cmd.append("-InstallRustIfMissing")
             return cmd, self.s.project_root, {}
 
         if kind == "mjx_setup":
@@ -245,6 +291,11 @@ class MortalController:
             raise ValueError(
                 "The bundled Lawrence Tenhou conversion tools are 3P-only. "
                 "For 4P, point the Mortal dataset.globs setting at native 4P JSON.gz logs."
+            )
+        if kind in {"convert", "tenhou_dl"} and runtime.unified:
+            raise ValueError(
+                "The unified canonical Mortal runtime does not bundle Lawrence's legacy Tenhou tools. "
+                "Keep the legacy 3P runtime for conversion, or feed converted JSON.gz logs into runtime/3p/data."
             )
 
         if kind == "convert":
