@@ -80,6 +80,12 @@ jobs:
           if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
             throw 'Missing Python unified runtime smoke success marker'
           }
+          if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'TRITON_WINDOWS_OK' -Quiet)) {
+            throw 'Windows compile smoke must verify Triton before torch.compile'
+          }
+          if (-not (Select-String -Path requirements.txt -Pattern 'triton-windows>=3\.6,<3\.7; sys_platform == "win32"' -Quiet)) {
+            throw 'PyTorch 2.11 Windows runtime must install Triton 3.6.x'
+          }
           if (-not (Select-String -Path static/app.js -Pattern 'install_rust_if_missing:true' -Quiet)) {
             throw 'Web UI bootstrap must request one-click native prerequisite installation'
           }
