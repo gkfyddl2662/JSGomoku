@@ -56,6 +56,7 @@ def compute_mortal_rogs_batch(
     cql_loss: Tensor | None,
     config: Mapping[str, Any],
     steps: int,
+    enable_behavior_cloning: bool = True,
     oracle_q: Tensor | None = None,
     search_q: Tensor | None = None,
 ) -> MortalROGSBatch:
@@ -73,9 +74,9 @@ def compute_mortal_rogs_batch(
         clip=float(config.get("objective", {}).get("regret_clip", 12.0)),
     )
 
-    # Offline logged actions provide a lightweight behavior-cloning anchor. It
-    # uses the same Q/action head and therefore adds no deployment parameters.
-    bc_loss = F.cross_entropy(outputs.q, actions.long())
+    # Logged expert actions can anchor offline training. Online self-play should
+    # normally disable this term so it does not merely imitate its own samples.
+    bc_loss = F.cross_entropy(outputs.q, actions.long()) if enable_behavior_cloning else None
 
     base = _base_weights(config)
     weights = curriculum_weights(
@@ -86,6 +87,16 @@ def compute_mortal_rogs_batch(
         cql_final=float(config.get("rogs", {}).get("cql_final_weight", 0.05)),
         regret_final=float(config.get("rogs", {}).get("regret_final_weight", 0.75)),
     )
+    if not enable_behavior_cloning:
+        weights = ROGSWeights(
+            value=weights.value,
+            regret=weights.regret,
+            oracle=weights.oracle,
+            search=weights.search,
+            behavior_cloning=0.0,
+            cql=weights.cql,
+            entropy=weights.entropy,
+        )
 
     result = compose_rogs_objective(
         value_pred=outputs.value,
