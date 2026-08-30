@@ -48,6 +48,33 @@ async function loadSetup() {
   } catch(e){ toast(e.message,true); }
 }
 
+async function loadEvaluation() {
+  try {
+    const e=await api('/api/evaluation/backends');
+    const p3=e.primary?.['3p'];
+    const p4=e.primary?.['4p'];
+    const runtime=e.runtime||{};
+    const rows=[
+      ['3P Primary', p3?.name||'-'],
+      ['4P Primary', p4?.name||'-'],
+      ['MJX Ref', runtime.mjx_ref||'-'],
+      ['WSL2', runtime.wsl_available?'READY':'NOT FOUND'],
+    ];
+    document.getElementById('evaluationBackends').innerHTML=rows.map(([a,b])=>`<div><label>${a}</label><strong>${b}</strong></div>`).join('');
+    document.getElementById('evaluationNote').textContent = `4P ${p4?.name||'-'} · ${p4?.batched_agent?'batched inference':'single inference'} · 3P ${p3?.name||'-'} · MJX runtime ${runtime.mjx_runtime||'wsl2'} / Python ${runtime.mjx_python||'3.11'}`;
+  } catch(e){ toast(`평가 backend: ${e.message}`,true); }
+}
+
+function mjxArgs(){
+  return {
+    distro: document.getElementById('mjxDistro')?.value || '',
+    linux_root: document.getElementById('mjxLinuxRoot')?.value || '~/mortal-rogs-mjx',
+  };
+}
+
+async function setupMjx(){ return startJob('mjx_setup', mjxArgs()); }
+async function probeMjx(){ return startJob('mjx_probe', mjxArgs()); }
+
 async function loadData() {
   try {
     const d=await api('/api/data');
@@ -140,7 +167,7 @@ async function loadSelectedJob() {
 
 async function stopSelected(){ if(!selectedJob)return; try{await api(`/api/jobs/${selectedJob}/stop`,{method:'POST'});toast('프로세스를 중지했습니다.');await loadJobs();}catch(e){toast(e.message,true);} }
 
-async function refreshAll(){ await Promise.all([loadSystem(),loadSetup(),loadData(),loadCheckpoints(),loadJobs()]); }
+async function refreshAll(){ await Promise.all([loadSystem(),loadSetup(),loadEvaluation(),loadData(),loadCheckpoints(),loadJobs()]); }
 
 window.addEventListener('load', async()=>{
   await refreshAll(); await loadConfig();
