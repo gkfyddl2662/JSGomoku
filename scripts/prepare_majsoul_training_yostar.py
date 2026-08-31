@@ -3,6 +3,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,10 @@ from scripts import prepare_majsoul_training as base  # noqa: E402
 YOSTAR_PATCHER = PROJECT_ROOT / "scripts" / "patch_tenhou_to_mjai_yostar.py"
 YOSTAR_UID_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_UID"
 YOSTAR_TOKEN_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_TOKEN"
+YOSTAR_PACKET_HEX_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_HEX"
+YOSTAR_OAUTH_TYPE_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_TYPE"
+YOSTAR_LOCALE_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_LOCALE"
+YOSTAR_OAUTH_METHOD = b".lq.Lobby.oauth2Auth"
 
 _ORIGINAL_READ_CREDENTIALS = base.read_credentials
 
@@ -32,6 +37,138 @@ def _server_from_argv(argv: list[str] | None = None) -> str:
 
 def auth_mode_for_server(server: str) -> str:
     return "yostar-oauth-en-kr" if server.lower() == "en" else "native"
+
+
+def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    for _ in range(10):
+        if pos >= len(data):
+            raise RuntimeError("truncated protobuf varint in Yostar oauth2Auth packet")
+        byte = data[pos]
+        pos += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, pos
+        shift += 7
+    raise RuntimeError("invalid protobuf varint in Yostar oauth2Auth packet")
+
+
+def _parse_protobuf_fields(data: bytes) -> dict[int, list[int | bytes]]:
+    fields: dict[int, list[int | bytes]] = {}
+    pos = 0
+    while pos < len(data):
+        key, pos = _read_varint(data, pos)
+        field = key >> 3
+        wire = key & 0x07
+        if field <= 0:
+            raise RuntimeError("invalid protobuf field in Yostar oauth2Auth packet")
+        if wire == 0:
+            value, pos = _read_varint(data, pos)
+        elif wire == 1:
+            end = pos + 8
+            if end > len(data):
+                raise RuntimeError("truncated fixed64 field in Yostar oauth2Auth packet")
+            value = data[pos:end]
+            pos = end
+        elif wire == 2:
+            length, pos = _read_varint(data, pos)
+            end = pos + length
+            if end > len(data):
+                raise RuntimeError("truncated length-delimited field in Yostar oauth2Auth packet")
+            value = data[pos:end]
+            pos = end
+        elif wire == 5:
+            end = pos + 4
+            if end > len(data):
+                raise RuntimeError("truncated fixed32 field in Yostar oauth2Auth packet")
+            value = data[pos:end]
+            pos = end
+        else:
+            raise RuntimeError(f"unsupported protobuf wire type {wire} in Yostar oauth2Auth packet")
+        fields.setdefault(field, []).append(value)
+    return fields
+
+
+def parse_yostar_oauth2auth_hex(value: str) -> tuple[str, str, int, str] | None:
+    """Parse a captured oauth2Auth websocket/protobuf packet.
+
+    Returns (uid, redirect_code, oauth_type, client_version). Short ordinary
+    UID/token strings intentionally return None so normal credential entry keeps
+    working. A long hex packet that is not oauth2Auth fails explicitly.
+    """
+    raw = value.strip()
+    if not raw:
+        return None
+
+    compact = re.sub(r"(?i)0x", "", raw)
+    compact = re.sub(r"[\s:_-]+", "", compact)
+    if len(compact) < 48 or not re.fullmatch(r"[0-9a-fA-F]+", compact):
+        return None
+    if len(compact) % 2:
+        raise RuntimeError("Yostar oauth2Auth hex packet has an odd number of hex digits")
+
+    try:
+        packet = bytes.fromhex(compact)
+    except ValueError as exc:
+        raise RuntimeError("invalid Yostar oauth2Auth hex packet") from exc
+
+    marker_pos = packet.find(YOSTAR_OAUTH_METHOD)
+    if marker_pos < 0:
+        raise RuntimeError("hex input is not a .lq.Lobby.oauth2Auth packet")
+
+    pos = marker_pos + len(YOSTAR_OAUTH_METHOD)
+    key, pos = _read_varint(packet, pos)
+    if (key >> 3, key & 0x07) != (2, 2):
+        raise RuntimeError("oauth2Auth packet wrapper is missing protobuf payload field 2")
+    payload_len, pos = _read_varint(packet, pos)
+    end = pos + payload_len
+    if end > len(packet):
+        raise RuntimeError("oauth2Auth packet protobuf payload is truncated")
+
+    fields = _parse_protobuf_fields(packet[pos:end])
+    try:
+        oauth_type_raw = fields[1][0]
+        code_raw = fields[2][0]
+        uid_raw = fields[3][0]
+        version_raw = fields[4][0]
+    except (KeyError, IndexError) as exc:
+        raise RuntimeError("oauth2Auth packet is missing type/code/uid/version fields") from exc
+
+    if not isinstance(oauth_type_raw, int):
+        raise RuntimeError("oauth2Auth type field is not a varint")
+    if not all(isinstance(item, bytes) for item in (code_raw, uid_raw, version_raw)):
+        raise RuntimeError("oauth2Auth code/uid/version fields are not strings")
+
+    try:
+        code = code_raw.decode("utf-8").strip()
+        uid = uid_raw.decode("utf-8").strip()
+        client_version = version_raw.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("oauth2Auth packet contains non-UTF-8 credential fields") from exc
+
+    if not uid.isdigit():
+        raise RuntimeError("oauth2Auth packet UID is not numeric")
+    if not code:
+        raise RuntimeError("oauth2Auth packet redirect code is empty")
+    if not client_version.startswith("WebGL_"):
+        raise RuntimeError("oauth2Auth packet client version is not a WebGL version")
+    if not (0 < oauth_type_raw < 256):
+        raise RuntimeError(f"oauth2Auth packet OAuth type is out of range: {oauth_type_raw}")
+    return uid, code, oauth_type_raw, client_version
+
+
+def _use_packet_credentials(packet_hex: str) -> tuple[str, str] | None:
+    parsed = parse_yostar_oauth2auth_hex(packet_hex)
+    if parsed is None:
+        return None
+    uid, token, oauth_type, client_version = parsed
+    os.environ[YOSTAR_OAUTH_TYPE_ENV] = str(oauth_type)
+    print(
+        f"MAJSOUL_YOSTAR_PACKET_PARSED oauth_type={oauth_type} client_version={client_version}",
+        flush=True,
+    )
+    return uid, token
 
 
 def install_tool(tools: Path) -> Path:
@@ -77,12 +214,26 @@ def read_credentials(username_arg: str | None) -> tuple[str, str]:
     if server != "en":
         return _ORIGINAL_READ_CREDENTIALS(username_arg)
 
-    uid = (username_arg or os.environ.get(YOSTAR_UID_ENV, "")).strip()
-    if not uid:
-        if not sys.stdin.isatty():
-            raise RuntimeError(f"set {YOSTAR_UID_ENV} for non-interactive EN/Yostar use")
-        uid = input("Mahjong Soul Yostar UID: ").strip()
+    packet_env = os.environ.get(YOSTAR_PACKET_HEX_ENV, "").strip()
+    if packet_env:
+        packet_credentials = _use_packet_credentials(packet_env)
+        if packet_credentials is None:
+            raise RuntimeError(f"{YOSTAR_PACKET_HEX_ENV} does not contain an oauth2Auth hex packet")
+        return packet_credentials
 
+    uid_or_packet = (username_arg or os.environ.get(YOSTAR_UID_ENV, "")).strip()
+    if not uid_or_packet:
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                f"set {YOSTAR_PACKET_HEX_ENV} or {YOSTAR_UID_ENV} for non-interactive EN/Yostar use"
+            )
+        uid_or_packet = input("Mahjong Soul Yostar UID or oauth2Auth packet hex: ").strip()
+
+    packet_credentials = _use_packet_credentials(uid_or_packet)
+    if packet_credentials is not None:
+        return packet_credentials
+
+    uid = uid_or_packet
     token = os.environ.get(YOSTAR_TOKEN_ENV, "")
     if not token:
         if not sys.stdin.isatty():
@@ -90,7 +241,7 @@ def read_credentials(username_arg: str | None) -> tuple[str, str]:
         token = getpass.getpass("Mahjong Soul Yostar redirect token: ")
 
     if not uid.isdigit():
-        raise RuntimeError("Mahjong Soul Yostar UID must be numeric")
+        raise RuntimeError("Mahjong Soul Yostar UID must be numeric, or paste the full oauth2Auth hex packet")
     if not token:
         raise RuntimeError("Mahjong Soul Yostar redirect token cannot be empty")
     return uid, token
@@ -104,8 +255,14 @@ def main() -> int:
     try:
         return base.main()
     finally:
-        os.environ.pop(YOSTAR_TOKEN_ENV, None)
-        os.environ.pop(YOSTAR_UID_ENV, None)
+        for name in (
+            YOSTAR_TOKEN_ENV,
+            YOSTAR_UID_ENV,
+            YOSTAR_PACKET_HEX_ENV,
+            YOSTAR_OAUTH_TYPE_ENV,
+            YOSTAR_LOCALE_ENV,
+        ):
+            os.environ.pop(name, None)
 
 
 if __name__ == "__main__":
