@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts import prepare_selfplay_population as base
 from scripts.akagi_3p_compat import (
@@ -21,7 +26,6 @@ _ORIGINAL_VALIDATE = base.validate_checkpoint
 def _legacy_forward_probe(*, runtime_root: Path, checkpoint: Path, device: str) -> dict[str, object]:
     started = time.monotonic()
     import importlib.util
-    import sys
     import torch
 
     paths = base.runtime_paths(runtime_root, "3p")
