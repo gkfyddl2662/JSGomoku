@@ -70,7 +70,7 @@ function Invoke-CheckedNative {
         if ($pushed) { Pop-Location }
     }
     if ($exitCode -ne 0) {
-        throw "Command failed with exit code $exitCode: $Executable $($CommandArgs -join ' ')"
+        throw "Command failed with exit code ${exitCode}: $Executable $($CommandArgs -join ' ')"
     }
 }
 
