@@ -1,0 +1,46 @@
+name: Akagi 3P Compatibility CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-libriichi3p:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run compatibility source tests
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pytest -q tests/test_akagi_3p_compat.py
+      - name: Clone pinned Akagi-NG
+        run: |
+          git clone --no-checkout https://github.com/Xe-Persistent/Akagi-NG.git /tmp/akagi-ng
+          git -C /tmp/akagi-ng fetch --depth 1 origin 11c0ffc0d70bf8142585b92405b4412976c9e205
+          git -C /tmp/akagi-ng checkout --detach --force 11c0ffc0d70bf8142585b92405b4412976c9e205
+          test "$(git -C /tmp/akagi-ng rev-parse HEAD)" = "11c0ffc0d70bf8142585b92405b4412976c9e205"
+      - name: Import pinned 3P encoder contract
+        run: |
+          mkdir -p /tmp/akagi-compat-lib
+          cp /tmp/akagi-ng/lib/libriichi3p-3.12-x86_64-unknown-linux-gnu.so /tmp/akagi-compat-lib/libriichi3p.so
+          PYTHONPATH=/tmp/akagi-compat-lib python - <<'PY'
+          import libriichi3p
+
+          assert tuple(libriichi3p.consts.obs_shape(4)) == (775, 34), libriichi3p.consts.obs_shape(4)
+          assert int(libriichi3p.consts.ACTION_SPACE) == 44, libriichi3p.consts.ACTION_SPACE
+          assert hasattr(libriichi3p, 'mjai')
+          assert hasattr(libriichi3p.mjai, 'Bot')
+          print('AKAGI_PINNED_LIBRIICHI3P_CONTRACT_OK obs=775 actions=44')
+          PY
