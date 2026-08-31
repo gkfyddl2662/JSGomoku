@@ -16,12 +16,16 @@ class MortalROGSBatch:
     outputs: MortalV4Outputs
     chosen_q: Tensor
     objective: ROGSObjectiveResult
+    regret_target: Tensor
+    legal_action_count: Tensor
+    oracle_available: bool
+    search_available: bool
 
 
 def is_rogs_enabled(config: Mapping[str, Any], version: int) -> bool:
-    # The parameter-free dueling decomposition is the deployment-ABI contract.
-    # Akagi-compatible production exports are version 4; version 5 can be used
-    # only for research and must fail the export compatibility gate.
+    # v4 is the canonical Mortal compatibility backend. A research-only custom
+    # version may call the same objective helper, but AkagiOT itself does not
+    # require a Mortal checkpoint version; that is a backend/export concern.
     return bool(config.get("rogs", {}).get("enabled", False)) and version in (4, 5)
 
 
@@ -60,7 +64,7 @@ def compute_mortal_rogs_batch(
     oracle_q: Tensor | None = None,
     search_q: Tensor | None = None,
 ) -> MortalROGSBatch:
-    """Build the ROGS scalar loss from an unchanged Mortal v4/v5 DQN head."""
+    """Build the ROGS scalar loss from a Mortal-compatible dueling DQN head."""
 
     version = int(config.get("control", {}).get("version", getattr(dqn, "version", 0)))
     if not is_rogs_enabled(config, version):
@@ -117,4 +121,12 @@ def compute_mortal_rogs_batch(
 
     if not torch.isfinite(chosen_q).all():
         raise FloatingPointError("Chosen action contains a non-finite Q value")
-    return MortalROGSBatch(outputs=outputs, chosen_q=chosen_q, objective=result)
+    return MortalROGSBatch(
+        outputs=outputs,
+        chosen_q=chosen_q,
+        objective=result,
+        regret_target=regret_target,
+        legal_action_count=masks.to(torch.bool).sum(dim=-1),
+        oracle_available=oracle_q is not None,
+        search_available=search_q is not None,
+    )
