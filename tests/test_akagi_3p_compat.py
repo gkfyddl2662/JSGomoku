@@ -16,13 +16,16 @@ def test_akagi_3p_compat_contract_is_pinned() -> None:
     assert "libriichi3p.mjai.Bot" in helper
     assert "ensure_unified_3p_arena" in helper
     assert '"rebuild_unified_libriichi.ps1"' in helper
-    assert "from libriichi.arena import OneVsTwo" in helper
+    assert '"patch_mortal_unified_python_abi_stage8a.py"' in helper
+    assert "hasattr(libriichi, 'arena')" in helper
+    assert "hasattr(libriichi.arena, 'OneVsTwo')" in helper
     assert "engine_type = 'mjai-log'" in evaluator
     assert "AKAGI_LEGACY_OBS_CHANNELS = 775" in evaluator
     assert "NATIVE_OBS_CHANNELS = 1010" in evaluator
     assert "m.add_class::<OneVsTwo>()?;" in rebuild
     assert "maturin develop --release" in rebuild
     assert "MORTAL_UNIFIED_3P_ARENA_READY" in rebuild
+    assert "hasattr(libriichi, 'arena')" in rebuild
     assert 'LEGACY_3P_SLOT = "akagi_legacy_champion.pth"' in installer
     assert 'LEGACY_3P_ABI_KIND = "akagi-legacy-775"' in installer
 
