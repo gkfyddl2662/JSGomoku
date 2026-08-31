@@ -34,7 +34,7 @@ NikkeTryHard/tenhou-to-mjai
 69fb75a51c7efef3212be603227b2a58a9717237
 ```
 
-The pin itself is not forked or moved. For current EN authentication, Mortal-ROGS applies the small managed compatibility patch `patches/tenhou-to-mjai-yostar-en.patch` to that exact runtime checkout before building it. The build marker includes the patch digest, so changing the patch forces a rebuild while repeated runs reuse the binary.
+The pin itself is not forked or moved. For current EN authentication, Mortal-ROGS runs the marker-checked compatibility patcher `scripts/patch_tenhou_to_mjai_yostar.py` against that exact runtime checkout before building it. The local build marker includes the patcher digest, so changing the patcher forces a rebuild while repeated runs reuse the binary.
 
 Its Majsoul converter emits `nukidora` for 3P north-tile extraction and supports both three- and four-player MJAI output.
 
@@ -44,16 +44,16 @@ Use this tool only for records you are permitted to access. Downloaded Mahjong S
 
 The repository contains tooling only. It does not contain, publish, mirror, or describe a pre-built Mahjong Soul game-log dataset.
 
-The generated local manifest records source/provenance and preparation configuration but does not store account passwords, Yostar redirect tokens, Mahjong Soul access tokens, or account UIDs.
+The generated local manifest records source/provenance and preparation configuration but does not store account passwords, Yostar redirect tokens, Mahjong Soul access tokens, account UIDs, or pasted OAuth packet hex.
 
 ## Authentication
 
 ### EN / Korean web client
 
-The current EN/KR web client no longer follows the native email/password path used by the pinned downloader. A live socket capture confirmed this sequence:
+The EN/KR web client uses the Yostar OAuth exchange rather than the native email/password path used by the pinned downloader. The relevant sequence is:
 
 ```text
-.lq.Lobby.oauth2Auth   type=23, Yostar redirect token + UID
+.lq.Lobby.oauth2Auth   captured OAuth type + redirect code + UID
         ↓
 Mahjong Soul access token
         ↓
@@ -62,7 +62,7 @@ Mahjong Soul access token
 .lq.Lobby.oauth2Login
 ```
 
-The managed patch connects this flow only for `--server en`. The captured account-specific values are not stored in this repository.
+The managed compatibility layer connects this flow only for `--server en`. Account-specific captured values are not stored in this repository.
 
 Run:
 
@@ -70,18 +70,31 @@ Run:
 .\RUN_MAJSOUL_FULL.bat prepare <3p_target> <4p_target> authorized <grp_steps> en
 ```
 
-Interactive execution asks for:
+At the first interactive prompt you can paste the complete hexadecimal packet for `.lq.Lobby.oauth2Auth` directly:
 
 ```text
-Yostar UID
-Yostar redirect token
+Mahjong Soul Yostar UID or oauth2Auth packet hex:
 ```
 
-For non-interactive local execution, use process-local environment variables and clear them after the run:
+When a full packet is detected, the wrapper extracts and validates all of these fields automatically:
+
+```text
+OAuth type     protobuf field 1
+redirect code  protobuf field 2
+UID            protobuf field 3
+client version protobuf field 4
+```
+
+The extracted OAuth type is forwarded to the patched downloader instead of using a hard-coded provider type. The UID, redirect code, and packet hex are never printed. The only parser marker printed is non-secret metadata such as the detected OAuth type and client-version string.
+
+If you enter a numeric UID instead of packet hex, the wrapper preserves the older two-step flow and asks separately for the Yostar redirect token.
+
+Common packet-dump formatting is accepted: continuous hex, whitespace-separated bytes, and `0x`-prefixed byte text are normalized before parsing. A long hex value that is not an `.lq.Lobby.oauth2Auth` packet fails explicitly instead of being treated as a UID.
+
+For non-interactive local execution, the preferred packet form is a process-local environment variable:
 
 ```powershell
-$env:MORTAL_ROGS_MAJSOUL_YOSTAR_UID = "<uid>"
-$env:MORTAL_ROGS_MAJSOUL_YOSTAR_TOKEN = "<fresh-yostar-redirect-token>"
+$env:MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_HEX = "<full-oauth2Auth-packet-hex>"
 
 C:\Users\small\Downloads\Mortal_Unified\.venv\Scripts\python.exe `
   .\scripts\prepare_majsoul_training_yostar.py `
@@ -90,15 +103,23 @@ C:\Users\small\Downloads\Mortal_Unified\.venv\Scripts\python.exe `
   --server en `
   --authorized-local-use
 
-Remove-Item Env:MORTAL_ROGS_MAJSOUL_YOSTAR_UID -ErrorAction SilentlyContinue
-Remove-Item Env:MORTAL_ROGS_MAJSOUL_YOSTAR_TOKEN -ErrorAction SilentlyContinue
+Remove-Item Env:MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_HEX -ErrorAction SilentlyContinue
 ```
 
-There is intentionally no CLI option for a password or Yostar token.
+Direct UID/token environment variables remain supported for compatibility:
+
+```text
+MORTAL_ROGS_MAJSOUL_YOSTAR_UID
+MORTAL_ROGS_MAJSOUL_YOSTAR_TOKEN
+```
+
+When direct UID/token entry is used, `MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_TYPE` can override the compatibility default if the provider type is known from a capture. `MORTAL_ROGS_MAJSOUL_YOSTAR_LOCALE` can similarly override the current `kr` locale default. Pasting the full oauth2Auth packet is preferred because it preserves the captured provider type automatically.
+
+There is intentionally no CLI option for a password, Yostar token, or packet hex.
 
 The pinned child CLI still exposes a field named `--password`; the compatibility layer reuses that internal argument slot to carry the Yostar redirect token into the patched child process. Mortal-ROGS always redacts it from its own command logging, but the token can be transiently visible to local process-inspection tools while the child process is running.
 
-Because an authentication token pasted into a chat or log should be treated as exposed, obtain a fresh Yostar redirect token for the real local validation rather than reusing a previously shared value.
+Because an authentication packet or token pasted into a chat or log should be treated as exposed, obtain a fresh oauth2Auth packet for the real local validation rather than reusing a previously shared value.
 
 ### CN and JP
 
@@ -109,7 +130,7 @@ MORTAL_ROGS_MAJSOUL_USERNAME
 MORTAL_ROGS_MAJSOUL_PASSWORD
 ```
 
-The `jp` selector is retained for compatibility, but this change does not claim that its authentication path has been live-validated. Do not generalize the EN/KR `type=23` result to JP until a real JP capture/test confirms it.
+The `jp` selector is retained for compatibility, but this change does not claim that its authentication path has been live-validated. Do not generalize an EN/KR capture's OAuth type to JP until a real JP capture/test confirms it.
 
 ## Source modes
 
