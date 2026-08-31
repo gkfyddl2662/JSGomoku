@@ -41,8 +41,9 @@ echo   server    = %SERVER%
 echo   runtime   = %RUNTIME%
 echo.
 if /I "%SERVER%"=="en" (
-  echo EN authentication uses the Yostar OAuth UID + redirect token flow.
-  echo The UID/token are requested interactively and are not written to project configs or manifests.
+  echo EN authentication uses the Yostar OAuth flow.
+  echo Paste the full oauth2Auth packet hex at the first prompt, or enter UID and redirect token separately.
+  echo Parsed credentials are not written to project configs or manifests.
 ) else (
   echo Credentials are requested interactively and are not written to project configs or manifests.
 )
@@ -101,7 +102,7 @@ echo   .\RUN_MAJSOUL_FULL.bat full       [3p_target] [4p_target] authorized [grp
 echo.
 echo server: cn ^| en ^| jp   ^(default: cn^)
 echo.
-echo en: live-validated EN/KR Yostar OAuth flow; prompts for Yostar UID and redirect token.
+echo en: Yostar OAuth flow; paste full oauth2Auth packet hex, or enter UID and redirect token separately.
 echo cn: native account/password flow.
 echo jp: legacy native path is retained but has not been live-validated in this change.
 echo.
