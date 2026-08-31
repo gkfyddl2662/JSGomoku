@@ -9,12 +9,12 @@ from torch.nn import functional as F
 
 @dataclass(frozen=True)
 class MortalV4Outputs:
-    """Parameter-free view of a Mortal v4 DQN output.
+    """Parameter-free view of a Mortal v4-style dueling DQN output.
 
-    Mortal v4 stores a single Linear(1024, 1 + ACTION_SPACE) layer. We expose
-    the value and centred advantage terms without adding any deploy-time
-    parameters, so the resulting state_dict remains fully compatible with
-    standard Mortal/Akagi-NG loaders.
+    The current compatibility backend stores a single Linear(1024, 1 +
+    ACTION_SPACE) layer. We expose value and centred advantage terms without
+    adding parameters. AkagiOT itself does not require this checkpoint layout;
+    preserving it is a Mortal compatibility choice for the current backend.
     """
 
     value: Tensor
@@ -24,7 +24,7 @@ class MortalV4Outputs:
 
 def mortal_v4_outputs(dqn: nn.Module, phi: Tensor, mask: Tensor) -> MortalV4Outputs:
     if not hasattr(dqn, "net"):
-        raise TypeError("ROGS requires a Mortal v4 DQN exposing dqn.net")
+        raise TypeError("ROGS requires a Mortal-compatible DQN exposing dqn.net")
     if mask.dtype != torch.bool:
         mask = mask.to(torch.bool)
 
@@ -42,7 +42,12 @@ def mortal_v4_outputs(dqn: nn.Module, phi: Tensor, mask: Tensor) -> MortalV4Outp
 
 
 def hedge_policy(advantage: Tensor, mask: Tensor, eta: float = 1.0) -> Tensor:
-    """Convert neural cumulative-advantage/regret estimates into a Hedge policy."""
+    """Convert neural cumulative-advantage/regret estimates into a Hedge policy.
+
+    This helper is available for controlled self-play experiments. The current
+    canonical population/self-play behavior path does not call it, so its
+    presence must not be described as active Hedge sampling.
+    """
     if eta <= 0:
         raise ValueError("eta must be positive")
     if mask.dtype != torch.bool:
@@ -62,8 +67,8 @@ def sampled_advantage_target(
 
     This follows the ACH/LuckyJ direction conceptually: policy preference is
     trained from sampled advantage rather than directly maximizing raw return.
-    For three-player sanma this is an optimization heuristic; the two-player
-    zero-sum Nash-convergence guarantee of ACH does not carry over.
+    For three/four-player Mahjong this is an optimization heuristic; the
+    two-player zero-sum Nash-convergence guarantee of ACH does not carry over.
     """
     baseline = value.detach() if detach_baseline else value
     target = returns - baseline.squeeze(-1)
@@ -99,10 +104,11 @@ def masked_teacher_kl(
     *,
     temperature: float = 1.0,
 ) -> Tensor:
-    """Distil oracle/search teacher preferences without changing inference ABI.
+    """Distil optional oracle/search teacher preferences.
 
-    Illegal actions use -inf logits, so the KL term is explicitly zeroed on
-    masked positions to avoid the indeterminate 0 * inf form.
+    The objective interface supports teacher tensors, but the current canonical
+    trainer does not generate or pass oracle_q/search_q. This function is active
+    only when a caller explicitly supplies such tensors.
     """
     if temperature <= 0:
         raise ValueError("temperature must be positive")
@@ -137,5 +143,11 @@ def potential_shaped_reward(
     *,
     gamma: float = 1.0,
 ) -> Tensor:
-    """Suphx-style global-reward-predictor potential shaping."""
+    """Experimental configurable potential helper; not the canonical GRP reward.
+
+    Mortal's active RewardCalculator already uses a potential difference:
+    expected rank utility at the next kyoku minus the previous one. This helper
+    represents a separate gamma-configurable experiment and is not currently
+    called by the canonical trainer/data path.
+    """
     return base_reward + gamma * potential_next - potential_prev
