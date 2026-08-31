@@ -93,6 +93,23 @@ def load_paired_records(path: str | Path) -> list[PairedGameRecord]:
     player_counts = {row.players for row in rows}
     if len(player_counts) != 1:
         raise ValueError("A paired evaluation gate cannot mix 3P and 4P records")
+
+    players = rows[0].players
+    expected_seats = set(range(players))
+    seats_by_seed: dict[int, set[int]] = {}
+    for row in rows:
+        seats_by_seed.setdefault(row.seed, set()).add(row.seat)
+    incomplete = {
+        seed: sorted(expected_seats - seats)
+        for seed, seats in seats_by_seed.items()
+        if seats != expected_seats
+    }
+    if incomplete:
+        preview = list(sorted(incomplete.items()))[:8]
+        raise ValueError(
+            "Paired duplicate evaluation requires a complete seat rotation for every seed; "
+            f"missing_seats={preview}"
+        )
     return rows
 
 
