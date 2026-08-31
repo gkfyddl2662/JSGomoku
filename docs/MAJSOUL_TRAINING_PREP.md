@@ -25,6 +25,7 @@ The downloader prioritizes higher rooms and only falls back when the requested l
 - 3P uses the Amae-Koromo `pl3` API family.
 - 4P uses the Amae-Koromo `pl4` API family.
 - API windows are subdivided automatically when a response reaches the server-side record cap, so the tool does not silently truncate a busy interval.
+- Completed room/day discovery windows are journaled locally, so increasing a target does not needlessly rescan completed windows.
 
 The external converter/downloader is pinned to:
 
@@ -62,18 +63,23 @@ The password is not written to:
 
 The pinned Rust downloader currently accepts its password as a child-process argument, so it can be transiently visible to local process-inspection tools while that child process is running. It is not logged by the Mortal-ROGS wrapper.
 
-For non-interactive local execution, set `MORTAL_ROGS_MAJSOUL_USERNAME` and `MORTAL_ROGS_MAJSOUL_PASSWORD`, call `scripts/prepare_majsoul_training.py` directly, and clear the variables after the run.
+For non-interactive local execution, set `MORTAL_ROGS_MAJSOUL_USERNAME` and `MORTAL_ROGS_MAJSOUL_PASSWORD`, call `scripts/prepare_majsoul_training.py` directly, and clear the variables after the run. `--username` is also accepted, but there is intentionally no `--password` CLI option in the wrapper.
 
 ## Source modes
 
 The ranked-room IDs are taken from the Amae-Koromo mode definitions:
 
-| Mortal mode | API family | Priority |
+| Mortal mode | API family | Default priority |
 | --- | --- | --- |
-| 3P | `pl3` | Sanma Throne -> Sanma Jade -> Sanma Gold |
-| 4P | `pl4` | Throne -> Jade -> Gold |
+| 3P | `pl3` | Sanma Throne 26 -> Sanma Jade 24 -> Sanma Gold 22 |
+| 4P | `pl4` | Throne 16 -> Jade 12 -> Gold 9 |
 
-Only hanchan ranked-room IDs are selected by the default preparation path. East-only rooms are intentionally excluded from the first training bootstrap.
+`--rooms high` is the default and uses only those hanchan ranked rooms. `--rooms all` preserves the same hanchan priority first, then permits East-room fallback:
+
+- 3P East fallback: 25 -> 23 -> 21.
+- 4P East fallback: 15 -> 11 -> 8.
+
+The wrapper never drops to a lower-priority room once the requested target can be filled from the rooms already considered.
 
 ## First preparation
 
@@ -84,11 +90,28 @@ git pull
 .\RUN_MAJSOUL_FULL.bat prepare <3p_target> <4p_target> authorized <grp_steps> cn
 ```
 
-For custom date ranges, API RPS, download delay, or a single game mode, call `scripts/prepare_majsoul_training.py` directly. The batch launcher intentionally keeps the common path small.
+For a custom range or a single mode, call the Python wrapper directly:
 
-`ApiRps` is capped at 4 by the wrapper. UUID discovery is resumable through the local cache, and raw protobuf downloading is resumable through the pinned downloader's completion journal.
+```powershell
+$env:MORTAL_ROGS_MAJSOUL_USERNAME = "<account>"
+C:\Users\small\Downloads\Mortal_Unified\.venv\Scripts\python.exe `
+  .\scripts\prepare_majsoul_training.py `
+  --runtime-root C:\Users\small\Downloads\Mortal_Unified `
+  --modes both `
+  --start-date 2026-01-01 `
+  --end-date 2026-08-30 `
+  --rooms high `
+  --server jp `
+  --api-rps 4 `
+  --download-delay-ms 300 `
+  --authorized-local-use
+```
 
-If the account belongs to another supported Mahjong Soul server, choose `en` or `jp` as the final batch argument.
+Omit `--start-date` to scan back to the earliest supported date for each mode. Omit `--end-date` to use yesterday in UTC. The batch launcher intentionally keeps the common path small.
+
+`--api-rps` is capped at 4 by the wrapper. UUID discovery is resumable through the local metadata and room/day scan journal, and raw protobuf downloading is resumable through the pinned downloader's completion journal.
+
+If the account belongs to another supported Mahjong Soul server, choose `cn`, `en`, or `jp`.
 
 ## Training and comparison
 
@@ -131,11 +154,15 @@ Mortal_Unified/
   runtime/
     majsoul-cache/
       3p/
+        discovery.jsonl
+        scanned-days.log
       4p/
+        discovery.jsonl
+        scanned-days.log
     3p/
       data/majsoul-high-rank/
     4p/
       data/majsoul-high-rank/
 ```
 
-The cache contains UUID discovery metadata, raw protobuf files, converter output, and resumable download journals. These files are local runtime artifacts and are not committed to Git.
+The cache contains UUID discovery metadata, completed discovery-window journals, raw protobuf files, converter output, and resumable download journals. These files are local runtime artifacts and are not committed to Git.

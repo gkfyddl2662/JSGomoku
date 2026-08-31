@@ -33,10 +33,26 @@ MAJSOUL_TOOL_REPO = "https://github.com/NikkeTryHard/tenhou-to-mjai.git"
 MAJSOUL_TOOL_SHA = "69fb75a51c7efef3212be603227b2a58a9717237"
 AMAE_API_ROOT = "https://5-data.amae-koromo.com/api/v2"
 MODE_SOURCES = {
-    "3p": {"api": "pl3", "players": 3, "min_date": "2019-11-29",
-           "rooms": (("throne", 26), ("jade", 24), ("gold", 22))},
-    "4p": {"api": "pl4", "players": 4, "min_date": "2019-08-23",
-           "rooms": (("throne", 16), ("jade", 12), ("gold", 9))},
+    "3p": {
+        "api": "pl3",
+        "players": 3,
+        "min_date": "2019-11-29",
+        "rooms_high": (("throne", 26), ("jade", 24), ("gold", 22)),
+        "rooms_all": (
+            ("throne", 26), ("jade", 24), ("gold", 22),
+            ("throne-east", 25), ("jade-east", 23), ("gold-east", 21),
+        ),
+    },
+    "4p": {
+        "api": "pl4",
+        "players": 4,
+        "min_date": "2019-08-23",
+        "rooms_high": (("throne", 16), ("jade", 12), ("gold", 9)),
+        "rooms_all": (
+            ("throne", 16), ("jade", 12), ("gold", 9),
+            ("throne-east", 15), ("jade-east", 11), ("gold-east", 8),
+        ),
+    },
 }
 API_LIMIT = 500
 MIN_WINDOW_MS = 5 * 60 * 1000
@@ -78,6 +94,14 @@ def fetch_json(url: str, limiter: ApiRateLimiter) -> object:
     raise RuntimeError("unreachable")
 
 
+def room_plan(mode: str, rooms: str) -> tuple[tuple[str, int], ...]:
+    if mode not in MODE_SOURCES:
+        raise ValueError(f"unsupported mode: {mode}")
+    if rooms not in ("high", "all"):
+        raise ValueError(f"unsupported room selection: {rooms}")
+    return tuple(MODE_SOURCES[mode][f"rooms_{rooms}"])
+
+
 def room_url(mode: str, room_mode: int, start_ms: int, end_ms: int) -> str:
     query = urllib.parse.urlencode({"mode": room_mode, "limit": API_LIMIT})
     return f"{AMAE_API_ROOT}/{MODE_SOURCES[mode]['api']}/games/{start_ms}/{end_ms}?{query}"
@@ -110,11 +134,48 @@ def utc_day_bounds(day: date) -> tuple[int, int]:
     return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
 
 
-def collect_uuids(mode: str, target: int, cache: Path, end_day: date, api_rps: float) -> dict:
+def record_day(record: dict) -> date | None:
+    try:
+        stamp = int(record.get("startTime", 0))
+    except (TypeError, ValueError):
+        return None
+    if stamp <= 0:
+        return None
+    if stamp > 10_000_000_000:
+        stamp //= 1000
+    try:
+        return datetime.fromtimestamp(stamp, tz=timezone.utc).date()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def collect_uuids(
+    mode: str,
+    target: int,
+    cache: Path,
+    start_day: date | None,
+    end_day: date,
+    api_rps: float,
+    rooms: str,
+) -> dict:
     mode_cache = cache / mode
     mode_cache.mkdir(parents=True, exist_ok=True)
     todo = mode_cache / "todo.txt"
     metadata = mode_cache / "discovery.jsonl"
+    scanned_log = mode_cache / "scanned-days.log"
+
+    source = MODE_SOURCES[mode]
+    expected_players = int(source["players"])
+    oldest = date.fromisoformat(str(source["min_date"]))
+    if start_day is not None:
+        oldest = max(oldest, start_day)
+    if end_day < oldest:
+        raise RuntimeError(f"{mode} empty discovery range: {oldest}..{end_day}")
+
+    plan = room_plan(mode, rooms)
+    allowed_ids = {room_mode for _, room_mode in plan}
+    rank = {room_mode: index for index, (_, room_mode) in enumerate(plan)}
+
     known: dict[str, dict] = {}
     if metadata.is_file():
         for line in metadata.read_text(encoding="utf-8").splitlines():
@@ -122,20 +183,43 @@ def collect_uuids(mode: str, target: int, cache: Path, end_day: date, api_rps: f
                 item = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(item, dict) and isinstance(item.get("uuid"), str):
+            if not isinstance(item, dict) or not isinstance(item.get("uuid"), str):
+                continue
+            try:
+                mode_id = int(item.get("_source_mode_id", item.get("modeId", -1)))
+            except (TypeError, ValueError):
+                continue
+            item_day = record_day(item)
+            if (
+                mode_id in allowed_ids
+                and len(item.get("players", [])) == expected_players
+                and item_day is not None
+                and oldest <= item_day <= end_day
+            ):
+                item["_source_mode_id"] = mode_id
                 known[item["uuid"]] = item
 
-    source = MODE_SOURCES[mode]
+    scanned = set()
+    if scanned_log.is_file():
+        scanned = {line.strip() for line in scanned_log.read_text(encoding="utf-8").splitlines() if line.strip()}
+
     limiter = ApiRateLimiter(api_rps)
     seen = set(known)
-    oldest = date.fromisoformat(source["min_date"])
-    expected_players = int(source["players"])
 
-    for room_name, room_mode in source["rooms"]:
-        if len(known) >= target:
+    def prefix_count(index: int) -> int:
+        allowed_prefix = {room_mode for _, room_mode in plan[: index + 1]}
+        return sum(1 for item in known.values() if int(item.get("_source_mode_id", -1)) in allowed_prefix)
+
+    for room_index, (room_name, room_mode) in enumerate(plan):
+        if prefix_count(room_index) >= target:
             break
         day = end_day
-        while day >= oldest and len(known) < target:
+        while day >= oldest and prefix_count(room_index) < target:
+            scan_key = f"{room_mode}:{day.isoformat()}"
+            if scan_key in scanned:
+                day -= timedelta(days=1)
+                continue
+
             start_ms, end_ms = utc_day_bounds(day)
             records = fetch_window(mode, room_mode, start_ms, end_ms, limiter)
             records = [
@@ -144,7 +228,8 @@ def collect_uuids(mode: str, target: int, cache: Path, end_day: date, api_rps: f
                 and len(r.get("players", [])) == expected_players
             ]
             records.sort(key=lambda r: int(r.get("startTime", 0)), reverse=True)
-            added = 0
+
+            added_items: list[dict] = []
             for record in records:
                 if record["uuid"] in seen:
                     continue
@@ -153,36 +238,52 @@ def collect_uuids(mode: str, target: int, cache: Path, end_day: date, api_rps: f
                 item["_source_room"] = room_name
                 item["_source_mode_id"] = room_mode
                 known[item["uuid"]] = item
-                added += 1
-                if len(known) >= target:
-                    break
+                added_items.append(item)
+
+            if added_items:
+                with metadata.open("a", encoding="utf-8", newline="\n") as f:
+                    for item in added_items:
+                        f.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
+                    f.flush()
+            with scanned_log.open("a", encoding="utf-8", newline="\n") as f:
+                f.write(scan_key + "\n")
+                f.flush()
+            scanned.add(scan_key)
+
             print(
                 f"MAJSOUL_DISCOVERY mode={mode} room={room_name} date={day} "
-                f"new={added} total={len(known)}/{target}",
+                f"new={len(added_items)} eligible={prefix_count(room_index)}/{target}",
                 flush=True,
             )
             day -= timedelta(days=1)
 
-    rank = {"throne": 0, "jade": 1, "gold": 2}
     ordered = sorted(
         known.values(),
-        key=lambda r: (rank.get(str(r.get("_source_room")), 9), -int(r.get("startTime", 0)), r["uuid"]),
+        key=lambda r: (
+            rank.get(int(r.get("_source_mode_id", -1)), 99),
+            -int(r.get("startTime", 0)),
+            r["uuid"],
+        ),
     )
     selected = ordered[:target]
     if len(selected) < target:
         raise RuntimeError(f"{mode} discovery shortfall: {len(selected)}/{target}")
 
     todo.write_text("\n".join(r["uuid"] for r in selected) + "\n", encoding="utf-8")
-    with metadata.open("w", encoding="utf-8", newline="\n") as f:
-        for item in ordered:
-            f.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
 
-    rooms: dict[str, int] = {}
+    selected_rooms: dict[str, int] = {}
     for item in selected:
         name = str(item.get("_source_room", "unknown"))
-        rooms[name] = rooms.get(name, 0) + 1
-    print(f"MAJSOUL_UUIDS_READY mode={mode} selected={len(selected)} rooms={rooms}", flush=True)
-    return {"todo": todo, "metadata": metadata, "selected": len(selected), "rooms": rooms}
+        selected_rooms[name] = selected_rooms.get(name, 0) + 1
+    print(f"MAJSOUL_UUIDS_READY mode={mode} selected={len(selected)} rooms={selected_rooms}", flush=True)
+    return {
+        "todo": todo,
+        "metadata": metadata,
+        "selected": len(selected),
+        "rooms": selected_rooms,
+        "start_date": oldest.isoformat(),
+        "end_date": end_day.isoformat(),
+    }
 
 
 def install_tool(tools: Path) -> Path:
@@ -199,8 +300,8 @@ def install_tool(tools: Path) -> Path:
     return exe
 
 
-def read_credentials(account: str | None) -> tuple[str, str]:
-    username = (account or os.environ.get("MORTAL_ROGS_MAJSOUL_USERNAME", "")).strip()
+def read_credentials(username_arg: str | None) -> tuple[str, str]:
+    username = (username_arg or os.environ.get("MORTAL_ROGS_MAJSOUL_USERNAME", "")).strip()
     if not username:
         if not sys.stdin.isatty():
             raise RuntimeError("set MORTAL_ROGS_MAJSOUL_USERNAME for non-interactive use")
@@ -310,7 +411,7 @@ def stage_mjai(mode: str, source: Path, data: Path, todo: Path, val_ratio: float
     return {"converted": done, "reused": reused, "failed": failed}
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Prepare local Mahjong Soul high-rank logs for Mortal-ROGS.")
     p.add_argument("--runtime-root", type=Path, required=True)
     p.add_argument("--modes", choices=("both", "3p", "4p"), default="both")
@@ -320,15 +421,27 @@ def main() -> int:
     p.add_argument("--val-ratio", type=float, default=0.05)
     p.add_argument("--api-rps", type=float, default=4.0)
     p.add_argument("--download-delay-ms", type=int, default=300)
+    p.add_argument("--start-date", help="YYYY-MM-DD; defaults to earliest supported date per mode")
     p.add_argument("--end-date", help="YYYY-MM-DD; defaults to yesterday UTC")
+    p.add_argument(
+        "--rooms",
+        choices=("high", "all"),
+        default="high",
+        help="high=Throne/Jade/Gold hanchan; all=high plus East-room fallbacks",
+    )
     p.add_argument("--server", choices=("cn", "en", "jp"), default="cn")
-    p.add_argument("--account")
+    p.add_argument("--username", help="native account/email; password is never accepted as a CLI option")
+    p.add_argument("--account", help=argparse.SUPPRESS)
     p.add_argument("--baseline-3p", type=Path)
     p.add_argument("--baseline-4p", type=Path)
     p.add_argument("--retrain-grp", action="store_true")
     p.add_argument("--authorized-local-use", action="store_true")
     p.add_argument("--manifest", type=Path)
-    args = p.parse_args()
+    return p
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     if not args.authorized_local_use:
         raise SystemExit("Pass --authorized-local-use only for permitted local access; do not redistribute logs.")
@@ -336,6 +449,16 @@ def main() -> int:
         raise SystemExit("limits, GRP steps and download delay must be positive")
     if not 0 < args.val_ratio < 0.5 or not 0 < args.api_rps <= 4:
         raise SystemExit("val-ratio must be in (0,0.5) and api-rps in (0,4]")
+    if args.username and args.account and args.username != args.account:
+        raise SystemExit("--username and legacy --account disagree")
+
+    try:
+        start_day = date.fromisoformat(args.start_date) if args.start_date else None
+        end_day = date.fromisoformat(args.end_date) if args.end_date else datetime.now(timezone.utc).date() - timedelta(days=1)
+    except ValueError as exc:
+        raise SystemExit(f"invalid date; use YYYY-MM-DD: {exc}") from exc
+    if start_day is not None and start_day > end_day:
+        raise SystemExit("--start-date must be on or before --end-date")
 
     runtime = args.runtime_root.expanduser().resolve()
     py = runtime / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -345,24 +468,27 @@ def main() -> int:
     limits = {"3p": args.limit_3p, "4p": args.limit_4p}
     tools = runtime / "runtime" / "tools" / "majsoul-prep"
     cache = runtime / "runtime" / "majsoul-cache"
-    end_day = date.fromisoformat(args.end_date) if args.end_date else datetime.now(timezone.utc).date() - timedelta(days=1)
 
     print("MAJSOUL_LOCAL_DATA_NOTICE redistribution=prohibited credentials_persisted=false api_rps<=4")
     exe = install_tool(tools)
-    username, password = read_credentials(args.account)
+    username, password = read_credentials(args.username or args.account)
     result = {
         "protocol": "mortal-rogs-majsoul-training-prep-v1",
         "source": "majsoul",
         "tool": {"repository": MAJSOUL_TOOL_REPO, "commit": MAJSOUL_TOOL_SHA},
         "api_root": AMAE_API_ROOT,
         "server": args.server,
+        "start_date": start_day.isoformat() if start_day else None,
         "end_date": end_day.isoformat(),
+        "rooms": args.rooms,
         "credentials_persisted": False,
         "modes": {},
     }
     try:
         for mode in modes:
-            discovery = collect_uuids(mode, limits[mode], cache, end_day, args.api_rps)
+            discovery = collect_uuids(
+                mode, limits[mode], cache, start_day, end_day, args.api_rps, args.rooms
+            )
             raw = download_raw(
                 exe, mode, discovery["todo"], cache, username, password, args.server, args.download_delay_ms
             )
@@ -384,6 +510,8 @@ def main() -> int:
                 "train_files": train_count,
                 "val_files": val_count,
                 "rooms": discovery["rooms"],
+                "discovery_start_date": discovery["start_date"],
+                "discovery_end_date": discovery["end_date"],
                 "staging": staging,
                 "baseline": baseline,
                 "grp": grp,

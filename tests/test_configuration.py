@@ -1,13 +1,22 @@
+from datetime import date, datetime, timezone
 from pathlib import Path
+import urllib.parse
 
 import pytest
 
 from app.configuration import ConfigError, build_training_ablation_config, merge_preset
 from scripts.prepare_majsoul_training import (
     AMAE_API_ROOT,
+    API_LIMIT,
+    MAJSOUL_TOOL_REPO,
     MAJSOUL_TOOL_SHA,
+    MIN_WINDOW_MS,
     MODE_SOURCES,
     ApiRateLimiter,
+    build_parser,
+    collect_uuids,
+    fetch_window,
+    room_plan,
     room_url,
     utc_day_bounds,
 )
@@ -112,36 +121,144 @@ def test_tenhou_preparation_pins_and_authorization_gate():
 
 
 def test_majsoul_source_contract_and_pin():
+    assert MAJSOUL_TOOL_REPO == "https://github.com/NikkeTryHard/tenhou-to-mjai.git"
     assert MAJSOUL_TOOL_SHA == "69fb75a51c7efef3212be603227b2a58a9717237"
     assert AMAE_API_ROOT == "https://5-data.amae-koromo.com/api/v2"
+
     assert MODE_SOURCES["3p"]["api"] == "pl3"
-    assert MODE_SOURCES["3p"]["rooms"] == (("throne", 26), ("jade", 24), ("gold", 22))
+    assert MODE_SOURCES["3p"]["players"] == 3
+    assert room_plan("3p", "high") == (("throne", 26), ("jade", 24), ("gold", 22))
+    assert room_plan("3p", "all")[-3:] == (
+        ("throne-east", 25),
+        ("jade-east", 23),
+        ("gold-east", 21),
+    )
+
     assert MODE_SOURCES["4p"]["api"] == "pl4"
-    assert MODE_SOURCES["4p"]["rooms"] == (("throne", 16), ("jade", 12), ("gold", 9))
+    assert MODE_SOURCES["4p"]["players"] == 4
+    assert room_plan("4p", "high") == (("throne", 16), ("jade", 12), ("gold", 9))
+    assert room_plan("4p", "all")[-3:] == (
+        ("throne-east", 15),
+        ("jade-east", 11),
+        ("gold-east", 8),
+    )
 
     url3 = room_url("3p", 26, 1000, 2000)
     url4 = room_url("4p", 16, 1000, 2000)
     assert "/pl3/games/1000/2000" in url3 and "mode=26" in url3
     assert "/pl4/games/1000/2000" in url4 and "mode=16" in url4
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(url3).query)["limit"] == ["500"]
 
 
-def test_majsoul_api_rate_and_day_window_contract():
-    from datetime import date
-
+def test_majsoul_api_rate_day_window_and_cap_subdivision(monkeypatch: pytest.MonkeyPatch):
     ApiRateLimiter(4.0)
     with pytest.raises(ValueError):
         ApiRateLimiter(4.01)
     start, end = utc_day_bounds(date(2026, 8, 31))
     assert end - start == 86_399_999
 
+    calls = []
+
+    def fake_fetch_json(url, _limiter):
+        calls.append(url)
+        parts = urllib.parse.urlsplit(url).path.rstrip("/").split("/")
+        start_ms, end_ms = int(parts[-2]), int(parts[-1])
+        if end_ms - start_ms > MIN_WINDOW_MS:
+            return [{"uuid": f"cap-{i}"} for i in range(API_LIMIT)]
+        return [{"uuid": f"{start_ms}-{end_ms}"}]
+
+    monkeypatch.setattr("scripts.prepare_majsoul_training.fetch_json", fake_fetch_json)
+    records = fetch_window("3p", 26, 0, MIN_WINDOW_MS * 2 + 2, ApiRateLimiter(4))
+    assert len(calls) == 3
+    assert len(records) == 2
+
+
+def _majsoul_record(uuid: str, mode_id: int, players: int, day: date) -> dict:
+    stamp = int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp())
+    return {
+        "uuid": uuid,
+        "modeId": mode_id,
+        "startTime": stamp,
+        "players": [{"accountId": i} for i in range(players)],
+    }
+
+
+def test_majsoul_discovery_prioritizes_high_room_and_resumes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    requested = []
+    day = date(2026, 8, 1)
+
+    def fake_fetch_window(mode, room_mode, start_ms, end_ms, _limiter):
+        current = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).date()
+        requested.append((room_mode, current))
+        assert mode == "3p"
+        if room_mode != 26:
+            pytest.fail("lower room must not be queried when Throne fills the target")
+        return [
+            _majsoul_record("a", 26, 3, current),
+            _majsoul_record("b", 26, 3, current),
+        ]
+
+    monkeypatch.setattr("scripts.prepare_majsoul_training.fetch_window", fake_fetch_window)
+    first = collect_uuids("3p", 2, tmp_path, day, day, 4, "high")
+    assert first["selected"] == 2
+    assert first["rooms"] == {"throne": 2}
+    assert requested == [(26, day)]
+
+    requested.clear()
+    second = collect_uuids("3p", 2, tmp_path, day, day, 4, "high")
+    assert second["selected"] == 2
+    assert requested == []
+
+
+def test_majsoul_parser_scope_and_no_password_cli():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--runtime-root",
+            "C:/Mortal_Unified",
+            "--modes",
+            "both",
+            "--limit-3p",
+            "5000",
+            "--limit-4p",
+            "5000",
+            "--start-date",
+            "2026-01-01",
+            "--end-date",
+            "2026-08-30",
+            "--rooms",
+            "all",
+            "--server",
+            "jp",
+            "--username",
+            "local@example.invalid",
+        ]
+    )
+    assert args.start_date == "2026-01-01"
+    assert args.end_date == "2026-08-30"
+    assert args.rooms == "all"
+    assert args.server == "jp"
+    assert args.username == "local@example.invalid"
+
+    option_strings = {option for action in parser._actions for option in action.option_strings}
+    assert "--password" not in option_strings
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--runtime-root", "x", "--rooms", "invalid"])
+
 
 def test_majsoul_launcher_keeps_credentials_out_of_files():
     root = Path(__file__).resolve().parents[1]
     launcher = (root / "RUN_MAJSOUL_FULL.bat").read_text(encoding="utf-8")
     script = (root / "scripts" / "prepare_majsoul_training.py").read_text(encoding="utf-8")
-    assert "authorized" in launcher
-    assert "--authorized-local-use" in launcher
+    for token in (
+        "prepare_majsoul_training.py",
+        "--api-rps 4",
+        "--download-delay-ms 300",
+        "--authorized-local-use",
+        "authorized",
+    ):
+        assert token in launcher
     assert "getpass.getpass" in script
-    assert "<redacted>" in script
+    assert 'shown[shown.index("--password") + 1] = "<redacted>"' in script
     assert '"credentials_persisted": False' in script
-    assert "MAJSOUL_TOOL_SHA" in script
+    assert 'p.add_argument("--password"' not in script
