@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import json
 import os
 import re
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +25,9 @@ YOSTAR_PACKET_HEX_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_HEX"
 YOSTAR_OAUTH_TYPE_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_TYPE"
 YOSTAR_LOCALE_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_LOCALE"
 YOSTAR_OAUTH_METHOD = b".lq.Lobby.oauth2Auth"
+AMAE_SAFE_RPS = 1.0
+AMAE_MAX_ATTEMPTS = 8
+AMAE_MAX_BACKOFF_SECONDS = 60.0
 
 _ORIGINAL_READ_CREDENTIALS = base.read_credentials
 
@@ -171,6 +178,101 @@ def _use_packet_credentials(packet_hex: str) -> tuple[str, str] | None:
     return uid, token
 
 
+class AmaeSafeRateLimiter:
+    """Conservative limiter for public Amae metadata discovery.
+
+    The base CLI still accepts up to 4 RPS for backwards compatibility, but the
+    Yostar preparation path clamps the effective rate to 1 RPS to avoid bursts.
+    """
+
+    def __init__(self, rps: float) -> None:
+        if not 0 < rps <= 4:
+            raise ValueError("Amae-Koromo RPS must be in (0, 4]")
+        self.requested_rps = rps
+        self.effective_rps = min(rps, AMAE_SAFE_RPS)
+        self.interval = 1.0 / self.effective_rps
+        self.last_started: float | None = None
+
+    def wait(self) -> None:
+        if self.last_started is not None:
+            remaining = self.interval - (time.monotonic() - self.last_started)
+            if remaining > 0:
+                time.sleep(remaining)
+        self.last_started = time.monotonic()
+
+
+def _retry_after_seconds(exc: urllib.error.HTTPError, attempt: int) -> float:
+    retry_after = exc.headers.get("Retry-After") if exc.headers is not None else None
+    if retry_after:
+        try:
+            return min(AMAE_MAX_BACKOFF_SECONDS, max(1.0, float(retry_after)))
+        except ValueError:
+            pass
+    return min(AMAE_MAX_BACKOFF_SECONDS, 2.0 * (2**attempt))
+
+
+def fetch_json_resilient(url: str, limiter: AmaeSafeRateLimiter) -> object:
+    """Fetch Amae JSON without treating ordinary 429s as fatal immediately."""
+    for attempt in range(AMAE_MAX_ATTEMPTS):
+        limiter.wait()
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": base.USER_AGENT, "Accept": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read(1024).decode("utf-8", errors="replace")
+            except Exception:
+                detail = ""
+
+            if exc.code == 429:
+                if "x-cap-token-required" in detail.lower():
+                    raise RuntimeError(
+                        "Amae-Koromo requires a browser CAP proof for this request; "
+                        "automatic metadata discovery cannot bypass that challenge."
+                    ) from exc
+                if attempt == AMAE_MAX_ATTEMPTS - 1:
+                    raise RuntimeError(
+                        f"Amae-Koromo kept returning HTTP 429 after {AMAE_MAX_ATTEMPTS} attempts; "
+                        "the local discovery journal is resumable."
+                    ) from exc
+                wait_s = _retry_after_seconds(exc, attempt)
+                print(
+                    f"MAJSOUL_AMAE_RATE_LIMIT status=429 attempt={attempt + 1}/{AMAE_MAX_ATTEMPTS} "
+                    f"wait_s={wait_s:g}",
+                    flush=True,
+                )
+                time.sleep(wait_s)
+                continue
+
+            if exc.code >= 500:
+                if attempt == AMAE_MAX_ATTEMPTS - 1:
+                    raise
+                wait_s = min(AMAE_MAX_BACKOFF_SECONDS, 1.0 * (2**attempt))
+                print(
+                    f"MAJSOUL_AMAE_RETRY status={exc.code} attempt={attempt + 1}/{AMAE_MAX_ATTEMPTS} "
+                    f"wait_s={wait_s:g}",
+                    flush=True,
+                )
+                time.sleep(wait_s)
+                continue
+            raise
+        except (TimeoutError, urllib.error.URLError):
+            if attempt == AMAE_MAX_ATTEMPTS - 1:
+                raise
+            wait_s = min(AMAE_MAX_BACKOFF_SECONDS, 1.0 * (2**attempt))
+            print(
+                f"MAJSOUL_AMAE_RETRY status=network attempt={attempt + 1}/{AMAE_MAX_ATTEMPTS} "
+                f"wait_s={wait_s:g}",
+                flush=True,
+            )
+            time.sleep(wait_s)
+    raise RuntimeError("unreachable")
+
+
 def install_tool(tools: Path) -> Path:
     if not YOSTAR_PATCHER.is_file():
         raise RuntimeError(f"managed Yostar patcher missing: {YOSTAR_PATCHER}")
@@ -251,6 +353,14 @@ def main() -> int:
     server = _server_from_argv()
     base.install_tool = install_tool
     base.read_credentials = read_credentials
+    if server == "en":
+        base.ApiRateLimiter = AmaeSafeRateLimiter
+        base.fetch_json = fetch_json_resilient
+        print(
+            f"MAJSOUL_AMAE_POLICY requested_rps<=4 effective_rps<={AMAE_SAFE_RPS:g} "
+            f"retry_attempts={AMAE_MAX_ATTEMPTS}",
+            flush=True,
+        )
     print(f"MAJSOUL_AUTH_MODE server={server} mode={auth_mode_for_server(server)}", flush=True)
     try:
         return base.main()
