@@ -28,6 +28,7 @@ class BootstrapEstimate:
     lower: float
     upper: float
     confidence: float
+    clusters: int = 0
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,21 @@ def _percentile(sorted_values: Sequence[float], q: float) -> float:
     return float(sorted_values[lo] * (1.0 - w) + sorted_values[hi] * w)
 
 
+def _cluster_deltas(rows: Sequence[PairedSample]) -> tuple[tuple[float, ...], ...]:
+    """Group duplicate-evaluation rows by game seed.
+
+    Seat rotations generated from the same duplicate seed share the same wall and
+    game context and therefore are not independent observations. Rows without a
+    seed keep backward-compatible iid behavior by becoming one-row clusters.
+    """
+
+    grouped: dict[tuple[str, int], list[float]] = {}
+    for idx, row in enumerate(rows):
+        key = ("seed", int(row.seed)) if row.seed is not None else ("row", idx)
+        grouped.setdefault(key, []).append(row.delta)
+    return tuple(tuple(values) for values in grouped.values())
+
+
 def bootstrap_paired_mean(
     samples: Iterable[PairedSample],
     *,
@@ -75,7 +91,13 @@ def bootstrap_paired_mean(
     confidence: float = 0.95,
     seed: int = 0,
 ) -> BootstrapEstimate:
-    """Non-parametric paired bootstrap over candidate-baseline deltas."""
+    """Paired cluster bootstrap over candidate-baseline deltas.
+
+    Duplicate seat rotations with the same ``PairedSample.seed`` are resampled
+    together. This preserves the correlation structure of A/B/C(/D) duplicate
+    games instead of treating every seat rotation as an iid game. Samples with
+    no seed remain one-row clusters for generic callers.
+    """
 
     rows = tuple(samples)
     if not rows:
@@ -86,20 +108,29 @@ def bootstrap_paired_mean(
         raise ValueError("confidence must be in (0.5, 1.0)")
 
     deltas = tuple(row.delta for row in rows)
+    clusters = _cluster_deltas(rows)
+    cluster_count = len(clusters)
     rng = random.Random(seed)
-    n = len(deltas)
-    boot = [
-        sum(deltas[rng.randrange(n)] for _ in range(n)) / n
-        for _ in range(resamples)
-    ]
+
+    boot: list[float] = []
+    for _ in range(resamples):
+        sampled_total = 0.0
+        sampled_n = 0
+        for _ in range(cluster_count):
+            cluster = clusters[rng.randrange(cluster_count)]
+            sampled_total += sum(cluster)
+            sampled_n += len(cluster)
+        boot.append(sampled_total / sampled_n)
+
     boot.sort()
     alpha = (1.0 - confidence) / 2.0
     return BootstrapEstimate(
-        n=n,
+        n=len(deltas),
         mean_delta=mean(deltas),
         lower=_percentile(boot, alpha),
         upper=_percentile(boot, 1.0 - alpha),
         confidence=confidence,
+        clusters=cluster_count,
     )
 
 
