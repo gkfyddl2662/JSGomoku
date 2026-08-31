@@ -42,7 +42,22 @@ def test_training_ablation_variants_are_isolated_and_non_mutating(tmp_path: Path
             "tensorboard_dir": "original-runs",
         },
         "game": {"mode": "3p", "num_players": 3},
-        "rogs": {"enabled": True},
+        "cql": {"min_q_weight": 5.0},
+        "rogs": {
+            "enabled": True,
+            "regret_final_weight": 0.75,
+            "bc_final_weight": 0.02,
+            "cql_final_weight": 0.05,
+            "oracle_final_weight": 0.05,
+        },
+        "objective": {
+            "value_weight": 1.0,
+            "regret_weight": 0.5,
+            "bc_anchor_weight": 0.1,
+            "cql_anchor_weight": 0.25,
+            "entropy_weight": 0.002,
+            "teacher_kl_weight": 0.3,
+        },
         "global_reward": {"enabled": False, "score_delta_weight": 0.15},
         "test_play": {"log_dir": "original-test"},
         "dataset": {"globs": ["same-data/**/*.json.gz"]},
@@ -69,8 +84,22 @@ def test_training_ablation_variants_are_isolated_and_non_mutating(tmp_path: Path
         assert cfg["dataset"]["globs"] == base["dataset"]["globs"]
         assert cfg["experiment"]["variant"] == variant
         assert cfg["experiment"]["seed"] == 17
+        assert cfg["experiment"]["comparison_scope"] == "composite-algorithm"
         assert f"seed-17/{variant}" in cfg["control"]["state_file"].replace("\\", "/")
         assert f"seed-17/{variant}" in cfg["control"]["tensorboard_dir"].replace("\\", "/")
+
+    mortal_meta = configs["mortal"]["experiment"]["objective_metadata"]
+    assert mortal_meta["family"] == "stock-mortal-q-mse-cql"
+    assert mortal_meta["cql_min_q_weight"] == 5.0
+    assert mortal_meta["chosen_q_mse"] is True
+
+    rogs_meta = configs["rogs"]["experiment"]["objective_metadata"]
+    assert rogs_meta["family"] == "rogs-composite-value-regret-bc-cql-entropy"
+    assert rogs_meta["base_weights"]["cql"] == 0.25
+    assert rogs_meta["final_weights"]["cql"] == 0.05
+    assert rogs_meta["oracle_teacher_connected"] is False
+    assert rogs_meta["search_teacher_connected"] is False
+    assert rogs_meta["hedge_behavior_policy_connected"] is False
 
     assert len({cfg["control"]["state_file"] for cfg in configs.values()}) == 3
     assert base["control"]["online"] is True
