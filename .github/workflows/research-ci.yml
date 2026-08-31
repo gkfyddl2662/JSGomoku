@@ -230,8 +230,7 @@ jobs:
           git -C /tmp/majsoul-prep checkout 69fb75a51c7efef3212be603227b2a58a9717237
       - name: Apply managed EN Yostar auth patch
         run: |
-          git -C /tmp/majsoul-prep apply --check "$GITHUB_WORKSPACE/patches/tenhou-to-mjai-yostar-en.patch"
-          git -C /tmp/majsoul-prep apply "$GITHUB_WORKSPACE/patches/tenhou-to-mjai-yostar-en.patch"
+          python scripts/patch_tenhou_to_mjai_yostar.py --root /tmp/majsoul-prep
           git -C /tmp/majsoul-prep diff --check
       - name: Compile patched downloader
         run: cargo check --release --locked --manifest-path /tmp/majsoul-prep/Cargo.toml
