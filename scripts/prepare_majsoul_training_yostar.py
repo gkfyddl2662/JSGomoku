@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -25,9 +26,11 @@ YOSTAR_PACKET_HEX_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_HEX"
 YOSTAR_OAUTH_TYPE_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_TYPE"
 YOSTAR_LOCALE_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_LOCALE"
 YOSTAR_OAUTH_METHOD = b".lq.Lobby.oauth2Auth"
+AMAE_CAP_TOKEN_ENV = "MORTAL_ROGS_AMAE_CAP_TOKEN"
 AMAE_SAFE_RPS = 1.0
 AMAE_MAX_ATTEMPTS = 8
 AMAE_MAX_BACKOFF_SECONDS = 60.0
+AMAE_MAX_CAP_REFRESHES = 2
 
 _ORIGINAL_READ_CREDENTIALS = base.read_credentials
 
@@ -211,14 +214,66 @@ def _retry_after_seconds(exc: urllib.error.HTTPError, attempt: int) -> float:
     return min(AMAE_MAX_BACKOFF_SECONDS, 2.0 * (2**attempt))
 
 
+def _normalize_cap_token(value: str) -> str:
+    token = value.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return token
+
+
+def _current_amae_cap_token() -> str:
+    return _normalize_cap_token(os.environ.get(AMAE_CAP_TOKEN_ENV, ""))
+
+
+def _prompt_amae_cap_token(*, force_refresh: bool) -> str:
+    if force_refresh:
+        os.environ.pop(AMAE_CAP_TOKEN_ENV, None)
+    else:
+        token = _current_amae_cap_token()
+        if token:
+            return token
+
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "Amae-Koromo requires a browser-issued CAP proof; set "
+            f"{AMAE_CAP_TOKEN_ENV} to the Bearer token from an authorized browser session."
+        )
+
+    print(
+        "MAJSOUL_AMAE_CAP_REQUIRED action=solve_in_browser_then_paste_bearer_token persisted=false",
+        flush=True,
+    )
+    token = _normalize_cap_token(
+        getpass.getpass("Amae-Koromo CAP bearer token (browser Authorization value): ")
+    )
+    if not token:
+        raise RuntimeError("Amae-Koromo CAP bearer token cannot be empty")
+    os.environ[AMAE_CAP_TOKEN_ENV] = token
+    print("MAJSOUL_AMAE_CAP_TOKEN_LOADED persisted=false", flush=True)
+    return token
+
+
+def _build_amae_request(url: str, *, refreshed_cap_token: bool) -> urllib.request.Request:
+    headers = {"User-Agent": base.USER_AGENT, "Accept": "application/json"}
+    token = _current_amae_cap_token()
+    request_url = url
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        if refreshed_cap_token:
+            headers["Cache-Control"] = "no-cache"
+            separator = "&" if "?" in request_url else "?"
+            request_url += f"{separator}cap_token_refreshed={int(time.time() * 1000)}"
+    return urllib.request.Request(request_url, headers=headers)
+
+
 def fetch_json_resilient(url: str, limiter: AmaeSafeRateLimiter) -> object:
-    """Fetch Amae JSON without treating ordinary 429s as fatal immediately."""
+    """Fetch Amae JSON with conservative rate limits and browser-issued CAP proof support."""
+    refreshed_cap_token = False
+    cap_refreshes = 0
+
     for attempt in range(AMAE_MAX_ATTEMPTS):
         limiter.wait()
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": base.USER_AGENT, "Accept": "application/json"},
-        )
+        req = _build_amae_request(url, refreshed_cap_token=refreshed_cap_token)
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode("utf-8"))
@@ -230,10 +285,16 @@ def fetch_json_resilient(url: str, limiter: AmaeSafeRateLimiter) -> object:
 
             if exc.code == 429:
                 if "x-cap-token-required" in detail.lower():
-                    raise RuntimeError(
-                        "Amae-Koromo requires a browser CAP proof for this request; "
-                        "automatic metadata discovery cannot bypass that challenge."
-                    ) from exc
+                    if cap_refreshes >= AMAE_MAX_CAP_REFRESHES:
+                        raise RuntimeError(
+                            "Amae-Koromo rejected the browser CAP proof repeatedly; obtain a fresh proof "
+                            "from the official Amae-Koromo web client and rerun."
+                        ) from exc
+                    _prompt_amae_cap_token(force_refresh=True)
+                    cap_refreshes += 1
+                    refreshed_cap_token = True
+                    continue
+
                 if attempt == AMAE_MAX_ATTEMPTS - 1:
                     raise RuntimeError(
                         f"Amae-Koromo kept returning HTTP 429 after {AMAE_MAX_ATTEMPTS} attempts; "
@@ -358,7 +419,7 @@ def main() -> int:
         base.fetch_json = fetch_json_resilient
         print(
             f"MAJSOUL_AMAE_POLICY requested_rps<=4 effective_rps<={AMAE_SAFE_RPS:g} "
-            f"retry_attempts={AMAE_MAX_ATTEMPTS}",
+            f"retry_attempts={AMAE_MAX_ATTEMPTS} cap=browser-proof-manual",
             flush=True,
         )
     print(f"MAJSOUL_AUTH_MODE server={server} mode={auth_mode_for_server(server)}", flush=True)
@@ -371,6 +432,7 @@ def main() -> int:
             YOSTAR_PACKET_HEX_ENV,
             YOSTAR_OAUTH_TYPE_ENV,
             YOSTAR_LOCALE_ENV,
+            AMAE_CAP_TOKEN_ENV,
         ):
             os.environ.pop(name, None)
 
