@@ -28,7 +28,7 @@ def test_sanma_contract() -> None:
     assert spec.players == 3
     assert spec.action_space == 44
     assert spec.obs_shape_v4 == (1010, 34)
-    assert spec.oracle_obs_shape_v4 == (217, 34)
+    assert spec.oracle_obs_shape_v4 == (170, 34)
     assert spec.grp_size == 6
     assert spec.allow_chi is False
     assert spec.allow_nuki is True
