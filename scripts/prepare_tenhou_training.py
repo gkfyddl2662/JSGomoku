@@ -59,7 +59,10 @@ def split_for(name: str, ratio: float) -> str:
 def install_tools(py: Path, tools: Path) -> tuple[Path, Path]:
     houou = checkout(tools / "houou-logs", HOUOU_REPO, HOUOU_SHA)
     marker = tools / f".houou-{HOUOU_SHA}"
-    if not marker.is_file():
+    import_probe = subprocess.run(
+        [str(py), "-c", "import houou_logs"], capture_output=True, text=True
+    )
+    if not marker.is_file() or import_probe.returncode != 0:
         run([str(py), "-m", "pip", "install", "--upgrade", str(houou)])
         marker.write_text(HOUOU_SHA + "\n", encoding="utf-8")
     sanma = checkout(tools / "tenhou-sanma-to-mjai", SANMA_REPO, SANMA_SHA)
@@ -155,11 +158,19 @@ def validate_data(runtime: Path, mode: str, data: Path, samples: int) -> tuple[i
     try:
         import libriichi  # type: ignore
         probe = (train + val)[: min(samples, len(train) + len(val))]
+        paths = [str(p) for p in probe]
         loaded = libriichi.dataset.GameplayLoader(
             version=4, oracle=False, player_names=None, excludes=None, augmented=False
-        ).load_gz_log_files([str(p) for p in probe])
+        ).load_gz_log_files(paths)
         if not loaded:
-            raise RuntimeError(f"{mode} libriichi rejected prepared MJAI logs")
+            raise RuntimeError(f"{mode} GameplayLoader rejected prepared MJAI logs")
+        grp_games = libriichi.dataset.Grp.load_gz_log_files(paths)
+        if not grp_games:
+            raise RuntimeError(f"{mode} GRP loader rejected prepared MJAI logs")
+        expected_players = 3 if mode == "3p" else 4
+        for game in grp_games[: min(4, len(grp_games))]:
+            if int(game.get_num_players()) != expected_players:
+                raise RuntimeError(f"{mode} GRP loader returned wrong player count")
     finally:
         if old is None:
             os.environ.pop("MORTAL_CFG", None)
