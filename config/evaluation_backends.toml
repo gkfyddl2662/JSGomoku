@@ -1,12 +1,15 @@
 # Evaluation backend policy for Mortal-ROGS.
-# High-volume 4P uses MJX. 3P remains on the Akagi-compatible libriichi3p engine
-# because neither upstream MJX nor gimite/mjai currently provides the sanma game
-# loop required by this project.
+#
+# The current model-comparison/promotion runners execute the native Mortal/
+# libriichi evaluators directly, so native libriichi is the canonical source of
+# truth for both modes. MJX remains an explicit high-throughput experiment until
+# fixed-seed rule/result/metric parity and automatic cross-checking are wired.
 
 [evaluation]
-primary_4p = "mjx"
+primary_4p = "libriichi"
 primary_3p = "libriichi3p"
-reference_4p = "libriichi"
+experimental_high_throughput_4p = "mjx"
+experimental_high_throughput_3p = "mjx_sanma"
 legacy_crosscheck_4p = "mjai"
 seat_rotation = true
 paired_seeds = true
@@ -14,27 +17,28 @@ rating_utility_gate = true
 
 [mjx]
 repository = "https://github.com/mjx-project/mjx"
-# Upstream README currently warns that master may be broken. Pin the last public
-# release for the first integration and change only after our compatibility tests pass.
+# Upstream README warns that master may be broken. Keep the pinned release for
+# parity/throughput experiments and change only after compatibility tests pass.
 ref = "v0.1.0"
 runtime = "wsl2"
 python = "3.11"
 batch_size = 64
 num_parallels = 16
-# Reference conversion uses mjx-project/mjx_mjai_translater while the native
-# in-process MJX->Mortal bridge is validated against it.
 reference_translator = "https://github.com/mjx-project/mjx_mjai_translater"
 
 [gate.4p]
-backend = "mjx"
+backend = "libriichi"
 games = 12000
-crosscheck_games = 256
-crosscheck_backend = "libriichi"
+crosscheck_games = 0
+# Candidate future acceleration backend; not active for promotion.
+experimental_backend = "mjx"
+experimental_crosscheck_games = 256
 
 [gate.3p]
 backend = "libriichi3p"
 games = 12000
 crosscheck_games = 0
+experimental_backend = "mjx_sanma"
 
 [statistics]
 report_average_rank = true
@@ -46,3 +50,4 @@ report_houjuu_rate = true
 report_riichi_rate = true
 report_fuuro_rate = true
 bootstrap_samples = 5000
+bootstrap_unit = "seed-cluster"
