@@ -128,7 +128,8 @@ Repair-PartialUnifiedBootstrap
     -ExecutionPolicy Bypass `
     -File $Bootstrap `
     -InstallRoot $InstallRoot `
-    -InstallRustIfMissing
+    -InstallRustIfMissing `
+    -InstallBuildToolsIfMissing
 if ($LASTEXITCODE -ne 0) {
     throw "Unified runtime bootstrap failed with exit code $LASTEXITCODE"
 }
