@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts import prepare_majsoul_training as base  # noqa: E402
 
-YOSTAR_PATCH = PROJECT_ROOT / "patches" / "tenhou-to-mjai-yostar-en.patch"
+YOSTAR_PATCHER = PROJECT_ROOT / "scripts" / "patch_tenhou_to_mjai_yostar.py"
 YOSTAR_UID_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_UID"
 YOSTAR_TOKEN_ENV = "MORTAL_ROGS_MAJSOUL_YOSTAR_TOKEN"
 
@@ -35,23 +35,25 @@ def auth_mode_for_server(server: str) -> str:
 
 
 def install_tool(tools: Path) -> Path:
-    if not YOSTAR_PATCH.is_file():
-        raise RuntimeError(f"managed Yostar patch missing: {YOSTAR_PATCH}")
+    if not YOSTAR_PATCHER.is_file():
+        raise RuntimeError(f"managed Yostar patcher missing: {YOSTAR_PATCHER}")
 
     source = base.checkout(
         tools / "tenhou-to-mjai",
         base.MAJSOUL_TOOL_REPO,
         base.MAJSOUL_TOOL_SHA,
     )
-    patch_digest = hashlib.sha256(YOSTAR_PATCH.read_bytes()).hexdigest()[:16]
+    patcher_bytes = YOSTAR_PATCHER.read_bytes()
+    patch_digest = hashlib.sha256(patcher_bytes).hexdigest()[:16]
 
     # The external checkout is a managed runtime cache. Always restore the exact pin
-    # before applying our small auth compatibility patch so reruns are deterministic.
-    for cmd in (
+    # before applying our marker-checked auth compatibility edits so reruns are deterministic.
+    commands = (
         ["git", "-C", str(source), "reset", "--hard", base.MAJSOUL_TOOL_SHA],
-        ["git", "-C", str(source), "apply", "--check", str(YOSTAR_PATCH)],
-        ["git", "-C", str(source), "apply", str(YOSTAR_PATCH)],
-    ):
+        [sys.executable, str(YOSTAR_PATCHER), "--root", str(source)],
+        ["git", "-C", str(source), "diff", "--check"],
+    )
+    for cmd in commands:
         print("+", subprocess.list2cmdline(cmd), flush=True)
         subprocess.run(cmd, check=True)
 
@@ -64,7 +66,7 @@ def install_tool(tools: Path) -> Path:
         print("+ cargo build --release --locked [pinned Majsoul tool + Yostar EN patch]", flush=True)
         subprocess.run(["cargo", "build", "--release", "--locked"], cwd=source, env=env, check=True)
         marker.write_text(
-            f"{base.MAJSOUL_TOOL_SHA}\nyostar_patch_sha256={hashlib.sha256(YOSTAR_PATCH.read_bytes()).hexdigest()}\n",
+            f"{base.MAJSOUL_TOOL_SHA}\nyostar_patcher_sha256={hashlib.sha256(patcher_bytes).hexdigest()}\n",
             encoding="utf-8",
         )
     return exe
