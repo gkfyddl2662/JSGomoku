@@ -26,7 +26,8 @@ jobs:
             'scripts/windows_msvc.ps1',
             'scripts/bootstrap_unified_runtime.ps1',
             'scripts/smoke_unified_windows.ps1',
-            'scripts/setup_and_smoke_unified_windows.ps1'
+            'scripts/setup_and_smoke_unified_windows.ps1',
+            'scripts/run_local_workstation.ps1'
           )) {
             $tokens = $null
             $errors = $null
@@ -154,6 +155,7 @@ jobs:
             'bootstrap_unified_runtime\.ps1',
             'smoke_unified_windows\.ps1',
             'InstallRustIfMissing',
+            'InstallBuildToolsIfMissing',
             'MORTAL_ROGS_UNIFIED_WINDOWS_READY',
             '\[string\[\]\]\$GitArgs',
             'Get-GitText -GitArgs @\('
@@ -164,4 +166,42 @@ jobs:
           }
           if (Select-String -Path scripts/setup_and_smoke_unified_windows.ps1 -Pattern '\[string\[\]\]\$Args' -Quiet) {
             throw 'Do not use PowerShell automatic variable $args as a Git wrapper parameter'
+          }
+
+      - name: Verify local workstation orchestration contract
+        shell: pwsh
+        run: |
+          foreach ($pattern in @(
+            'setup_and_smoke_unified_windows\.ps1',
+            'run_training_ablation\.py',
+            'run_model_comparison\.py',
+            'serve_akagi_api\.py',
+            'soak_inference_api\.py',
+            'require-gpu-telemetry',
+            'MORTAL_ROGS_LOCAL_SUITE_OK',
+            'Mortal_ROGS_Results',
+            'ExistingPolicy',
+            'baseline\.pth',
+            'grp\.pth',
+            '0xD5DFAA4CEF265CD7'
+          )) {
+            if (-not (Select-String -Path scripts/run_local_workstation.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing local workstation suite contract: $pattern"
+            }
+          }
+          if (Select-String -Path scripts/run_local_workstation.ps1 -Pattern 'runtime\\local-suite' -Quiet) {
+            throw 'Local suite results must stay outside Mortal_Unified so fresh bootstrap remains safe'
+          }
+          foreach ($pattern in @(
+            'RUN_LOCAL\.bat validate',
+            'RUN_LOCAL\.bat experiment',
+            'RUN_LOCAL\.bat full',
+            'scripts\\run_local_workstation\.ps1'
+          )) {
+            if (-not (Select-String -Path RUN_LOCAL.bat -Pattern $pattern -Quiet)) {
+              throw "Missing RUN_LOCAL.bat contract: $pattern"
+            }
+          }
+          if (-not (Test-Path docs/LOCAL_WORKSTATION_RUN.md)) {
+            throw 'Missing local workstation run documentation'
           }
