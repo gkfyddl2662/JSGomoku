@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.generate_population_selfplay import matchup_order
+from scripts.generate_population_selfplay import (
+    GENERATION_STATE_PROTOCOL,
+    load_generation_state,
+    matchup_order,
+    save_generation_state,
+)
 from scripts.prepare_selfplay_population import build_matchup_order, choose_champion
 from training.game_mode import game_mode_spec, normalize_mode
 
@@ -80,3 +85,25 @@ def test_generated_selfplay_honors_manifest_matchup_order() -> None:
     }
     members = {"a": {"id": "a", "file": "a.pth"}, "b": {"id": "b", "file": "b.pth"}}
     assert matchup_order(population, members) == [("b", "a"), ("a", "b")]
+
+
+def test_selfplay_generation_state_resumes_without_seed_or_batch_reuse(tmp_path: Path) -> None:
+    initial = load_generation_state(tmp_path, "4p", 1_000_000)
+    assert initial["next_seed"] == 1_000_000
+    assert initial["next_batch"] == 0
+    initial["next_seed"] = 1_000_032
+    initial["next_batch"] = 1
+    initial["games_committed"] = 128
+    state_path = save_generation_state(tmp_path, initial)
+    assert state_path.is_file()
+
+    resumed = load_generation_state(tmp_path, "4p", 1_000_000)
+    assert resumed["protocol"] == GENERATION_STATE_PROTOCOL
+    assert resumed["next_seed"] == 1_000_032
+    assert resumed["next_batch"] == 1
+    assert resumed["games_committed"] == 128
+
+    # An explicit higher lower-bound can jump forward, but never backwards.
+    advanced = load_generation_state(tmp_path, "4p", 2_000_000)
+    assert advanced["next_seed"] == 2_000_000
+    assert advanced["next_batch"] == 1
