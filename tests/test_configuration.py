@@ -3,6 +3,14 @@ from pathlib import Path
 import pytest
 
 from app.configuration import ConfigError, build_training_ablation_config, merge_preset
+from scripts.prepare_majsoul_training import (
+    AMAE_API_ROOT,
+    MAJSOUL_TOOL_SHA,
+    MODE_SOURCES,
+    ApiRateLimiter,
+    room_url,
+    utc_day_bounds,
+)
 from scripts.prepare_tenhou_training import HOUOU_SHA, SANMA_SHA, YONMA_SHA, split_for
 
 
@@ -101,3 +109,39 @@ def test_tenhou_preparation_pins_and_authorization_gate():
     assert "authorized" in launcher
     assert "--accept-tenhou-log-terms" in launcher
     assert "RUN_TENHOU_FULL.bat full" in launcher
+
+
+def test_majsoul_source_contract_and_pin():
+    assert MAJSOUL_TOOL_SHA == "69fb75a51c7efef3212be603227b2a58a9717237"
+    assert AMAE_API_ROOT == "https://5-data.amae-koromo.com/api/v2"
+    assert MODE_SOURCES["3p"]["api"] == "pl3"
+    assert MODE_SOURCES["3p"]["rooms"] == (("throne", 26), ("jade", 24), ("gold", 22))
+    assert MODE_SOURCES["4p"]["api"] == "pl4"
+    assert MODE_SOURCES["4p"]["rooms"] == (("throne", 16), ("jade", 12), ("gold", 9))
+
+    url3 = room_url("3p", 26, 1000, 2000)
+    url4 = room_url("4p", 16, 1000, 2000)
+    assert "/pl3/games/1000/2000" in url3 and "mode=26" in url3
+    assert "/pl4/games/1000/2000" in url4 and "mode=16" in url4
+
+
+def test_majsoul_api_rate_and_day_window_contract():
+    from datetime import date
+
+    ApiRateLimiter(4.0)
+    with pytest.raises(ValueError):
+        ApiRateLimiter(4.01)
+    start, end = utc_day_bounds(date(2026, 8, 31))
+    assert end - start == 86_399_999
+
+
+def test_majsoul_launcher_keeps_credentials_out_of_files():
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "RUN_MAJSOUL_FULL.bat").read_text(encoding="utf-8")
+    script = (root / "scripts" / "prepare_majsoul_training.py").read_text(encoding="utf-8")
+    assert "authorized" in launcher
+    assert "--authorized-local-use" in launcher
+    assert "getpass.getpass" in script
+    assert "<redacted>" in script
+    assert '"credentials_persisted": False' in script
+    assert "MAJSOUL_TOOL_SHA" in script
