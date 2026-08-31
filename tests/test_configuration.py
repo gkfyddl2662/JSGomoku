@@ -168,7 +168,7 @@ def test_majsoul_api_rate_day_window_and_cap_subdivision(monkeypatch: pytest.Mon
         return [{"uuid": f"{start_ms}-{end_ms}"}]
 
     monkeypatch.setattr("scripts.prepare_majsoul_training.fetch_json", fake_fetch_json)
-    records = fetch_window("3p", 26, 0, MIN_WINDOW_MS * 2 + 2, ApiRateLimiter(4))
+    records = fetch_window("3p", 26, 0, MIN_WINDOW_MS * 2, ApiRateLimiter(4))
     assert len(calls) == 3
     assert len(records) == 2
 
