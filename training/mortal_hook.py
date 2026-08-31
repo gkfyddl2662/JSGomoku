@@ -17,6 +17,7 @@ class MortalROGSBatch:
     chosen_q: Tensor
     objective: ROGSObjectiveResult
     regret_target: Tensor
+    regret_target_raw: Tensor
     legal_action_count: Tensor
     oracle_available: bool
     search_available: bool
@@ -72,11 +73,13 @@ def compute_mortal_rogs_batch(
 
     outputs = mortal_v4_outputs(dqn, phi, masks)
     chosen_q = outputs.q.gather(-1, actions.long().unsqueeze(-1)).squeeze(-1)
-    regret_target = sampled_advantage_target(
+    regret_clip = float(config.get("objective", {}).get("regret_clip", 12.0))
+    regret_target_raw = sampled_advantage_target(
         returns,
         outputs.value,
-        clip=float(config.get("objective", {}).get("regret_clip", 12.0)),
+        clip=None,
     )
+    regret_target = regret_target_raw.clamp(-regret_clip, regret_clip)
 
     # Logged expert actions can anchor offline training. Online self-play should
     # normally disable this term so it does not merely imitate its own samples.
@@ -116,7 +119,7 @@ def compute_mortal_rogs_batch(
         cql_loss=cql_loss,
         weights=weights,
         teacher_temperature=float(config.get("objective", {}).get("teacher_temperature", 1.5)),
-        regret_clip=float(config.get("objective", {}).get("regret_clip", 12.0)),
+        regret_clip=regret_clip,
     )
 
     if not torch.isfinite(chosen_q).all():
@@ -126,6 +129,7 @@ def compute_mortal_rogs_batch(
         chosen_q=chosen_q,
         objective=result,
         regret_target=regret_target,
+        regret_target_raw=regret_target_raw,
         legal_action_count=masks.to(torch.bool).sum(dim=-1),
         oracle_available=oracle_q is not None,
         search_available=search_q is not None,
