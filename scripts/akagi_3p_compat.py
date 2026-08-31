@@ -29,12 +29,28 @@ def checkpoint_obs_channels(path: Path) -> int:
     return int(weight.shape[1])
 
 
-def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
+def _run(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
     proc = subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[-40:])
         raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{tail}")
     return proc.stdout.strip()
+
+
+def _run_stream(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> None:
+    proc = subprocess.run(cmd, cwd=cwd, env=env, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}")
 
 
 def _sha256(path: Path, chunk_size: int = 4 * 1024 * 1024) -> str:
@@ -89,10 +105,67 @@ def _validate_pinned_binary(root: Path, compat_dir: Path) -> None:
         "assert tuple(libriichi3p.consts.obs_shape(4)) == (775, 34); "
         "assert int(libriichi3p.consts.ACTION_SPACE) == 44; "
         "assert hasattr(libriichi3p, 'mjai') and hasattr(libriichi3p.mjai, 'Bot'); "
-        "assert hasattr(libriichi3p, 'arena') and hasattr(libriichi3p.arena, 'OneVsTwo'); "
-        "print('MORTAL_AKAGI3P_BINARY_OK obs=775 actions=44 arena=OneVsTwo')"
+        "print('MORTAL_AKAGI3P_BINARY_OK obs=775 actions=44 mjai=Bot')"
     )
     output = _run([str(python), "-c", code], cwd=root, env=env)
+    if output:
+        print(output, flush=True)
+
+
+def _probe_unified_3p_arena(root: Path) -> str:
+    python = _runtime_python(root)
+    code = (
+        "from libriichi.arena import OneVsTwo; "
+        "print('MORTAL_UNIFIED_3P_ARENA_READY source=installed-unified-libriichi')"
+    )
+    return _run([str(python), "-c", code], cwd=root)
+
+
+def _rebuild_unified_3p_arena(root: Path, project: Path) -> None:
+    print("MORTAL_UNIFIED_3P_ARENA_REBUILD reason=missing-or-stale-extension", flush=True)
+    if os.name == "nt":
+        powershell = shutil.which("powershell") or shutil.which("pwsh")
+        if not powershell:
+            raise RuntimeError("PowerShell is required to rebuild unified libriichi on Windows")
+        script = project / "scripts" / "rebuild_unified_libriichi.ps1"
+        if not script.is_file():
+            raise RuntimeError(f"unified libriichi rebuild helper is missing: {script}")
+        _run_stream(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-InstallRoot",
+                str(root),
+            ],
+            cwd=project,
+        )
+        return
+
+    python = _runtime_python(root)
+    patcher = project / "scripts" / "patch_mortal_unified_all.py"
+    _run_stream([str(python), str(patcher), "--root", str(root)], cwd=project)
+    libriichi = root / "libriichi"
+    if not libriichi.is_dir():
+        raise RuntimeError(f"unified libriichi source is missing: {libriichi}")
+    try:
+        _run([str(python), "-m", "maturin", "--version"], cwd=libriichi)
+    except RuntimeError:
+        _run_stream([str(python), "-m", "pip", "install", "maturin"], cwd=project)
+    _run_stream([str(python), "-m", "maturin", "develop", "--release"], cwd=libriichi)
+
+
+def ensure_unified_3p_arena(runtime_root: Path, project_root: Path | None = None) -> None:
+    root = runtime_root.expanduser().resolve()
+    project = (project_root or Path(__file__).resolve().parents[1]).expanduser().resolve()
+    try:
+        output = _probe_unified_3p_arena(root)
+    except RuntimeError:
+        _rebuild_unified_3p_arena(root, project)
+        output = _probe_unified_3p_arena(root)
     if output:
         print(output, flush=True)
 
@@ -138,7 +211,7 @@ def ensure_akagi_3p_compat(runtime_root: Path) -> Path:
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
         "platform": sys.platform,
         "machine": platform.machine(),
-        "arena": "OneVsTwo",
+        "bridge": "libriichi3p.mjai.Bot",
     }
     manifest_path = compat_dir.parent / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -155,15 +228,11 @@ def apply_runtime_evaluator(runtime_root: Path, project_root: Path | None = None
     root = runtime_root.expanduser().resolve()
     project = (project_root or Path(__file__).resolve().parents[1]).expanduser().resolve()
     python = _runtime_python(root)
-    patchers = [
-        project / "scripts" / "patch_mortal_unified_eval_stage5c.py",
-        project / "scripts" / "patch_mortal_akagi_legacy_arena.py",
-    ]
-    missing = [str(path) for path in patchers if not path.is_file()]
-    if missing:
-        raise RuntimeError(f"3P evaluator patcher is missing: {missing}")
-    for patcher in patchers:
-        _run([str(python), str(patcher), "--root", str(root)], cwd=project)
+    patcher = project / "scripts" / "patch_mortal_unified_eval_stage5c.py"
+    if not patcher.is_file():
+        raise RuntimeError(f"unified Stage 5C evaluator patcher is missing: {patcher}")
+    _run([str(python), str(patcher), "--root", str(root)], cwd=project)
+    ensure_unified_3p_arena(root, project)
 
 
 __all__ = [
@@ -174,4 +243,5 @@ __all__ = [
     "apply_runtime_evaluator",
     "checkpoint_obs_channels",
     "ensure_akagi_3p_compat",
+    "ensure_unified_3p_arena",
 ]
