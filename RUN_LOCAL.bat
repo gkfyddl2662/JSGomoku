@@ -53,17 +53,18 @@ echo [OK] Mortal-ROGS local suite completed.
 exit /b 0
 
 :help
-echo Usage:
-echo   RUN_LOCAL.bat validate
-echo   RUN_LOCAL.bat experiment [error^|fresh^|resume] [both^|3p^|4p]
-echo   RUN_LOCAL.bat full       [error^|fresh^|resume] [both]
+echo PowerShell usage ^(run from the repository root^):
+echo   .\RUN_LOCAL.bat validate
+echo   .\RUN_LOCAL.bat experiment [error^|fresh^|resume] [both^|3p^|4p]
+echo   .\RUN_LOCAL.bat full       [error^|fresh^|resume] [both]
 echo.
 echo Examples:
-echo   RUN_LOCAL.bat validate
-echo   RUN_LOCAL.bat experiment fresh both
-echo   RUN_LOCAL.bat experiment resume 3p
-echo   RUN_LOCAL.bat full fresh both
+echo   .\RUN_LOCAL.bat validate
+echo   .\RUN_LOCAL.bat experiment fresh both
+echo   .\RUN_LOCAL.bat experiment resume 3p
+echo   .\RUN_LOCAL.bat full fresh both
 echo.
+echo In cmd.exe, RUN_LOCAL.bat without the .\ prefix also works.
 echo Advanced options are available through scripts\run_local_workstation.ps1.
 exit /b 0
 
