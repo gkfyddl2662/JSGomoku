@@ -19,6 +19,7 @@ from scripts.akagi_3p_compat import (
     checkpoint_obs_channels,
     ensure_akagi_3p_compat,
 )
+from scripts.patch_mortal_akagi_legacy_events import apply as apply_legacy_event_adapter
 
 _ORIGINAL_VALIDATE = base.validate_checkpoint
 
@@ -161,6 +162,7 @@ def validate_checkpoint_compat(
 
     ensure_akagi_3p_compat(runtime_root)
     apply_runtime_evaluator(runtime_root, base.PROJECT_ROOT)
+    apply_legacy_event_adapter(runtime_root)
     result: dict[str, object] = {
         "abi_kind": "akagi-legacy-775",
         "obs_channels": LEGACY_3P_OBS_CHANNELS,
