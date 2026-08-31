@@ -1,9 +1,9 @@
 # Mortal-ROGS -> untouched Akagi-NG integration contract.
 #
-# Mortal-ROGS owns and loads every Mortal checkpoint. Akagi-NG is treated as an
-# external, separately downloaded client application and is never patched by
-# this project. Compatibility is defined by Akagi-NG's existing AkagiOT HTTP
-# client protocol, not by copying .pth files into Akagi-NG.
+# Mortal-ROGS owns every model/checkpoint. Akagi-NG is an external client and
+# never loads Mortal-ROGS checkpoint files. The hard compatibility boundary is
+# AkagiOT's HTTP wire ABI (obs/masks -> actions/q_out/masks/is_greedy), not the
+# internal checkpoint format used by the server.
 
 [upstream]
 repository = "https://github.com/Xe-Persistent/Akagi-NG"
@@ -26,15 +26,20 @@ response_fields = ["actions", "q_out", "masks", "is_greedy"]
 connect_timeout_seconds = 2.0
 read_timeout_seconds = 4.0
 
+# Wire shapes are produced by untouched Akagi-NG's native encoder. 3P uses the
+# pinned libriichi3p v4 encoder (775 channels); this is intentionally different
+# from Mortal-ROGS's native 1010-channel sanma research/training representation.
 [mode.3p]
 endpoint = "/react_batch_3p"
 action_space = 44
-obs_channels = 1010
+obs_channels = 775
+encoder = "pinned-akagi-libriichi3p-v4"
 
 [mode.4p]
 endpoint = "/react_batch"
 action_space = 46
 obs_channels = 1012
+encoder = "pinned-akagi-libriichi-v4"
 
 [deployment]
 modify_akagi_ng = false
@@ -43,7 +48,17 @@ akagi_loads_mortal_checkpoint = false
 mortal_rogs_owns_models = true
 hot_reload_best_checkpoint = true
 
+[model_backend]
+# AkagiOT does not require a Mortal checkpoint. Mortal v4 remains a supported
+# compatibility backend for existing strong checkpoints, population members,
+# baselines and historical comparison.
+require_mortal_v4_checkpoint = false
+allow_non_mortal_backend = true
+mortal_compat_version = 4
+
 [policy]
+# Backward-compatible Mortal backend policy. These are server/backend checks,
+# not requirements imposed by the AkagiOT wire protocol.
 model_version = 4
 strict_state_dict_on_server = true
 require_finite_smoke_inference = true
