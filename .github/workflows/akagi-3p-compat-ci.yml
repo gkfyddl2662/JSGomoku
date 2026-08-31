@@ -30,7 +30,11 @@ jobs:
           python scripts/prepare_selfplay_population_compat.py --help
       - name: Compile compatibility helpers
         run: |
-          python -m py_compile scripts/akagi_3p_compat.py scripts/prepare_selfplay_population_compat.py scripts/patch_mortal_akagi_legacy_events.py
+          python -m py_compile \
+            scripts/akagi_3p_compat.py \
+            scripts/prepare_selfplay_population_compat.py \
+            scripts/patch_mortal_akagi_legacy_events.py \
+            scripts/probe_akagi_3p_wire.py
       - name: Clone pinned Akagi-NG
         run: |
           git clone --no-checkout https://github.com/Xe-Persistent/Akagi-NG.git /tmp/akagi-ng
@@ -50,6 +54,9 @@ jobs:
           assert hasattr(libriichi3p.mjai, 'Bot')
           print('AKAGI_PINNED_LIBRIICHI3P_CONTRACT_OK obs=775 actions=44 mjai=Bot')
           PY
+      - name: Probe actual pinned 3P Bot wire tensors
+        run: |
+          PYTHONPATH=/tmp/akagi-compat-lib python scripts/probe_akagi_3p_wire.py
       - name: Verify pinned Akagi sanma MJAI container contract
         run: |
           bridge=/tmp/akagi-ng/akagi_backend/akagi_ng/bridge/majsoul/bridge.py
