@@ -25,7 +25,7 @@ set "PY=%RUNTIME%\.venv\Scripts\python.exe"
 if not exist "%PY%" (
   echo [INFO] Unified runtime is missing. Running workstation validation/bootstrap first...
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT%scripts\run_local_workstation.ps1" -RunMode Validate -GameModes both
-  if errorlevel 1 exit /b %ERRORLEVEL%
+  if errorlevel 1 exit /b 1
 )
 
 echo.
@@ -50,7 +50,7 @@ echo.
 if errorlevel 1 (
   echo.
   echo [FAILED] Tenhou training preparation failed.
-  exit /b %ERRORLEVEL%
+  exit /b 1
 )
 
 if /I "%MODE%"=="prepare" (
@@ -73,7 +73,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass ^
 if errorlevel 1 (
   echo.
   echo [FAILED] Mortal-ROGS %MODE% run failed.
-  exit /b %ERRORLEVEL%
+  exit /b 1
 )
 
 echo.
