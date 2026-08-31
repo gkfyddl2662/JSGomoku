@@ -234,12 +234,14 @@ def train_grp(py: Path, runtime: Path, mode: str, config: Path, target: int, ret
     state = runtime / "runtime" / mode / "models" / "grp.pth"
     if retrain:
         state.unlink(missing_ok=True)
-    if state.is_file() and not retrain:
+    if state.is_file():
         saved = torch.load(state, weights_only=True, map_location="cpu")
         players = 3 if mode == "3p" else 4
         if int(saved.get("num_players", players)) != players:
             raise RuntimeError(f"{mode} existing GRP belongs to another mode")
-        return {"checkpoint": str(state), "steps": int(saved.get("steps", 0)), "trained": False}
+        saved_steps = int(saved.get("steps", 0))
+        if not retrain and saved_steps >= target:
+            return {"checkpoint": str(state), "steps": saved_steps, "trained": False}
 
     cfg = toml.load(config)
     cfg["grp"]["control"]["save_every"] = min(int(cfg["grp"]["control"].get("save_every", 2000)), target)
