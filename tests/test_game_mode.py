@@ -14,6 +14,9 @@ from scripts.prepare_selfplay_population import build_matchup_order, choose_cham
 from training.game_mode import game_mode_spec, normalize_mode
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
 def test_mode_aliases() -> None:
     assert normalize_mode("sanma") == "3p"
     assert normalize_mode("3") == "3p"
@@ -45,6 +48,20 @@ def test_yonma_contract() -> None:
     assert spec.allow_chi is True
     assert spec.allow_nuki is False
     assert spec.checkpoint_name == "mortal.pth"
+
+
+def test_sanma_oracle_contract_matches_active_bootstrap_and_native_encoder_patch() -> None:
+    bootstrap = (PROJECT_ROOT / "scripts" / "bootstrap_unified_runtime.ps1").read_text(encoding="utf-8")
+    stage4c = (PROJECT_ROOT / "scripts" / "patch_libriichi_unified_arena_stage4c.py").read_text(
+        encoding="utf-8"
+    )
+    patch_all = (PROJECT_ROOT / "scripts" / "patch_mortal_unified_all.py").read_text(encoding="utf-8")
+
+    assert "('3p', 3, 44, 1010, 170, 6, 'rtx5080.sanma.toml')" in bootstrap
+    assert "assert consts.oracle_obs_shape_for('3p', 4) == (170, 34)" in bootstrap
+    assert '4 => Ok((170, 34))' in stage4c
+    assert 'assert_eq!(obs.dim(), (170, 34));' in stage4c
+    assert '"4 => Ok((170, 34))" not in consts' in patch_all
 
 
 def test_modes_share_deployment_version_contract() -> None:
