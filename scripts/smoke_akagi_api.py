@@ -46,7 +46,17 @@ def request_json(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return int(resp.status), json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8")
+        try:
+            body = exc.read().decode("utf-8")
+        except OSError as body_exc:
+            # On Windows an endpoint that rejects a POST before consuming its
+            # request body can close/reset the body stream after the HTTP status
+            # has already been received. Preserve the authoritative status code;
+            # later successful requests still verify that the server stayed alive.
+            return int(exc.code), {
+                "raw": "",
+                "body_read_error": f"{type(body_exc).__name__}: {body_exc}",
+            }
         try:
             decoded = json.loads(body)
         except json.JSONDecodeError:
@@ -239,9 +249,9 @@ def main() -> int:
         )
         if wrong_shape_status != 400:
             raise SystemExit(f"4P-shaped payload on 3P endpoint should return 400, got {wrong_shape_status}")
-        bad_mode_status, _ = request_json(
-            f"{base}/api/inference/5p", api_key=args.api_key, payload=build_payload(1010, 44)[0]
-        )
+        # Unsupported-mode validation happens before the request body is read.
+        # A tiny POST avoids Windows TCP reset behavior from a large unread body.
+        bad_mode_status, _ = request_json(f"{base}/api/inference/5p", api_key=args.api_key, payload={})
         if bad_mode_status != 404:
             raise SystemExit(f"Unsupported managed mode should return 404, got {bad_mode_status}")
 
