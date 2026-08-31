@@ -262,3 +262,39 @@ def test_majsoul_launcher_keeps_credentials_out_of_files():
     assert 'shown[shown.index("--password") + 1] = "<redacted>"' in script
     assert '"credentials_persisted": False' in script
     assert 'p.add_argument("--password"' not in script
+
+
+def test_majsoul_yostar_oauth_hex_auto_detection(monkeypatch: pytest.MonkeyPatch):
+    import os
+    import sys
+
+    from scripts.prepare_majsoul_training_yostar import (
+        YOSTAR_OAUTH_TYPE_ENV,
+        YOSTAR_PACKET_HEX_ENV,
+        parse_yostar_oauth2auth_hex,
+        read_credentials,
+    )
+
+    packet_hex = (
+        "020a000a142e6c712e4c6f6262792e6f617574683241757468124e"
+        "0816"
+        "122830313233343536373839616263646566303132333435363738396162636465663031323334353637"
+        "1a0b3132333435363738393031"
+        "2213576562474c5f323032322d392e39392e393939"
+    )
+    uid = "12345678901"
+    code = "0123456789abcdef0123456789abcdef01234567"
+
+    assert parse_yostar_oauth2auth_hex(packet_hex) == (uid, code, 22, "WebGL_2022-9.99.999")
+    assert parse_yostar_oauth2auth_hex(uid) is None
+    assert parse_yostar_oauth2auth_hex(code) is None
+    with pytest.raises(RuntimeError, match="not a \\.lq\\.Lobby\\.oauth2Auth packet"):
+        parse_yostar_oauth2auth_hex("00" * 64)
+
+    monkeypatch.setattr(sys, "argv", ["prepare_majsoul_training_yostar.py", "--server", "en"])
+    monkeypatch.setenv(YOSTAR_PACKET_HEX_ENV, packet_hex)
+    monkeypatch.delenv(YOSTAR_OAUTH_TYPE_ENV, raising=False)
+    parsed_uid, parsed_token = read_credentials(None)
+    assert parsed_uid == uid
+    assert parsed_token == code
+    assert os.environ[YOSTAR_OAUTH_TYPE_ENV] == "22"
