@@ -53,6 +53,41 @@ def test_rogs_hook_keeps_dqn_parameter_shape_and_backprops():
     assert batch.outputs.q.shape == (2, 3)
     assert torch.isfinite(batch.objective.total)
     assert dqn.net.weight.grad is not None
+    assert batch.regret_target.shape == (2,)
+    assert batch.regret_target_raw.shape == (2,)
+    assert batch.legal_action_count.tolist() == [2, 2]
+    assert batch.oracle_available is False
+    assert batch.search_available is False
+    assert "behavior_cloning" in batch.objective.components
+    assert "cql" in batch.objective.components
+    assert "entropy" in batch.objective.components
+
+
+def test_rogs_hook_reports_teacher_availability_without_changing_parameter_shape():
+    torch.manual_seed(2)
+    dqn = TinyDQN()
+    phi = torch.randn(2, 4)
+    masks = torch.tensor([[True, True, False], [False, True, True]])
+    actions = torch.tensor([0, 2])
+    returns = torch.tensor([0.25, -0.25])
+    teacher = torch.zeros((2, 3))
+
+    batch = compute_mortal_rogs_batch(
+        dqn=dqn,
+        phi=phi,
+        masks=masks,
+        actions=actions,
+        returns=returns,
+        cql_loss=None,
+        config=config(),
+        steps=10,
+        oracle_q=teacher,
+        search_q=teacher,
+    )
+    assert batch.oracle_available is True
+    assert batch.search_available is True
+    assert "oracle" in batch.objective.components
+    assert "search" in batch.objective.components
 
 
 def test_rogs_disabled_on_old_mortal_versions():
