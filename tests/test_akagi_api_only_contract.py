@@ -16,12 +16,19 @@ def test_akagi_contract_is_api_only() -> None:
     assert cfg["mode"]["4p"]["endpoint"] == "/react_batch"
     assert cfg["mode"]["3p"]["action_space"] == 44
     assert cfg["mode"]["4p"]["action_space"] == 46
+    assert cfg["mode"]["3p"]["obs_channels"] == 775
+    assert cfg["mode"]["4p"]["obs_channels"] == 1012
 
     deployment = cfg["deployment"]
     assert deployment["modify_akagi_ng"] is False
     assert deployment["copy_checkpoint_to_akagi_ng"] is False
     assert deployment["akagi_loads_mortal_checkpoint"] is False
     assert deployment["mortal_rogs_owns_models"] is True
+
+    model_backend = cfg["model_backend"]
+    assert model_backend["require_mortal_v4_checkpoint"] is False
+    assert model_backend["allow_non_mortal_backend"] is True
+    assert model_backend["mortal_compat_version"] == 4
 
 
 def test_control_center_does_not_require_an_akagi_install_path() -> None:
