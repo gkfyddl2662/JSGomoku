@@ -16,6 +16,7 @@ if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 $Py = Join-Path $InstallRoot ".venv\Scripts\python.exe"
 $LibriichiRoot = Join-Path $InstallRoot "libriichi"
+$MortalRoot = Join-Path $InstallRoot "mortal"
 $ArenaMod = Join-Path $LibriichiRoot "src\arena\mod.rs"
 $OneVsTwo = Join-Path $LibriichiRoot "src\arena\one_vs_two.rs"
 
@@ -24,6 +25,9 @@ if (-not (Test-Path $Py)) {
 }
 if (-not (Test-Path $LibriichiRoot)) {
     throw "Unified libriichi source not found: $LibriichiRoot"
+}
+if (-not (Test-Path $MortalRoot)) {
+    throw "Unified Mortal Python directory not found: $MortalRoot"
 }
 
 function Test-OneVsTwoSourceContract {
@@ -78,7 +82,12 @@ try {
     Pop-Location
 }
 
-& $Py -c "import libriichi; assert hasattr(libriichi, 'arena'); assert hasattr(libriichi.arena, 'OneVsTwo'); print('MORTAL_UNIFIED_3P_ARENA_READY source=rebuilt-unified-libriichi')"
-if ($LASTEXITCODE -ne 0) {
-    throw "Rebuilt unified libriichi still does not expose arena.OneVsTwo"
+Push-Location $MortalRoot
+try {
+    & $Py -c "import libriichi; assert hasattr(libriichi, 'arena'); assert hasattr(libriichi.arena, 'OneVsTwo'); print('MORTAL_UNIFIED_3P_ARENA_READY source=rebuilt-unified-libriichi import=top-level')"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Rebuilt unified libriichi still does not expose arena.OneVsTwo"
+    }
+} finally {
+    Pop-Location
 }
