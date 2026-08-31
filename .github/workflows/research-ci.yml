@@ -220,6 +220,31 @@ jobs:
           grep -q "version = config\['control'\]\['version'\]" /tmp/mortal-4p/mortal/train.py
           git -C /tmp/mortal-4p diff --check
 
+  majsoul-yostar-auth-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned Majsoul downloader
+        run: |
+          git clone --filter=blob:none https://github.com/NikkeTryHard/tenhou-to-mjai.git /tmp/majsoul-prep
+          git -C /tmp/majsoul-prep checkout 69fb75a51c7efef3212be603227b2a58a9717237
+      - name: Apply managed EN Yostar auth patch
+        run: |
+          git -C /tmp/majsoul-prep apply --check "$GITHUB_WORKSPACE/patches/tenhou-to-mjai-yostar-en.patch"
+          git -C /tmp/majsoul-prep apply "$GITHUB_WORKSPACE/patches/tenhou-to-mjai-yostar-en.patch"
+          git -C /tmp/majsoul-prep diff --check
+      - name: Compile patched downloader
+        run: cargo check --release --locked --manifest-path /tmp/majsoul-prep/Cargo.toml
+      - name: Verify EN-only OAuth routing contract
+        run: |
+          grep -q 'server == "en"' /tmp/majsoul-prep/src/majsoul/raw_download.rs
+          grep -q 'login_yostar' /tmp/majsoul-prep/src/majsoul/raw_download.rs
+          grep -q 'oauth2Auth' /tmp/majsoul-prep/src/majsoul/rpc.rs
+          grep -q 'oauth2Check' /tmp/majsoul-prep/src/majsoul/rpc.rs
+          grep -q 'oauth2Login' /tmp/majsoul-prep/src/majsoul/rpc.rs
+          grep -q 'WebGL_2022-' /tmp/majsoul-prep/src/majsoul/rpc.rs
+          grep -q 'DF2vkXCnfeXp4WoGrBGNcJBufZiMN3uP' /tmp/majsoul-prep/src/majsoul/rpc.rs
+
   mjx-sanma-patch:
     runs-on: ubuntu-latest
     steps:
