@@ -78,7 +78,7 @@ try {
     Pop-Location
 }
 
-& $Py -c "from libriichi.arena import OneVsTwo; print('MORTAL_UNIFIED_3P_ARENA_READY source=rebuilt-unified-libriichi')"
+& $Py -c "import libriichi; assert hasattr(libriichi, 'arena'); assert hasattr(libriichi.arena, 'OneVsTwo'); print('MORTAL_UNIFIED_3P_ARENA_READY source=rebuilt-unified-libriichi')"
 if ($LASTEXITCODE -ne 0) {
     throw "Rebuilt unified libriichi still does not expose arena.OneVsTwo"
 }
