@@ -48,6 +48,47 @@ def merge_preset(current: dict[str, Any], preset: dict[str, Any]) -> dict[str, A
     return result
 
 
+def _ablation_objective_metadata(cfg: dict[str, Any], variant: str) -> dict[str, Any]:
+    """Describe what the ablation actually changes so results are not over-interpreted."""
+
+    if variant == "mortal":
+        return {
+            "family": "stock-mortal-q-mse-cql",
+            "comparison_scope": "composite-algorithm",
+            "chosen_q_mse": True,
+            "cql_min_q_weight": float(cfg.get("cql", {}).get("min_q_weight", 0.0)),
+            "rogs_objective": False,
+            "global_reward": False,
+        }
+
+    objective = cfg.get("objective", {})
+    rogs = cfg.get("rogs", {})
+    return {
+        "family": "rogs-composite-value-regret-bc-cql-entropy",
+        "comparison_scope": "composite-algorithm",
+        "chosen_q_mse": False,
+        "rogs_objective": True,
+        "global_reward": variant == "rogs-global",
+        "base_weights": {
+            "value": float(objective.get("value_weight", 1.0)),
+            "regret": float(objective.get("regret_weight", 0.5)),
+            "behavior_cloning": float(objective.get("bc_anchor_weight", 0.1)),
+            "cql": float(objective.get("cql_anchor_weight", 0.25)),
+            "entropy": float(objective.get("entropy_weight", 0.002)),
+            "teacher_kl": float(objective.get("teacher_kl_weight", 0.3)),
+        },
+        "final_weights": {
+            "regret": float(rogs.get("regret_final_weight", 0.75)),
+            "behavior_cloning": float(rogs.get("bc_final_weight", 0.02)),
+            "cql": float(rogs.get("cql_final_weight", 0.05)),
+            "oracle": float(rogs.get("oracle_final_weight", 0.05)),
+        },
+        "oracle_teacher_connected": False,
+        "search_teacher_connected": False,
+        "hedge_behavior_policy_connected": False,
+    }
+
+
 def build_training_ablation_config(
     current: dict[str, Any],
     *,
@@ -96,6 +137,7 @@ def build_training_ablation_config(
     control["tensorboard_dir"] = str(run_dir / "tensorboard")
 
     cfg.setdefault("test_play", {})["log_dir"] = str(run_dir / "test_play")
+    objective_metadata = _ablation_objective_metadata(cfg, variant)
     cfg["experiment"] = {
         "kind": "training_ablation",
         "variant": variant,
@@ -103,6 +145,9 @@ def build_training_ablation_config(
         "mode": normalized_mode,
         "rogs_enabled": rogs_enabled,
         "global_reward_enabled": global_reward_enabled,
+        "comparison_scope": "composite-algorithm",
+        "objective_family": objective_metadata["family"],
+        "objective_metadata": objective_metadata,
         "model_dir": str(model_dir),
         "run_dir": str(run_dir),
     }
