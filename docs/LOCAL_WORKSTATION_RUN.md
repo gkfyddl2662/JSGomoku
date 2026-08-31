@@ -2,12 +2,14 @@
 
 `RUN_LOCAL.bat` is the Windows entrypoint for the local RTX 5080 validation/experiment workflow. It wraps the existing unified bootstrap, smoke, training ablation, Mortal-style model comparison, Akagi inference service, and serving soak scripts instead of introducing a separate experiment service.
 
+> PowerShell does not execute programs from the current directory by bare filename. From PowerShell, use `\.\RUN_LOCAL.bat ...`. In `cmd.exe`, `RUN_LOCAL.bat ...` also works.
+
 ## 1. Validate the workstation first
 
-From the Mortal-ROGS project root:
+From the Mortal-ROGS project root in PowerShell:
 
-```bat
-RUN_LOCAL.bat validate
+```powershell
+.\RUN_LOCAL.bat validate
 ```
 
 This is safe to use on a fresh machine/runtime. It:
@@ -44,8 +46,8 @@ The tool fails during preflight before starting long training if any required in
 
 Start fresh isolated runs for both modes:
 
-```bat
-RUN_LOCAL.bat experiment fresh both
+```powershell
+.\RUN_LOCAL.bat experiment fresh both
 ```
 
 This performs, for 3P and then 4P:
@@ -69,10 +71,10 @@ using the same duplicate seed range in both directions. 3P rotates ABC and 4P ro
 
 Existing run policy:
 
-```bat
-RUN_LOCAL.bat experiment error both
-RUN_LOCAL.bat experiment fresh both
-RUN_LOCAL.bat experiment resume both
+```powershell
+.\RUN_LOCAL.bat experiment error both
+.\RUN_LOCAL.bat experiment fresh both
+.\RUN_LOCAL.bat experiment resume both
 ```
 
 - `error` is the default and prevents accidental reuse/overwrite.
@@ -81,15 +83,15 @@ RUN_LOCAL.bat experiment resume both
 
 Single-mode experiments are supported:
 
-```bat
-RUN_LOCAL.bat experiment fresh 3p
-RUN_LOCAL.bat experiment fresh 4p
+```powershell
+.\RUN_LOCAL.bat experiment fresh 3p
+.\RUN_LOCAL.bat experiment fresh 4p
 ```
 
 ## 4. Run the complete workstation suite including the real RTX serving gate
 
-```bat
-RUN_LOCAL.bat full fresh both
+```powershell
+.\RUN_LOCAL.bat full fresh both
 ```
 
 `full` executes validation + all three training variants + bidirectional duplicate comparisons, then starts the actual Mortal Akagi inference API and runs the production serving soak.
