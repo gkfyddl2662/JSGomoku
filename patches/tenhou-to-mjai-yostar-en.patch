@@ -201,7 +201,7 @@ diff --git a/src/majsoul/raw_download.rs b/src/majsoul/raw_download.rs
      route_id: String,
 +    server: String,
      rx: Arc<Mutex<mpsc::Receiver<String>>>,
-@@ -113,10 +114,20 @@
+@@ -112,10 +113,19 @@
 -    if let Err(e) = rpc.login_native(&username, &password, &version, &route_id).await {
 -        debug!("[{}] Login failed for {}: {}", worker_id, username, e);
 +    let login_result = if server == "en" {
@@ -224,7 +224,7 @@ diff --git a/src/majsoul/raw_download.rs b/src/majsoul/raw_download.rs
 +    } else {
 +        format!("web-{}", version)
 +    };
-@@ -294,4 +305,5 @@
+@@ -293,4 +303,5 @@
              endpoint.clone(),
              version.clone(),
              route_id.clone(),
