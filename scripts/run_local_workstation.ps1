@@ -25,14 +25,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+$WorkspaceRoot = Split-Path $ProjectRoot -Parent
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
-    $InstallRoot = Join-Path (Split-Path $ProjectRoot -Parent) "Mortal_Unified"
+    $InstallRoot = Join-Path $WorkspaceRoot "Mortal_Unified"
 }
 $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 $Py = Join-Path $InstallRoot ".venv\Scripts\python.exe"
 $MortalDir = Join-Path $InstallRoot "mortal"
 $Timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss")
-$SuiteRoot = Join-Path $InstallRoot "runtime\local-suite\$Timestamp-$($RunMode.ToLowerInvariant())"
+$SuiteRoot = Join-Path $WorkspaceRoot "Mortal_ROGS_Results\$Timestamp-$($RunMode.ToLowerInvariant())"
 $Steps = [System.Collections.Generic.List[object]]::new()
 $Comparisons = [System.Collections.Generic.List[object]]::new()
 $InferenceProcess = $null
@@ -43,6 +44,9 @@ if ($SeedCount -le 0) { throw "SeedCount must be positive" }
 if ($SoakMinutes -le 0) { throw "SoakMinutes must be positive" }
 if ($SoakConcurrency -le 0 -or $SoakBatchRows -le 0) { throw "SoakConcurrency and SoakBatchRows must be positive" }
 if ($InferencePort -lt 1 -or $InferencePort -gt 65535) { throw "InferencePort must be between 1 and 65535" }
+if ($RunMode -eq "Full" -and -not $SkipSoak -and $GameModes -ne "both") {
+    throw "Full production soak requires -GameModes both so global health covers both model slots. Use -SkipSoak for a single-mode experiment."
+}
 
 $SelectedModes = if ($GameModes -eq "both") { @("3p", "4p") } else { @($GameModes) }
 
@@ -54,6 +58,7 @@ function Invoke-CheckedNative {
     )
 
     $pushed = $false
+    $exitCode = 0
     try {
         if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
             Push-Location $WorkingDirectory
@@ -190,6 +195,11 @@ function Wait-InferenceReady {
     throw "Inference API did not become ready within 3 minutes: $Server"
 }
 
+function Quote-ProcessArgument {
+    param([string]$Value)
+    return '"' + $Value.Replace('"', '\"') + '"'
+}
+
 function Start-SoakServer {
     $model3 = Get-ServingCheckpoint -Mode "3p"
     $model4 = Get-ServingCheckpoint -Mode "4p"
@@ -205,7 +215,8 @@ function Start-SoakServer {
         "--model-3p", $model3,
         "--model-4p", $model4
     )
-    $script:InferenceProcess = Start-Process -FilePath $Py -ArgumentList $arguments -WorkingDirectory $ProjectRoot -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $argumentLine = (($arguments | ForEach-Object { Quote-ProcessArgument ([string]$_) }) -join " ")
+    $script:InferenceProcess = Start-Process -FilePath $Py -ArgumentList $argumentLine -WorkingDirectory $ProjectRoot -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     Wait-InferenceReady -Server "http://127.0.0.1:$InferencePort" -ApiKey $InferenceApiKey
     Write-Host "INFERENCE_READY pid=$($InferenceProcess.Id) model3=$model3 model4=$model4"
 }
@@ -326,13 +337,13 @@ try {
         project_commit = $gitSha
         runtime_root = $InstallRoot
         device = $Device
-        gpu = Get-GpuSnapshot
+        gpu = (Get-GpuSnapshot)
         training_seed = $TrainingSeed
         comparison_seed_start = $SeedStart
         comparison_seed_count = $SeedCount
         comparison_seed_key = $SeedKey
         rating_profile = $RatingProfile
-        soak_minutes = if ($RunMode -eq "Full" -and -not $SkipSoak) { $SoakMinutes } else { 0 }
+        soak_minutes = $(if ($RunMode -eq "Full" -and -not $SkipSoak) { $SoakMinutes } else { 0 })
         steps = @($Steps)
         comparisons = @($Comparisons)
         results_root = $SuiteRoot
