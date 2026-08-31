@@ -1,7 +1,7 @@
 diff --git a/src/majsoul/rpc.rs b/src/majsoul/rpc.rs
 --- a/src/majsoul/rpc.rs
 +++ b/src/majsoul/rpc.rs
-@@ -27,6 +27,55 @@
+@@ -210,4 +210,54 @@
          buf
      }
  
@@ -44,6 +44,7 @@ diff --git a/src/majsoul/rpc.rs b/src/majsoul/rpc.rs
 +
 +        let mut client_version = Vec::new();
 +        encode_string(&mut client_version, 1, version);
++        encode_string(&mut client_version, 2, "4.0.12");
 +        encode_bytes_field(&mut buf, 6, &client_version);
 +
 +        for platform in [1_u64, 4, 5, 9] {
@@ -55,14 +56,10 @@ diff --git a/src/majsoul/rpc.rs b/src/majsoul/rpc.rs
 +    }
 +
      /// Build loginBeat request
-     pub fn build_login_beat_request(contract: &str) -> Vec<u8> {
-         let mut buf = Vec::new();
-@@ -51,6 +100,26 @@
-         let tag = (field << 3) | 0;
-         encode_varint(buf, tag as u64);
+@@ -244,4 +294,32 @@
          encode_varint(buf, value);
-+    }
-+
+     }
+ 
 +    fn encode_bytes_field(buf: &mut Vec<u8>, field: u32, value: &[u8]) {
 +        let tag = (field << 3) | 2;
 +        encode_varint(buf, tag as u64);
@@ -79,18 +76,23 @@ diff --git a/src/majsoul/rpc.rs b/src/majsoul/rpc.rs
 +        encode_bool(&mut buf, 5, true);
 +        encode_string(&mut buf, 6, "Chrome");
 +        encode_string(&mut buf, 7, &format!("{}_web", locale));
++        encode_varint_field(&mut buf, 10, 1305);
++        encode_varint_field(&mut buf, 11, 1305);
++        encode_string(
++            &mut buf,
++            12,
++            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150 Safari/537.36",
++        );
++        encode_bool(&mut buf, 13, true);
 +        encode_string(&mut buf, 14, random_key);
 +        buf
-     }
- 
-     /// Encode device message with just is_browser = true (for native login)
-@@ -144,6 +213,72 @@
-         let beat_req = requests::build_login_beat_request(contract);
-         self.call(".lq.Lobby.loginBeat", &beat_req).await?;
- 
-+        Ok(())
 +    }
 +
+     /// Encode device message with just is_browser = true (for native login)
+@@ -489,4 +567,69 @@
+         Ok(())
+     }
+ 
 +    /// Login through the EN/KR Yostar web OAuth flow.
 +    ///
 +    /// `code` is the short-lived Yostar redirect token paired with `uid`.
@@ -147,22 +149,20 @@ diff --git a/src/majsoul/rpc.rs b/src/majsoul/rpc.rs
 +            }
 +        }
 +
-+        // Current EN/KR web client sends the beat contract used below.
 +        let contract = "DF2vkXCnfeXp4WoGrBGNcJBufZiMN3uP";
 +        let beat_req = requests::build_login_beat_request(contract);
 +        self.call(".lq.Lobby.loginBeat", &beat_req).await?;
 +        self.call(".lq.Lobby.loginSuccess", &[]).await?;
 +
 +        debug!("Yostar OAuth login successful");
-         Ok(())
-     }
- 
-@@ -159,6 +294,34 @@
-         } else {
-             None
-         }
++        Ok(())
 +    }
 +
+     /// Extract error code from protobuf response
+@@ -507,4 +650,32 @@
+         }
+     }
+ 
 +    fn extract_varint_field(data: &[u8], target_field: u32) -> Option<u64> {
 +        let mut pos = 0;
 +        while pos < data.len() {
@@ -189,24 +189,19 @@ diff --git a/src/majsoul/rpc.rs b/src/majsoul/rpc.rs
 +            }
 +        }
 +        None
-     }
- 
++    }
++
      /// Extract string field from protobuf response by field number
 diff --git a/src/majsoul/raw_download.rs b/src/majsoul/raw_download.rs
 --- a/src/majsoul/raw_download.rs
 +++ b/src/majsoul/raw_download.rs
-@@ -6,6 +6,7 @@
+@@ -91,4 +91,5 @@
      endpoint: String,
      version: String,
      route_id: String,
 +    server: String,
      rx: Arc<Mutex<mpsc::Receiver<String>>>,
-     output_dir: PathBuf,
-     journal_tx: mpsc::Sender<String>,
-@@ -24,8 +25,13 @@
-         }
-     };
- 
+@@ -113,10 +114,19 @@
 -    if let Err(e) = rpc.login_native(&username, &password, &version, &route_id).await {
 -        debug!("[{}] Login failed for {}: {}", worker_id, username, e);
 +    let login_result = if server == "en" {
@@ -219,7 +214,7 @@ diff --git a/src/majsoul/raw_download.rs b/src/majsoul/raw_download.rs
          stats.login_failed.fetch_add(1, Ordering::Relaxed);
          let _ = rpc.close().await;
          return;
-@@ -33,7 +39,11 @@
+     }
  
      stats.logged_in.fetch_add(1, Ordering::Relaxed);
  
@@ -229,14 +224,9 @@ diff --git a/src/majsoul/raw_download.rs b/src/majsoul/raw_download.rs
 +    } else {
 +        format!("web-{}", version)
 +    };
- 
-     // Download loop
- 
-@@ -78,6 +88,7 @@
+@@ -294,4 +304,5 @@
              endpoint.clone(),
              version.clone(),
              route_id.clone(),
 +            server.to_string(),
              Arc::clone(&uuid_rx),
-             output_dir.to_path_buf(),
-             journal_tx.clone(),
