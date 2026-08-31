@@ -12,8 +12,9 @@ set "GRPSTEPS=%~5"
 if "%GRPSTEPS%"=="" set "GRPSTEPS=10000"
 
 if /I not "%MODE%"=="prepare" if /I not "%MODE%"=="experiment" if /I not "%MODE%"=="full" goto :help_error
-if /I not "%TERMS%"=="accept" (
-  echo [ERROR] Tenhou log terms must be acknowledged with the literal argument: accept
+if /I not "%TERMS%"=="authorized" (
+  echo [ERROR] Tenhou training downloads require the literal argument: authorized
+  echo         Use it only if you have permission for the intended training/application.
   goto :help_error
 )
 
@@ -38,6 +39,7 @@ echo   runtime   = %RUNTIME%
 echo.
 echo Tenhou logs stay local. Do not redistribute downloaded log data.
 echo Only one Tenhou download session is started by this tool.
+echo 'authorized' means you have permission for this intended use under Tenhou's terms.
 echo.
 
 "%PY%" "%PROJECT%scripts\prepare_tenhou_training.py" ^
@@ -82,17 +84,17 @@ exit /b 0
 
 :help
 echo PowerShell usage:
-echo   .\RUN_TENHOU_FULL.bat prepare    [3p_limit] [4p_limit] accept [grp_steps]
-echo   .\RUN_TENHOU_FULL.bat experiment [3p_limit] [4p_limit] accept [grp_steps]
-echo   .\RUN_TENHOU_FULL.bat full       [3p_limit] [4p_limit] accept [grp_steps]
+echo   .\RUN_TENHOU_FULL.bat prepare    [3p_limit] [4p_limit] authorized [grp_steps]
+echo   .\RUN_TENHOU_FULL.bat experiment [3p_limit] [4p_limit] authorized [grp_steps]
+echo   .\RUN_TENHOU_FULL.bat full       [3p_limit] [4p_limit] authorized [grp_steps]
 echo.
-echo Examples:
-echo   .\RUN_TENHOU_FULL.bat prepare 5000 5000 accept 10000
-echo   .\RUN_TENHOU_FULL.bat experiment 100000 100000 accept 20000
-echo   .\RUN_TENHOU_FULL.bat full 1000000 1000000 accept 50000
+echo Examples ^(only after obtaining permission for the intended use^):
+echo   .\RUN_TENHOU_FULL.bat prepare 5000 5000 authorized 10000
+echo   .\RUN_TENHOU_FULL.bat experiment 100000 100000 authorized 20000
 echo.
-echo The literal 'accept' acknowledges that Tenhou logs remain local,
-echo are not redistributed, and only one download session is used.
+echo The literal 'authorized' confirms that you have permission for this use,
+echo downloaded logs remain local, are not redistributed, and one session is used.
+echo Tenhou's raw-log page states additional restrictions on competing/general mahjong applications.
 echo For custom baseline checkpoints, call scripts\prepare_tenhou_training.py directly.
 exit /b 0
 
