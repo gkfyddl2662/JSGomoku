@@ -28,13 +28,16 @@ jobs:
       - name: Execute population compatibility wrapper directly
         run: |
           python scripts/prepare_selfplay_population_compat.py --help
+      - name: Compile compatibility patchers
+        run: |
+          python -m py_compile scripts/akagi_3p_compat.py scripts/patch_mortal_akagi_legacy_arena.py scripts/prepare_selfplay_population_compat.py
       - name: Clone pinned Akagi-NG
         run: |
           git clone --no-checkout https://github.com/Xe-Persistent/Akagi-NG.git /tmp/akagi-ng
           git -C /tmp/akagi-ng fetch --depth 1 origin 11c0ffc0d70bf8142585b92405b4412976c9e205
           git -C /tmp/akagi-ng checkout --detach --force 11c0ffc0d70bf8142585b92405b4412976c9e205
           test "$(git -C /tmp/akagi-ng rev-parse HEAD)" = "11c0ffc0d70bf8142585b92405b4412976c9e205"
-      - name: Import pinned 3P encoder contract
+      - name: Import pinned 3P encoder and arena contract
         run: |
           mkdir -p /tmp/akagi-compat-lib
           cp /tmp/akagi-ng/lib/libriichi3p-3.12-x86_64-unknown-linux-gnu.so /tmp/akagi-compat-lib/libriichi3p.so
@@ -45,5 +48,9 @@ jobs:
           assert int(libriichi3p.consts.ACTION_SPACE) == 44, libriichi3p.consts.ACTION_SPACE
           assert hasattr(libriichi3p, 'mjai')
           assert hasattr(libriichi3p.mjai, 'Bot')
-          print('AKAGI_PINNED_LIBRIICHI3P_CONTRACT_OK obs=775 actions=44')
+          assert hasattr(libriichi3p, 'arena')
+          assert hasattr(libriichi3p.arena, 'OneVsTwo')
+          arena = libriichi3p.arena.OneVsTwo(disable_progress_bar=True, log_dir=None)
+          assert arena is not None
+          print('AKAGI_PINNED_LIBRIICHI3P_CONTRACT_OK obs=775 actions=44 arena=OneVsTwo')
           PY
