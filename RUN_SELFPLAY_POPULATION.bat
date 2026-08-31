@@ -23,7 +23,7 @@ if "%~2"=="" goto :help
 if "%~3"=="" goto :help
 set "MODE=%~2"
 set "CHAMPION=%~3"
-set CMD="%PY%" "%~dp0scripts\prepare_selfplay_population.py" --runtime-root "%RUNTIME_ROOT%" --mode "%MODE%" --champion "%CHAMPION%" --trusted "%CHAMPION%" --candidate "%CHAMPION%" --device cuda:0 --gameplay-smoke
+set CMD="%PY%" "%~dp0scripts\prepare_selfplay_population_compat.py" --runtime-root "%RUNTIME_ROOT%" --mode "%MODE%" --champion "%CHAMPION%" --trusted "%CHAMPION%" --candidate "%CHAMPION%" --device cuda:0 --gameplay-smoke
 if not "%~4"=="" set CMD=!CMD! --candidate "%~4"
 if not "%~5"=="" set CMD=!CMD! --candidate "%~5"
 if not "%~6"=="" set CMD=!CMD! --candidate "%~6"
@@ -36,7 +36,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [Mortal-ROGS] Installing validated Champion into current/best/baseline slots...
+echo [Mortal-ROGS] Installing validated Champion into compatible model slots...
 "%PY%" "%~dp0scripts\install_population_champion.py" --runtime-root "%RUNTIME_ROOT%" --mode "%MODE%"
 if errorlevel 1 (
   echo [FAILED] Champion installation failed.
@@ -74,13 +74,15 @@ echo   RUN_SELFPLAY_POPULATION.bat prepare 4p "D:\models\verified-4p.pth" "D:\mo
 echo.
 echo The first checkpoint is the preferred trusted Champion, but it is still checked
 
-echo against the current Mortal v4 ABI and a real evaluator smoke. Additional PTHs
+echo against the compatible Mortal v4 ABI and a real evaluator smoke. Akagi-compatible
 
-echo are accepted only if validation passes. The accepted Champion is installed into
+echo 775-channel 3P checkpoints use the pinned libriichi3p bridge and are kept out of
 
-echo current.pth, best_mortal.pth and baseline.pth. Different existing slot files are
+echo native 1010-channel training slots. Additional PTHs are accepted only if validation
 
-echo backed up under models\bootstrap-backup before replacement.
+echo passes. Native Champions are installed into current.pth, best_mortal.pth and
+
+echo baseline.pth. Different existing slot files are backed up under models\bootstrap-backup.
 echo.
 echo Generate Mortal-native training logs from the validated population:
 echo   RUN_SELFPLAY_POPULATION.bat generate 3p 1000
