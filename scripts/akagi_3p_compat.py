@@ -114,8 +114,13 @@ def _validate_pinned_binary(root: Path, compat_dir: Path) -> None:
 
 def _probe_unified_3p_arena(root: Path) -> str:
     python = _runtime_python(root)
+    # PyO3 installs arena as an attribute/submodule of the extension. Access it
+    # through the parent module rather than relying on dotted-import package
+    # semantics, which differ between editable extension installations.
     code = (
-        "from libriichi.arena import OneVsTwo; "
+        "import libriichi; "
+        "assert hasattr(libriichi, 'arena'); "
+        "assert hasattr(libriichi.arena, 'OneVsTwo'); "
         "print('MORTAL_UNIFIED_3P_ARENA_READY source=installed-unified-libriichi')"
     )
     return _run([str(python), "-c", code], cwd=root)
