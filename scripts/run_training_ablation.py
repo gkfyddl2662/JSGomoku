@@ -109,6 +109,9 @@ def main() -> int:
         "checkpoint": str(checkpoint),
         "rogs_enabled": bool(cfg.get("rogs", {}).get("enabled", False)),
         "global_reward_enabled": bool(cfg.get("global_reward", {}).get("enabled", False)),
+        "comparison_scope": experiment.get("comparison_scope", "composite-algorithm"),
+        "objective_family": experiment.get("objective_family"),
+        "objective_metadata": experiment.get("objective_metadata", {}),
     }
     (run_dir / "experiment.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
