@@ -1,6 +1,16 @@
-# Shared training algorithm, separate Mortal-v4 deployment checkpoints per mode.
+# DESIGN / EXPERIMENT SPEC ONLY — not merged into canonical runtime training.
+# Active training uses config/rogs_runtime.toml plus the mode-specific generated
+# config. `enabled = true` below describes a proposed full hybrid experiment,
+# not current Oracle/Search/Hedge/pMCP behavior.
+
+[status]
+design_only = true
+active_runtime = false
+canonical_runtime_config = "config/rogs_runtime.toml"
 
 [compat]
+# Historical Mortal checkpoint compatibility target. AkagiOT wire ABI is a
+# separate contract; see docs/ABI_AND_WIRE_CONTRACTS.md.
 model_version = 4
 checkpoint_brain_key = "mortal"
 checkpoint_dqn_key = "current_dqn"
@@ -8,14 +18,16 @@ require_akagi_smoke_test = true
 
 [modes.3p]
 players = 3
-akagi_lib = "libriichi3p"
+native_training_obs_channels = 1010
+akagi_wire_obs_channels = 775
 action_space = 44
 checkpoint = "models/rogs_3p/mortal3p.pth"
 best_checkpoint = "models/rogs_3p/best_mortal3p.pth"
 
 [modes.4p]
 players = 4
-akagi_lib = "libriichi"
+native_training_obs_channels = 1012
+akagi_wire_obs_channels = 1012
 action_space = 46
 checkpoint = "models/rogs_4p/mortal.pth"
 best_checkpoint = "models/rogs_4p/best_mortal.pth"
@@ -27,7 +39,6 @@ norm = "BN"
 
 [rogs]
 enabled = true
-# Progress 0 -> 1 moves weight from teacher/BC/CQL anchors toward regret self-play.
 curriculum_steps = 1000000
 oracle_final_weight = 0.05
 bc_final_weight = 0.02
@@ -47,21 +58,19 @@ teacher_temperature = 1.5
 
 [rating]
 presets_file = "config/rating_presets.toml"
-# universal | specialized | curriculum
 strategy = "curriculum"
 target_profile = "mahjongsoul"
 specialize_start = 0.70
-# Context (room/rank/round) is supplied by each training/evaluation job and is
-# never injected into the Mortal observation tensor.
 
 [global_reward]
 enabled = true
+# Separate design-only gamma helper; canonical GRP already uses rank-potential differences.
 potential_gamma = 1.0
-# Terminal target is platform rating utility after preset normalization.
 use_rating_utility = true
 
 [oracle]
 enabled = true
+# Design-only; canonical trainer currently passes no oracle_q.
 start_weight = 0.50
 final_weight = 0.05
 decay_steps = 250000
@@ -70,6 +79,7 @@ hidden_info_dropout_final = 1.0
 
 [search_teacher]
 enabled = true
+# Design-only; canonical trainer currently passes no search_q.
 determinizations = 64
 rollouts_per_action = 4
 max_candidate_actions = 8
@@ -80,6 +90,7 @@ focus_push_fold = true
 
 [amortized_pmcp]
 enabled = true
+# Design-only; no active canonical pMCP teacher loop.
 worlds_per_hand = 64
 inner_steps = 4
 inner_lr = 0.00002
@@ -87,6 +98,7 @@ sample_ratio = 0.025
 
 [selfplay]
 enabled = true
+# Proposed league policy, not current population generator behavior.
 league_size = 12
 latest_probability = 0.45
 champion_probability = 0.30
@@ -114,6 +126,7 @@ secondary_metric = "avg_rank"
 max_last_rate_regression = 0.003
 
 [deployment]
-# Exporter strips Oracle/Search/League state and keeps only the standard Mortal ABI.
+# Design compatibility target only. A future non-Mortal server backend may use a
+# different checkpoint format while preserving the AkagiOT wire contract.
 export_3p_name = "mortal3p.pth"
 export_4p_name = "mortal.pth"
