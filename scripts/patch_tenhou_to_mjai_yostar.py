@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-PATCH_MARKER = "MORTAL_ROGS_YOSTAR_EN_PATCH_V1"
+PATCH_MARKER = "MORTAL_ROGS_YOSTAR_EN_PATCH_V2"
 
 
 def _replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -19,7 +19,7 @@ def patch_rpc(path: Path) -> None:
         return
 
     oauth_builders = r'''
-    // MORTAL_ROGS_YOSTAR_EN_PATCH_V1
+    // MORTAL_ROGS_YOSTAR_EN_PATCH_V2
     /// Build the EN/KR Yostar redirect-token exchange observed on the live web client.
     pub fn build_oauth2_auth_request(
         oauth_type: u64,
@@ -231,7 +231,7 @@ def patch_rpc(path: Path) -> None:
 
 def patch_raw_download(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
-    if "rpc.login_yostar" in text and "server: String" in text:
+    if "rpc.login_yostar" in text and "MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_TYPE" in text:
         return
 
     text = _replace_once(
@@ -242,7 +242,7 @@ def patch_raw_download(path: Path) -> None:
     )
 
     old_login = '''    if let Err(e) = rpc.login_native(&username, &password, &version, &route_id).await {\n        debug!("[{}] Login failed for {}: {}", worker_id, username, e);\n        stats.login_failed.fetch_add(1, Ordering::Relaxed);\n        let _ = rpc.close().await;\n        return;\n    }\n\n    stats.logged_in.fetch_add(1, Ordering::Relaxed);\n\n    let client_version = format!("web-{}", version);\n'''
-    new_login = '''    let login_result = if server == "en" {\n        rpc.login_yostar(&username, &password, &version, &route_id, 23, "kr").await\n    } else {\n        rpc.login_native(&username, &password, &version, &route_id).await\n    };\n    if let Err(e) = login_result {\n        debug!("[{}] Login failed (server={}): {}", worker_id, server, e);\n        stats.login_failed.fetch_add(1, Ordering::Relaxed);\n        let _ = rpc.close().await;\n        return;\n    }\n\n    stats.logged_in.fetch_add(1, Ordering::Relaxed);\n\n    let client_version = if server == "en" {\n        format!("WebGL_2022-{}", version)\n    } else {\n        format!("web-{}", version)\n    };\n'''
+    new_login = '''    let login_result = if server == "en" {\n        let oauth_type = std::env::var("MORTAL_ROGS_MAJSOUL_YOSTAR_OAUTH_TYPE")\n            .ok()\n            .and_then(|value| value.parse::<u64>().ok())\n            .unwrap_or(23);\n        let locale = std::env::var("MORTAL_ROGS_MAJSOUL_YOSTAR_LOCALE")\n            .unwrap_or_else(|_| "kr".to_string());\n        debug!("[{}] Yostar OAuth routing type={} locale={}", worker_id, oauth_type, locale);\n        rpc.login_yostar(&username, &password, &version, &route_id, oauth_type, &locale).await\n    } else {\n        rpc.login_native(&username, &password, &version, &route_id).await\n    };\n    if let Err(e) = login_result {\n        debug!("[{}] Login failed (server={}): {}", worker_id, server, e);\n        stats.login_failed.fetch_add(1, Ordering::Relaxed);\n        let _ = rpc.close().await;\n        return;\n    }\n\n    stats.logged_in.fetch_add(1, Ordering::Relaxed);\n\n    let client_version = if server == "en" {\n        format!("WebGL_2022-{}", version)\n    } else {\n        format!("web-{}", version)\n    };\n'''
     text = _replace_once(text, old_login, new_login, "raw EN login routing")
 
     text = _replace_once(
