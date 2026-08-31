@@ -20,6 +20,7 @@ from scripts.prepare_selfplay_population import POPULATION_PROTOCOL, normalize_m
 from scripts.prepare_tenhou_training import configure, split_for, validate_data
 
 GENERATION_PROTOCOL = "mortal-rogs-population-selfplay-data-v1"
+GENERATION_STATE_PROTOCOL = "mortal-rogs-population-selfplay-state-v1"
 
 
 def load_population(path: Path, mode: str) -> dict[str, object]:
@@ -178,23 +179,74 @@ def _validate_header(path: Path, players: int) -> None:
         raise RuntimeError(f"invalid generated MJAI header: {path}")
 
 
-def stage_logs(logs: list[Path], data_root: Path, *, batch_index: int, val_ratio: float, players: int) -> tuple[int, int]:
+def _state_path(run_root: Path, mode: str) -> Path:
+    return run_root / f"state-{mode}.json"
+
+
+def load_generation_state(run_root: Path, mode: str, requested_seed_start: int) -> dict[str, int | str]:
+    path = _state_path(run_root, mode)
+    if not path.is_file():
+        return {
+            "protocol": GENERATION_STATE_PROTOCOL,
+            "mode": mode,
+            "next_seed": requested_seed_start,
+            "next_batch": 0,
+            "games_committed": 0,
+        }
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("protocol") != GENERATION_STATE_PROTOCOL or payload.get("mode") != mode:
+        raise RuntimeError(f"invalid self-play generation state: {path}")
+    next_seed = int(payload.get("next_seed", requested_seed_start))
+    next_batch = int(payload.get("next_batch", 0))
+    games_committed = int(payload.get("games_committed", 0))
+    if next_seed < 0 or next_batch < 0 or games_committed < 0:
+        raise RuntimeError(f"negative values in self-play generation state: {path}")
+    return {
+        "protocol": GENERATION_STATE_PROTOCOL,
+        "mode": mode,
+        "next_seed": max(requested_seed_start, next_seed),
+        "next_batch": next_batch,
+        "games_committed": games_committed,
+    }
+
+
+def save_generation_state(run_root: Path, state: dict[str, int | str]) -> Path:
+    path = _state_path(run_root, str(state["mode"]))
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def stage_logs(
+    logs: list[Path],
+    data_root: Path,
+    *,
+    batch_index: int,
+    seed_start: int,
+    val_ratio: float,
+    players: int,
+) -> tuple[int, int, int]:
     train_count = 0
     val_count = 0
+    reused = 0
     for index, source in enumerate(logs):
-        logical_name = f"selfplay-b{batch_index:06d}-g{index:04d}-{source.name}"
+        logical_name = f"selfplay-s{seed_start:012d}-b{batch_index:06d}-g{index:04d}-{source.name}"
         split = split_for(logical_name, val_ratio)
         destination = data_root / split / logical_name
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists():
-            raise RuntimeError(f"self-play destination collision: {destination}")
         _validate_header(source, players)
+        if destination.exists():
+            _validate_header(destination, players)
+            source.unlink(missing_ok=True)
+            reused += 1
+            continue
         shutil.move(str(source), str(destination))
         if split == "train":
             train_count += 1
         else:
             val_count += 1
-    return train_count, val_count
+    return train_count, val_count, reused
 
 
 def ensure_validation_split(data_root: Path) -> None:
@@ -219,9 +271,9 @@ def main() -> int:
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--mode", choices=("3p", "4p"), required=True)
     parser.add_argument("--population", type=Path)
-    parser.add_argument("--games", type=int, default=1000, help="Minimum number of new game logs to generate")
+    parser.add_argument("--games", type=int, default=1000, help="Minimum number of new/recovered game logs to commit this invocation")
     parser.add_argument("--contexts-per-matchup", type=int, default=32)
-    parser.add_argument("--seed-start", type=int, default=1_000_000)
+    parser.add_argument("--seed-start", type=int, default=1_000_000, help="Lower bound for the resumable seed cursor")
     parser.add_argument("--seed-key", type=lambda value: int(value, 0), default=0xD5DFAA4CEF265CD7)
     parser.add_argument("--val-ratio", type=float, default=0.05)
     parser.add_argument("--device", default="cuda:0")
@@ -256,19 +308,33 @@ def main() -> int:
     data_root = paths["mode_root"] / "data" / "selfplay-population"
     run_root = paths["runs"] / "selfplay-data"
     run_root.mkdir(parents=True, exist_ok=True)
+    state = load_generation_state(run_root, mode, args.seed_start)
+    seed_cursor = int(state["next_seed"])
+    batch_index = int(state["next_batch"])
+    first_seed = seed_cursor
+    first_batch = batch_index
     generated = 0
     train_added = 0
     val_added = 0
-    batch_index = 0
-    seed_cursor = args.seed_start
+    reused_total = 0
     batches: list[dict[str, object]] = []
+
+    print(
+        "MORTAL_SELFPLAY_RESUME",
+        f"mode={mode}",
+        f"seed={seed_cursor}",
+        f"batch={batch_index}",
+        f"games_committed={state['games_committed']}",
+        flush=True,
+    )
 
     while generated < args.games:
         left_id, right_id = order[batch_index % len(order)]
         remaining_games = args.games - generated
         contexts_needed = max(1, math.ceil(remaining_games / players))
         contexts = min(args.contexts_per_matchup, contexts_needed)
-        raw_dir = run_root / f"raw-{args.seed_start}-{batch_index:06d}"
+        batch_seed = seed_cursor
+        raw_dir = run_root / f"raw-{batch_seed}-{batch_index:06d}"
         if raw_dir.exists():
             shutil.rmtree(raw_dir)
         logs = _run_matchup(
@@ -276,7 +342,7 @@ def main() -> int:
             mode=mode,
             challenger=members[left_id],
             champion=members[right_id],
-            seed_start=seed_cursor,
+            seed_start=batch_seed,
             seed_count=contexts,
             seed_key=args.seed_key,
             device=args.device,
@@ -284,37 +350,48 @@ def main() -> int:
             enable_amp=bool(args.amp),
             output_dir=raw_dir,
         )
-        train_count, val_count = stage_logs(
+        train_count, val_count, reused = stage_logs(
             logs,
             data_root,
             batch_index=batch_index,
+            seed_start=batch_seed,
             val_ratio=args.val_ratio,
             players=players,
         )
         shutil.rmtree(raw_dir, ignore_errors=True)
-        generated += train_count + val_count
+        batch_games = train_count + val_count + reused
+        generated += batch_games
         train_added += train_count
         val_added += val_count
+        reused_total += reused
         batches.append(
             {
                 "batch": batch_index,
                 "challenger": left_id,
                 "champion": right_id,
-                "seed_start": seed_cursor,
+                "seed_start": batch_seed,
                 "contexts": contexts,
-                "games": train_count + val_count,
-                "train": train_count,
-                "val": val_count,
+                "games": batch_games,
+                "train_added": train_count,
+                "val_added": val_count,
+                "reused_after_interruption": reused,
             }
         )
         seed_cursor += contexts
         batch_index += 1
+        state["next_seed"] = seed_cursor
+        state["next_batch"] = batch_index
+        state["games_committed"] = int(state["games_committed"]) + batch_games
+        state_path = save_generation_state(run_root, state)
         print(
             "MORTAL_SELFPLAY_DATA_PROGRESS",
             f"mode={mode}",
             f"generated={generated}/{args.games}",
             f"train_added={train_added}",
             f"val_added={val_added}",
+            f"reused={reused_total}",
+            f"next_seed={seed_cursor}",
+            f"state={state_path}",
             flush=True,
         )
 
@@ -329,30 +406,35 @@ def main() -> int:
         "population": str(population_path),
         "champion_id": population.get("champion_id"),
         "requested_games": args.games,
-        "generated_games": generated,
+        "committed_this_run": generated,
         "train_added": train_added,
         "val_added": val_added,
+        "reused_after_interruption": reused_total,
         "train_total": train_total,
         "val_total": val_total,
         "data_root": str(data_root),
         "config": str(config_path),
         "activated": bool(args.activate),
-        "seed_start": args.seed_start,
+        "requested_seed_start": args.seed_start,
+        "seed_start": first_seed,
         "seed_end": seed_cursor,
+        "batch_start": first_batch,
+        "batch_end": batch_index,
         "seed_key": args.seed_key,
         "device": args.device,
         "compile": bool(args.compile),
         "amp": bool(args.amp),
+        "state": str(_state_path(run_root, mode)),
         "batches": batches,
     }
-    manifest_path = run_root / f"generation-{mode}-{args.seed_start}.json"
+    manifest_path = run_root / f"generation-{mode}-s{first_seed}-b{first_batch:06d}.json"
     tmp = manifest_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(manifest_path)
     print(
         "MORTAL_POPULATION_SELFPLAY_DATA_READY",
         f"mode={mode}",
-        f"generated={generated}",
+        f"committed={generated}",
         f"train={train_total}",
         f"val={val_total}",
         f"activated={bool(args.activate)}",
