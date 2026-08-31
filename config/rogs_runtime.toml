@@ -5,6 +5,8 @@
 [rogs]
 enabled = true
 curriculum_steps = 1000000
+# Oracle weight scheduling is retained in the objective interface, but the
+# canonical trainer does not currently generate/pass oracle_q tensors.
 oracle_final_weight = 0.05
 bc_final_weight = 0.02
 cql_final_weight = 0.05
@@ -13,11 +15,15 @@ regret_final_weight = 0.75
 [objective]
 value_weight = 1.0
 regret_weight = 0.50
+# Interface default only. Oracle/Search KL components are inactive unless a
+# teacher tensor is explicitly supplied to compute_mortal_rogs_batch().
 teacher_kl_weight = 0.30
 entropy_weight = 0.002
 bc_anchor_weight = 0.10
 cql_anchor_weight = 0.25
 regret_clip = 12.0
+# Hedge helper/config exists, but the current canonical self-play behavior
+# policy does not call hedge_policy(). Do not interpret this as active Hedge.
 hedge_eta = 0.75
 teacher_temperature = 1.5
 
