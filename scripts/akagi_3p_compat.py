@@ -114,16 +114,19 @@ def _validate_pinned_binary(root: Path, compat_dir: Path) -> None:
 
 def _probe_unified_3p_arena(root: Path) -> str:
     python = _runtime_python(root)
-    # PyO3 installs arena as an attribute/submodule of the extension. Access it
-    # through the parent module rather than relying on dotted-import package
-    # semantics, which differ between editable extension installations.
+    mortal_dir = root / "mortal"
+    if not mortal_dir.is_dir():
+        raise RuntimeError(f"unified Mortal Python directory is missing: {mortal_dir}")
+    # Match the real evaluator working directory. Probing from runtime_root can
+    # put the Rust source directory named `libriichi` on sys.path ahead of the
+    # installed extension and produce a false stale-extension diagnosis.
     code = (
         "import libriichi; "
         "assert hasattr(libriichi, 'arena'); "
         "assert hasattr(libriichi.arena, 'OneVsTwo'); "
         "print('MORTAL_UNIFIED_3P_ARENA_READY source=installed-unified-libriichi import=top-level')"
     )
-    return _run([str(python), "-c", code], cwd=root)
+    return _run([str(python), "-c", code], cwd=mortal_dir)
 
 
 def _rebuild_unified_3p_arena(root: Path, project: Path) -> None:
@@ -233,9 +236,8 @@ def apply_runtime_evaluator(runtime_root: Path, project_root: Path | None = None
     root = runtime_root.expanduser().resolve()
     project = (project_root or Path(__file__).resolve().parents[1]).expanduser().resolve()
     python = _runtime_python(root)
-    # Stage 5C regenerates one_vs_two.py with the pre-Stage8A import form.
-    # Reapply Stage 8A immediately so the generated evaluator keeps the PyO3
-    # top-level submodule ABI used by the rest of the unified runtime.
+    # Stage 5C may regenerate one_vs_two.py. Reapply Stage 8A immediately so
+    # all generated Mortal Python files keep the parent-module PyO3 ABI.
     patchers = [
         project / "scripts" / "patch_mortal_unified_eval_stage5c.py",
         project / "scripts" / "patch_mortal_unified_python_abi_stage8a.py",
