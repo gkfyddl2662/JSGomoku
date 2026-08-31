@@ -27,12 +27,14 @@ The downloader prioritizes higher rooms and only falls back when the requested l
 - API windows are subdivided automatically when a response reaches the server-side record cap, so the tool does not silently truncate a busy interval.
 - Completed room/day discovery windows are journaled locally, so increasing a target does not needlessly rescan completed windows.
 
-The external converter/downloader is pinned to:
+The external converter/downloader remains pinned to:
 
 ```text
 NikkeTryHard/tenhou-to-mjai
 69fb75a51c7efef3212be603227b2a58a9717237
 ```
+
+The pin itself is not forked or moved. For current EN authentication, Mortal-ROGS applies the small managed compatibility patch `patches/tenhou-to-mjai-yostar-en.patch` to that exact runtime checkout before building it. The build marker includes the patch digest, so changing the patch forces a rebuild while repeated runs reuse the binary.
 
 Its Majsoul converter emits `nukidora` for 3P north-tile extraction and supports both three- and four-player MJAI output.
 
@@ -42,28 +44,72 @@ Use this tool only for records you are permitted to access. Downloaded Mahjong S
 
 The repository contains tooling only. It does not contain, publish, mirror, or describe a pre-built Mahjong Soul game-log dataset.
 
-The generated local manifest records source/provenance and preparation configuration but does not store the account password.
+The generated local manifest records source/provenance and preparation configuration but does not store account passwords, Yostar redirect tokens, Mahjong Soul access tokens, or account UIDs.
 
-## Credentials
+## Authentication
 
-Use the PowerShell-visible batch launcher:
+### EN / Korean web client
 
-```powershell
-.\RUN_MAJSOUL_FULL.bat prepare <3p_target> <4p_target> authorized <grp_steps> cn
+The current EN/KR web client no longer follows the native email/password path used by the pinned downloader. A live socket capture confirmed this sequence:
+
+```text
+.lq.Lobby.oauth2Auth   type=23, Yostar redirect token + UID
+        ↓
+Mahjong Soul access token
+        ↓
+.lq.Lobby.oauth2Check
+        ↓
+.lq.Lobby.oauth2Login
 ```
 
-The Python preparation process prompts for a native Mahjong Soul account and password. The password is held only in memory for the local download process.
+The managed patch connects this flow only for `--server en`. The captured account-specific values are not stored in this repository.
 
-The password is not written to:
+Run:
 
-- Git;
-- Mortal TOML files;
-- experiment manifests;
-- result summaries.
+```powershell
+.\RUN_MAJSOUL_FULL.bat prepare <3p_target> <4p_target> authorized <grp_steps> en
+```
 
-The pinned Rust downloader currently accepts its password as a child-process argument, so it can be transiently visible to local process-inspection tools while that child process is running. It is not logged by the Mortal-ROGS wrapper.
+Interactive execution asks for:
 
-For non-interactive local execution, set `MORTAL_ROGS_MAJSOUL_USERNAME` and `MORTAL_ROGS_MAJSOUL_PASSWORD`, call `scripts/prepare_majsoul_training.py` directly, and clear the variables after the run. `--username` is also accepted, but there is intentionally no `--password` CLI option in the wrapper.
+```text
+Yostar UID
+Yostar redirect token
+```
+
+For non-interactive local execution, use process-local environment variables and clear them after the run:
+
+```powershell
+$env:MORTAL_ROGS_MAJSOUL_YOSTAR_UID = "<uid>"
+$env:MORTAL_ROGS_MAJSOUL_YOSTAR_TOKEN = "<fresh-yostar-redirect-token>"
+
+C:\Users\small\Downloads\Mortal_Unified\.venv\Scripts\python.exe `
+  .\scripts\prepare_majsoul_training_yostar.py `
+  --runtime-root C:\Users\small\Downloads\Mortal_Unified `
+  --modes both `
+  --server en `
+  --authorized-local-use
+
+Remove-Item Env:MORTAL_ROGS_MAJSOUL_YOSTAR_UID -ErrorAction SilentlyContinue
+Remove-Item Env:MORTAL_ROGS_MAJSOUL_YOSTAR_TOKEN -ErrorAction SilentlyContinue
+```
+
+There is intentionally no CLI option for a password or Yostar token.
+
+The pinned child CLI still exposes a field named `--password`; the compatibility layer reuses that internal argument slot to carry the Yostar redirect token into the patched child process. Mortal-ROGS always redacts it from its own command logging, but the token can be transiently visible to local process-inspection tools while the child process is running.
+
+Because an authentication token pasted into a chat or log should be treated as exposed, obtain a fresh Yostar redirect token for the real local validation rather than reusing a previously shared value.
+
+### CN and JP
+
+`cn` keeps the existing native account/password path and the wrapper still supports:
+
+```text
+MORTAL_ROGS_MAJSOUL_USERNAME
+MORTAL_ROGS_MAJSOUL_PASSWORD
+```
+
+The `jp` selector is retained for compatibility, but this change does not claim that its authentication path has been live-validated. Do not generalize the EN/KR `type=23` result to JP until a real JP capture/test confirms it.
 
 ## Source modes
 
@@ -83,25 +129,24 @@ The wrapper never drops to a lower-priority room once the requested target can b
 
 ## First preparation
 
-After the unified RTX validation has passed:
+After the unified RTX validation has passed, the first EN validation should stay small:
 
 ```powershell
 git pull
-.\RUN_MAJSOUL_FULL.bat prepare <3p_target> <4p_target> authorized <grp_steps> cn
+.\RUN_MAJSOUL_FULL.bat prepare 5000 5000 authorized 10000 en
 ```
 
-For a custom range or a single mode, call the Python wrapper directly:
+For a custom range or a single mode:
 
 ```powershell
-$env:MORTAL_ROGS_MAJSOUL_USERNAME = "<account>"
 C:\Users\small\Downloads\Mortal_Unified\.venv\Scripts\python.exe `
-  .\scripts\prepare_majsoul_training.py `
+  .\scripts\prepare_majsoul_training_yostar.py `
   --runtime-root C:\Users\small\Downloads\Mortal_Unified `
   --modes both `
   --start-date 2026-01-01 `
   --end-date 2026-08-30 `
   --rooms high `
-  --server jp `
+  --server en `
   --api-rps 4 `
   --download-delay-ms 300 `
   --authorized-local-use
@@ -111,14 +156,12 @@ Omit `--start-date` to scan back to the earliest supported date for each mode. O
 
 `--api-rps` is capped at 4 by the wrapper. UUID discovery is resumable through the local metadata and room/day scan journal, and raw protobuf downloading is resumable through the pinned downloader's completion journal.
 
-If the account belongs to another supported Mahjong Soul server, choose `cn`, `en`, or `jp`.
-
 ## Training and comparison
 
 Once preparation succeeds:
 
 ```powershell
-.\RUN_MAJSOUL_FULL.bat experiment <3p_target> <4p_target> authorized <grp_steps> cn
+.\RUN_MAJSOUL_FULL.bat experiment <3p_target> <4p_target> authorized <grp_steps> en
 ```
 
 This prepares/reuses data and GRP state, then hands off to the existing fair ablation runner:
@@ -132,7 +175,7 @@ ROGS + Global
 For the complete experiment plus production serving soak:
 
 ```powershell
-.\RUN_MAJSOUL_FULL.bat full <3p_target> <4p_target> authorized <grp_steps> cn
+.\RUN_MAJSOUL_FULL.bat full <3p_target> <4p_target> authorized <grp_steps> en
 ```
 
 The existing `run_local_workstation.ps1` remains the owner of training, comparison, and serving-soak orchestration.

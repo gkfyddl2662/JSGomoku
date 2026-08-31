@@ -1,0 +1,242 @@
+diff --git a/src/majsoul/rpc.rs b/src/majsoul/rpc.rs
+--- a/src/majsoul/rpc.rs
++++ b/src/majsoul/rpc.rs
+@@ -27,6 +27,55 @@
+         buf
+     }
+ 
++    /// Build the EN/KR Yostar redirect-token exchange observed on the live web client.
++    pub fn build_oauth2_auth_request(
++        oauth_type: u64,
++        code: &str,
++        uid: &str,
++        version: &str,
++    ) -> Vec<u8> {
++        let mut buf = Vec::new();
++        encode_varint_field(&mut buf, 1, oauth_type);
++        encode_string(&mut buf, 2, code);
++        encode_string(&mut buf, 3, uid);
++        encode_string(&mut buf, 4, &format!("WebGL_2022-{}", version));
++        buf
++    }
++
++    pub fn build_oauth2_check_request(oauth_type: u64, access_token: &str) -> Vec<u8> {
++        let mut buf = Vec::new();
++        encode_varint_field(&mut buf, 1, oauth_type);
++        encode_string(&mut buf, 2, access_token);
++        buf
++    }
++
++    pub fn build_oauth2_login_request(
++        oauth_type: u64,
++        access_token: &str,
++        random_key: &str,
++        version: &str,
++        locale: &str,
++    ) -> Vec<u8> {
++        let mut buf = Vec::new();
++        encode_varint_field(&mut buf, 1, oauth_type);
++        encode_string(&mut buf, 2, access_token);
++
++        let device = build_yostar_device(random_key, locale);
++        encode_bytes_field(&mut buf, 4, &device);
++        encode_string(&mut buf, 5, random_key);
++
++        let mut client_version = Vec::new();
++        encode_string(&mut client_version, 1, version);
++        encode_bytes_field(&mut buf, 6, &client_version);
++
++        for platform in [1_u64, 4, 5, 9] {
++            encode_varint_field(&mut buf, 8, platform);
++        }
++        encode_string(&mut buf, 10, &format!("WebGL_2022-{}", version));
++        encode_string(&mut buf, 11, locale);
++        buf
++    }
++
+     /// Build loginBeat request
+     pub fn build_login_beat_request(contract: &str) -> Vec<u8> {
+         let mut buf = Vec::new();
+@@ -51,6 +100,26 @@
+         let tag = (field << 3) | 0;
+         encode_varint(buf, tag as u64);
+         encode_varint(buf, value);
++    }
++
++    fn encode_bytes_field(buf: &mut Vec<u8>, field: u32, value: &[u8]) {
++        let tag = (field << 3) | 2;
++        encode_varint(buf, tag as u64);
++        encode_varint(buf, value.len() as u64);
++        buf.extend_from_slice(value);
++    }
++
++    fn build_yostar_device(random_key: &str, locale: &str) -> Vec<u8> {
++        let mut buf = Vec::new();
++        encode_string(&mut buf, 1, "pc");
++        encode_string(&mut buf, 2, "pc");
++        encode_string(&mut buf, 3, "windows");
++        encode_string(&mut buf, 4, "win10");
++        encode_bool(&mut buf, 5, true);
++        encode_string(&mut buf, 6, "Chrome");
++        encode_string(&mut buf, 7, &format!("{}_web", locale));
++        encode_string(&mut buf, 14, random_key);
++        buf
+     }
+ 
+     /// Encode device message with just is_browser = true (for native login)
+@@ -144,6 +213,72 @@
+         let beat_req = requests::build_login_beat_request(contract);
+         self.call(".lq.Lobby.loginBeat", &beat_req).await?;
+ 
++        Ok(())
++    }
++
++    /// Login through the EN/KR Yostar web OAuth flow.
++    ///
++    /// `code` is the short-lived Yostar redirect token paired with `uid`.
++    pub async fn login_yostar(
++        &self,
++        uid: &str,
++        code: &str,
++        version: &str,
++        route_id: &str,
++        oauth_type: u64,
++        locale: &str,
++    ) -> Result<()> {
++        self.route_connect(route_id).await?;
++
++        debug!("Sending heartbeat before Yostar OAuth");
++        let hb_response = self.call(".lq.Lobby.heatbeat", &[0x08, 0x00]).await?;
++        debug!("Heartbeat response: {} bytes", hb_response.len());
++
++        let auth_request =
++            requests::build_oauth2_auth_request(oauth_type, code, uid, version);
++        let auth_response = self.call(".lq.Lobby.oauth2Auth", &auth_request).await?;
++        if let Some(error_code) = Self::extract_error_code(&auth_response) {
++            if error_code != 0 {
++                anyhow::bail!("Yostar oauth2Auth failed with error code: {}", error_code);
++            }
++        }
++        let access_token = Self::extract_string_field(&auth_response, 2)
++            .filter(|token| !token.is_empty())
++            .context("Yostar oauth2Auth did not return an access token")?;
++
++        let check_request = requests::build_oauth2_check_request(oauth_type, &access_token);
++        let check_response = self.call(".lq.Lobby.oauth2Check", &check_request).await?;
++        if let Some(error_code) = Self::extract_error_code(&check_response) {
++            if error_code != 0 {
++                anyhow::bail!("Yostar oauth2Check failed with error code: {}", error_code);
++            }
++        }
++        if Self::extract_varint_field(&check_response, 2) != Some(1) {
++            anyhow::bail!("Yostar OAuth token is not bound to an existing Mahjong Soul account");
++        }
++
++        let random_key = Uuid::new_v4().to_string();
++        let login_request = requests::build_oauth2_login_request(
++            oauth_type,
++            &access_token,
++            &random_key,
++            version,
++            locale,
++        );
++        let login_response = self.call(".lq.Lobby.oauth2Login", &login_request).await?;
++        if let Some(error_code) = Self::extract_error_code(&login_response) {
++            if error_code != 0 {
++                anyhow::bail!("Yostar oauth2Login failed with error code: {}", error_code);
++            }
++        }
++
++        // Current EN/KR web client sends the beat contract used below.
++        let contract = "DF2vkXCnfeXp4WoGrBGNcJBufZiMN3uP";
++        let beat_req = requests::build_login_beat_request(contract);
++        self.call(".lq.Lobby.loginBeat", &beat_req).await?;
++        self.call(".lq.Lobby.loginSuccess", &[]).await?;
++
++        debug!("Yostar OAuth login successful");
+         Ok(())
+     }
+ 
+@@ -159,6 +294,34 @@
+         } else {
+             None
+         }
++    }
++
++    fn extract_varint_field(data: &[u8], target_field: u32) -> Option<u64> {
++        let mut pos = 0;
++        while pos < data.len() {
++            let tag = data[pos];
++            pos += 1;
++            let field_num = (tag >> 3) as u32;
++            let wire_type = tag & 0x07;
++
++            if wire_type == 0 {
++                let (value, consumed) = wrapper::decode_varint(&data[pos..]).ok()?;
++                if field_num == target_field {
++                    return Some(value);
++                }
++                pos += consumed;
++            } else if wire_type == 2 {
++                let (len, consumed) = wrapper::decode_varint(&data[pos..]).ok()?;
++                let next = pos.checked_add(consumed)?.checked_add(len as usize)?;
++                if next > data.len() {
++                    return None;
++                }
++                pos = next;
++            } else {
++                return None;
++            }
++        }
++        None
+     }
+ 
+     /// Extract string field from protobuf response by field number
+diff --git a/src/majsoul/raw_download.rs b/src/majsoul/raw_download.rs
+--- a/src/majsoul/raw_download.rs
++++ b/src/majsoul/raw_download.rs
+@@ -6,6 +6,7 @@
+     endpoint: String,
+     version: String,
+     route_id: String,
++    server: String,
+     rx: Arc<Mutex<mpsc::Receiver<String>>>,
+     output_dir: PathBuf,
+     journal_tx: mpsc::Sender<String>,
+@@ -24,8 +25,13 @@
+         }
+     };
+ 
+-    if let Err(e) = rpc.login_native(&username, &password, &version, &route_id).await {
+-        debug!("[{}] Login failed for {}: {}", worker_id, username, e);
++    let login_result = if server == "en" {
++        rpc.login_yostar(&username, &password, &version, &route_id, 23, "kr").await
++    } else {
++        rpc.login_native(&username, &password, &version, &route_id).await
++    };
++    if let Err(e) = login_result {
++        debug!("[{}] Login failed (server={}): {}", worker_id, server, e);
+         stats.login_failed.fetch_add(1, Ordering::Relaxed);
+         let _ = rpc.close().await;
+         return;
+@@ -33,7 +39,11 @@
+ 
+     stats.logged_in.fetch_add(1, Ordering::Relaxed);
+ 
+-    let client_version = format!("web-{}", version);
++    let client_version = if server == "en" {
++        format!("WebGL_2022-{}", version)
++    } else {
++        format!("web-{}", version)
++    };
+ 
+     // Download loop
+ 
+@@ -78,6 +88,7 @@
+             endpoint.clone(),
+             version.clone(),
+             route_id.clone(),
++            server.to_string(),
+             Arc::clone(&uuid_rx),
+             output_dir.to_path_buf(),
+             journal_tx.clone(),

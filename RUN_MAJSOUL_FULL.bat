@@ -40,11 +40,17 @@ echo   GRP steps = %GRPSTEPS%
 echo   server    = %SERVER%
 echo   runtime   = %RUNTIME%
 echo.
-echo Credentials are requested interactively by Python and are not written to project configs or manifests.
+if /I "%SERVER%"=="en" (
+  echo EN authentication uses the Yostar OAuth UID + redirect token flow.
+  echo The UID/token are requested interactively and are not written to project configs or manifests.
+) else (
+  echo Credentials are requested interactively and are not written to project configs or manifests.
+)
 echo Downloaded Mahjong Soul records remain local and must not be redistributed.
 echo.
 
-"%PY%" "%PROJECT%scripts\prepare_majsoul_training.py" ^
+REM Base wrapper remains scripts\prepare_majsoul_training.py; this shim adds the managed EN Yostar auth patch.
+"%PY%" "%PROJECT%scripts\prepare_majsoul_training_yostar.py" ^
   --runtime-root "%RUNTIME%" ^
   --modes both ^
   --limit-3p "%LIMIT3%" ^
@@ -95,9 +101,12 @@ echo   .\RUN_MAJSOUL_FULL.bat full       [3p_target] [4p_target] authorized [grp
 echo.
 echo server: cn ^| en ^| jp   ^(default: cn^)
 echo.
-echo The downloader prioritizes high-rank rooms and prompts for a native Mahjong Soul account/password.
-echo Credentials are runtime-only; downloaded game records remain local and must not be redistributed.
-echo For custom date/RPS/baseline controls, call scripts\prepare_majsoul_training.py directly.
+echo en: live-validated EN/KR Yostar OAuth flow; prompts for Yostar UID and redirect token.
+echo cn: native account/password flow.
+echo jp: legacy native path is retained but has not been live-validated in this change.
+echo.
+echo The downloader prioritizes high-rank rooms. Downloaded records remain local and must not be redistributed.
+echo For custom date/RPS/baseline controls, call scripts\prepare_majsoul_training_yostar.py directly.
 exit /b 0
 
 :help_error
