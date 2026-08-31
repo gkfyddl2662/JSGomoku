@@ -16,6 +16,8 @@ from scripts.prepare_selfplay_population import POPULATION_PROTOCOL, checkpoint_
 
 INSTALL_PROTOCOL = "mortal-rogs-population-champion-install-v1"
 SLOTS = ("current.pth", "best_mortal.pth", "baseline.pth")
+LEGACY_3P_SLOT = "akagi_legacy_champion.pth"
+LEGACY_3P_ABI_KIND = "akagi-legacy-775"
 
 
 def _copy_atomic(source: Path, destination: Path) -> None:
@@ -39,8 +41,8 @@ def _backup_existing(source: Path, backup: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Install a previously validated self-play population Champion into Mortal's current/best/baseline slots. "
-            "Different existing checkpoints are backed up before replacement."
+            "Install a previously validated self-play population Champion into compatible Mortal slots. "
+            "Akagi 775-channel 3P checkpoints are kept out of native 1010-channel training slots."
         )
     )
     parser.add_argument("--runtime-root", type=Path, required=True)
@@ -76,11 +78,16 @@ def main() -> int:
     if expected_sha and actual_sha != expected_sha:
         raise SystemExit("population Champion hash changed after validation; rebuild the population")
 
+    validation = champion.get("validation", {})
+    abi_kind = str(validation.get("abi_kind", "native")) if isinstance(validation, dict) else "native"
+    legacy_3p = mode == "3p" and abi_kind == LEGACY_3P_ABI_KIND
+    slot_names = (LEGACY_3P_SLOT,) if legacy_3p else SLOTS
+
     models = paths["models"]
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     backup_root = models / "bootstrap-backup" / timestamp
     changes: list[dict[str, object]] = []
-    for slot_name in SLOTS:
+    for slot_name in slot_names:
         destination = models / slot_name
         previous_sha = checkpoint_sha256(destination) if destination.is_file() else None
         if previous_sha == actual_sha:
@@ -116,6 +123,15 @@ def main() -> int:
             flush=True,
         )
 
+    if legacy_3p:
+        print(
+            "MORTAL_NATIVE_TRAINING_SLOTS_PRESERVED",
+            "mode=3p",
+            "reason=akagi-legacy-775",
+            "slots=current.pth,best_mortal.pth,baseline.pth",
+            flush=True,
+        )
+
     report = {
         "protocol": INSTALL_PROTOCOL,
         "mode": mode,
@@ -123,6 +139,8 @@ def main() -> int:
         "champion_id": champion_id,
         "champion_file": str(source),
         "sha256": actual_sha,
+        "abi_kind": abi_kind,
+        "native_training_slots_preserved": legacy_3p,
         "changes": changes,
     }
     report_path = (
@@ -138,6 +156,7 @@ def main() -> int:
         "MORTAL_POPULATION_CHAMPION_INSTALLED",
         f"mode={mode}",
         f"champion={champion_id}",
+        f"abi={abi_kind}",
         f"report={report_path}",
         flush=True,
     )
