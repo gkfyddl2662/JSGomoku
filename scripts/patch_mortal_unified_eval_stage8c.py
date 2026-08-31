@@ -28,7 +28,7 @@ import secrets
 import torch
 from model import Brain, DQN
 from engine import MortalEngine
-from libriichi.arena import OneVsThree
+from libriichi import arena
 from config import config
 
 # MORTAL_ROGS_UNIFIED_EVAL_STAGE8C
@@ -131,7 +131,7 @@ def main():
     for i, seed in enumerate(range(seed_start, seed_start + seeds_per_iter * iters, seeds_per_iter)):
         print('-' * 50)
         print('#', i)
-        env = OneVsThree(disable_progress_bar=False, log_dir=log_dir)
+        env = arena.OneVsThree(disable_progress_bar=False, log_dir=log_dir)
         if use_akochan:
             rankings = env.ako_vs_py(
                 engine=engine_chal,
@@ -192,13 +192,16 @@ def apply(root: Path) -> None:
         MARKER,
         "ACTION_SPACE = 46",
         "OBS_CHANNELS = 1012",
-        "OneVsThree",
+        "from libriichi import arena",
+        "arena.OneVsThree",
         "game_mode=MODE",
         "action_space=ACTION_SPACE",
         "strict=True",
     ):
         if token not in post:
             raise RuntimeError(f"Stage 8C postcondition missing: {token}")
+    if "from libriichi.arena import" in post:
+        raise RuntimeError("Stage 8C must access PyO3 arena through the parent libriichi module")
     print("MORTAL_UNIFIED_EVAL_STAGE8C_OK")
 
 
