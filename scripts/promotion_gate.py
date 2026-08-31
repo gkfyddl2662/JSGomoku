@@ -50,6 +50,8 @@ def main() -> int:
         "profile": args.profile,
         "games": len(rows),
         "players": rows[0].players,
+        "seed_clusters": len({row.seed for row in rows}),
+        "bootstrap_unit": "seed-cluster",
         "metrics": [
             {
                 "name": metric.name,
@@ -58,6 +60,7 @@ def main() -> int:
                 "min_mean": metric.min_mean,
                 "min_lower": metric.min_lower,
                 "n": metric.estimate.n,
+                "clusters": metric.estimate.clusters,
                 "mean_delta": metric.estimate.mean_delta,
                 "lower": metric.estimate.lower,
                 "upper": metric.estimate.upper,
