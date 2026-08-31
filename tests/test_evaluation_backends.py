@@ -4,15 +4,24 @@ from evaluation.backends import EvaluationBackendError, select_backend
 from evaluation.results import parse_mjx_result, summarize_player
 
 
-def test_auto_backend_4p_is_mjx():
+def test_auto_backend_4p_is_native_libriichi_until_mjx_parity_is_promoted():
     backend = select_backend(4)
-    assert backend.name == "mjx"
-    assert backend.batched_agent
+    assert backend.name == "libriichi"
+    assert backend.native_windows
+    assert not backend.experimental
 
 
 def test_auto_backend_3p_is_libriichi3p_until_parity_passes():
     backend = select_backend(3)
     assert backend.name == "libriichi3p"
+
+
+def test_mjx_4p_requires_explicit_experimental_opt_in():
+    with pytest.raises(EvaluationBackendError):
+        select_backend(4, "mjx")
+    backend = select_backend(4, "mjx", allow_experimental=True)
+    assert backend.experimental
+    assert backend.batched_agent
 
 
 def test_upstream_mjx_is_not_silently_used_for_sanma():
