@@ -9,6 +9,7 @@
 [![Research CI](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/research-ci.yml/badge.svg?branch=research%2Fmortal-rogs-v4-impl)](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/research-ci.yml)
 [![Unified Runtime CI](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/unified-runtime-ci.yml/badge.svg?branch=research%2Fmortal-rogs-v4-impl)](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/unified-runtime-ci.yml)
 [![Gameplay Contract](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/unified-gameplay-contract-ci.yml/badge.svg?branch=research%2Fmortal-rogs-v4-impl)](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/unified-gameplay-contract-ci.yml)
+[![Akagi API](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/akagi-api-contract-ci.yml/badge.svg?branch=research%2Fmortal-rogs-v4-impl)](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/akagi-api-contract-ci.yml)
 [![Akagi 3P Compatibility](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/akagi-3p-compat-ci.yml/badge.svg?branch=research%2Fmortal-rogs-v4-impl)](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/akagi-3p-compat-ci.yml)
 [![Windows Script CI](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/windows-script-ci.yml/badge.svg?branch=research%2Fmortal-rogs-v4-impl)](https://github.com/gkfyddl2662/JSGomoku/actions/workflows/windows-script-ci.yml)
 
@@ -17,141 +18,148 @@
 </div>
 
 > [!IMPORTANT]
-> 이 저장소는 현재 **연구/개발 브랜치**입니다. 핵심 Mortal 배포 ABI는 v4로 고정하고 있으며, 3P와 4P는 같은 코드/가상환경을 사용하되 **데이터·설정·체크포인트는 절대 섞지 않습니다.**
+> 이 저장소는 현재 **연구/개발 브랜치**입니다. 배포 ABI는 Mortal v4로 고정하며, 3P와 4P는 같은 코드/가상환경을 사용하되 **설정·데이터·GRP·체크포인트·실험 결과를 서로 섞지 않습니다.**
 
 > [!NOTE]
-> 기준 브랜치: `research/mortal-rogs-v4-impl`  
-> Canonical Mortal pin: `0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`  
-> Akagi-NG compatibility pin: `11c0ffc0d70bf8142585b92405b4412976c9e205`
+> Branch: `research/mortal-rogs-v4-impl`  
+> Canonical Mortal: `0cff2b52982be5b1163aa9a62fb01f03ce91e0d2`  
+> Akagi-NG compatibility reference: `11c0ffc0d70bf8142585b92405b4412976c9e205`
 
 ---
 
-## 목차
+## Contents
 
-- [프로젝트 한눈에 보기](#프로젝트-한눈에-보기)
-- [현재 구현 상태](#현재-구현-상태)
-- [아키텍처](#아키텍처)
-- [3P / 4P ABI 계약](#3p--4p-abi-계약)
-- [Mortal-ROGS 학습 패러다임](#mortal-rogs-학습-패러다임)
-- [학습 데이터 준비](#학습-데이터-준비)
-- [Population Self-play](#population-self-play)
-- [평가 · 비교 · 승격](#평가--비교--승격)
-- [Rating-aware 학습](#rating-aware-학습)
-- [Akagi-NG API Serving](#akagi-ng-api-serving)
-- [Control Center / Web UI](#control-center--web-ui)
-- [빠른 시작](#빠른-시작)
-- [로컬 실험 실행](#로컬-실험-실행)
-- [검증 현황](#검증-현황)
-- [로드맵](#로드맵)
-- [프로젝트 구조](#프로젝트-구조)
-- [상세 문서](#상세-문서)
-- [연구 범위와 주의사항](#연구-범위와-주의사항)
-- [문제 해결](#문제-해결)
+- [Overview](#overview)
+- [Status](#status)
+- [Architecture](#architecture)
+- [3P / 4P ABI contracts](#3p--4p-abi-contracts)
+- [Mortal-ROGS training](#mortal-rogs-training)
+- [Training data](#training-data)
+- [Population self-play](#population-self-play)
+- [Evaluation backends](#evaluation-backends)
+- [Model comparison & promotion](#model-comparison--promotion)
+- [Rating-aware objectives](#rating-aware-objectives)
+- [Akagi-NG API serving](#akagi-ng-api-serving)
+- [Control Center](#control-center)
+- [Quick start](#quick-start)
+- [Local experiments](#local-experiments)
+- [Validation](#validation)
+- [Roadmap](#roadmap)
+- [Repository layout](#repository-layout)
+- [Documentation](#documentation)
+- [Research / safety boundaries](#research--safety-boundaries)
+- [Legacy migration](#legacy-migration)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-# 프로젝트 한눈에 보기
+# Overview
 
-Mortal-ROGS의 목표는 **Mortal v4 호환성을 유지하면서** 3P/4P 양쪽에서 더 좋은 학습 데이터, 보상, self-play, 평가, 승격, serving 파이프라인을 하나의 관리 환경으로 만드는 것입니다.
+Mortal-ROGS는 **Mortal v4 checkpoint 호환성을 유지하면서** 3P/4P 양쪽에서 데이터 준비, GRP, Mortal/ROGS 학습, population self-play, duplicate evaluation, rating-aware promotion, AkagiOT serving까지 하나의 연구/운영 흐름으로 묶는 프로젝트입니다.
 
 ```text
-                           Mortal-ROGS Control Center
-                                      │
-              ┌───────────────────────┼────────────────────────┐
-              │                       │                        │
-        Data / Training          Evaluation              Inference API
-              │                       │                        │
-      ┌───────┴────────┐      ┌───────┴────────┐      ┌────────┴────────┐
-      │                │      │                │      │                 │
-   3P Sanma          4P Yonma 1v2 / duplicate 1v3 / duplicate   AkagiOT HTTP
-      │                │      │                │      │                 │
-      └──────────┬─────┘      └────────┬───────┘      └────────┬────────┘
-                 │                     │                       │
-                 └──────────── Mortal_Unified ─────────────────┘
-                                 │
-                 one Mortal source / one .venv / one libriichi
-                                 │
-                  ┌──────────────┴──────────────┐
-                  │                             │
-           runtime/3p                    runtime/4p
-      data / models / runs          data / models / runs
+                              Mortal-ROGS
+                                   │
+         ┌─────────────────────────┼──────────────────────────┐
+         │                         │                          │
+   Data / Training           Evaluation                  Serving
+         │                         │                          │
+   ┌─────┴─────┐           ┌──────┴──────┐            ┌──────┴──────┐
+   │           │           │             │            │             │
+3P Sanma    4P Yonma    duplicate     rating gate  AkagiOT 3P   AkagiOT 4P
+   │           │           │             │            │             │
+   └──────┬────┘           └──────┬──────┘            └──────┬──────┘
+          │                       │                          │
+          └──────────────── Mortal_Unified ──────────────────┘
+                                  │
+                 one Mortal source / one .venv / one PyO3 stack
+                                  │
+                    ┌─────────────┴─────────────┐
+                    │                           │
+              runtime/3p                  runtime/4p
+           data / models / runs        data / models / runs
 ```
 
-### 핵심 원칙
+## Design principles
 
-| 원칙 | 내용 |
+| Principle | Contract |
 |---|---|
-| **Mortal v4 고정** | 배포 모델은 기존 `Brain + current_dqn` 구조를 유지합니다. |
-| **3P/4P 완전 분리** | 하나의 프로젝트를 쓰지만 mode별 데이터와 checkpoint는 독립입니다. |
-| **Teacher complexity, Student simplicity** | GRP/Oracle/Search/Regret 아이디어는 학습 측에 두고 배포 ABI는 늘리지 않습니다. |
-| **실대국 기반 검증** | 단순 tensor forward가 아니라 실제 arena → MJAI → loader → train → evaluator 흐름을 검증합니다. |
-| **승격은 평가 후에만** | 새 checkpoint가 생성됐다고 Best를 자동 덮어쓰지 않습니다. |
-| **Akagi-NG는 API client** | Akagi-NG가 Mortal-ROGS `.pth`를 직접 로드하지 않습니다. |
-| **Serving feature freeze** | serving은 기능 추가보다 correctness/reliability bug 수정이 우선입니다. |
+| **Mortal v4 stays deployable** | 최종 student는 기존 `Brain + current_dqn` 구조를 유지합니다. |
+| **3P and 4P stay separate** | 공통 알고리즘을 써도 weight/checkpoint/data는 mode별입니다. |
+| **Teacher complexity, student simplicity** | GRP/Oracle/Search/Regret 아이디어가 배포 observation ABI를 늘리지 않습니다. |
+| **Gameplay, not tensor-only smoke** | arena → MJAI → loader → train → checkpoint → evaluator를 실제로 확인합니다. |
+| **No promotion by training loss** | duplicate/rating gate를 통과한 모델만 Champion/Best 후보가 됩니다. |
+| **Akagi-NG is an API client** | Mortal-ROGS 모델 파일을 Akagi-NG에 복사하거나 직접 로드시키지 않습니다. |
+| **Serving is feature-frozen** | 새 serving subsystem보다 correctness/reliability 수정이 우선입니다. |
+| **No invented benchmark claims** | CI smoke를 RTX 5080 production 성능으로 해석하지 않습니다. |
 
 ---
 
-# 현재 구현 상태
+# Status
 
-상태 표시는 다음 의미를 사용합니다.
+상태 표시는 README 전체에서 동일하게 사용합니다.
 
-- ✅ **완료** — 코드/계약이 구현되고 CI 또는 실제 smoke로 검증됨
-- 🧪 **검증 중** — 기능은 구현됐지만 장시간·실데이터·성능 검증이 더 필요함
-- 🚧 **진행 중** — 현재 연결/확장 작업 중
-- 🗺️ **계획** — 설계 방향은 정했지만 production 구현으로 주장하지 않음
+- ✅ **Implemented / validated** — 구현되어 CI 또는 실제 smoke로 검증됨
+- 🧪 **Implemented / measuring** — 기능은 있으나 장시간·대량·실성능 검증이 더 필요함
+- 🚧 **In progress** — 현재 연결/확장 중
+- 🗺️ **Planned / research** — 방향은 정했지만 완료 구현으로 주장하지 않음
 
-## 핵심 기능 매트릭스
+## Feature matrix
 
-| 영역 | 3P | 4P | 상태 / 비고 |
+| Area | 3P | 4P | Notes |
 |---|---:|---:|---|
-| 단일 Mortal/Python/libriichi runtime | ✅ | ✅ | 하나의 `Mortal_Unified` 사용 |
-| Mode별 config/data/models/runs | ✅ | ✅ | 서로 독립 |
-| Native Mortal v4 학습 ABI | ✅ | ✅ | 3P 1010ch / 4P 1012ch |
-| 실제 arena gameplay | ✅ | ✅ | 3P `OneVsTwo`, 4P `OneVsThree` |
-| MJAI 로그 → GameplayLoader roundtrip | ✅ | ✅ | native loader 검증 |
-| GRP | ✅ | ✅ | mode-specific |
-| Mortal baseline / ROGS / ROGS+Global ablation | ✅ | ✅ | Global reward 기본 OFF |
-| Bidirectional duplicate comparison | ✅ | ✅ | seat rotation + paired seeds |
-| Native `libriichi.Stat` 보고서 | ✅ | ✅ | agari/houjuu/riichi/fuuro 등 |
-| Rating preset 평가 | ✅ | ✅ | mode별 preset/utility |
-| Population checkpoint validation | ✅ | ✅ | actual evaluator smoke 포함 |
-| Population self-play generator | ✅ | ✅ | CLI/BAT 구현 |
-| Akagi legacy 775 teacher/opponent bridge | ✅ | — | 3P population/eval 전용 |
-| AkagiOT HTTP API | ✅ | ✅ | `/react_batch_3p`, `/react_batch` |
-| Dynamic batching / LKG / hot reload | ✅ | ✅ | shared GPU coordination 포함 |
-| Serving benchmark / soak / profile / rollback | ✅ | ✅ | 30분 실 RTX gate는 별도 검증 필요 |
-| Control Center 핵심 운영 기능 | ✅ | ✅ | training/eval/serving/experiments |
-| Population self-play Web UI 연결 | 🚧 | 🚧 | 현재 `RUN_SELFPLAY_POPULATION.bat` 중심 |
-| Tenhou + self-play 자동 혼합 curriculum | 🗺️ | 🗺️ | 현재 `activate`는 self-play dataset을 직접 지정 |
-| MJX production evaluator | 🧪 | 🧪 | production 기준은 여전히 Mortal/libriichi |
-| Full Suphx Oracle guiding | 🗺️ | 🗺️ | 아이디어/설계만, 완전 구현 주장 안 함 |
+| Unified Mortal/Python runtime | ✅ | ✅ | `Mortal_Unified` 하나 |
+| Mode-isolated config/data/models/runs | ✅ | ✅ | checkpoint tensor 공유 없음 |
+| Native Mortal v4 training ABI | ✅ | ✅ | 1010ch / 1012ch |
+| Native gameplay evaluator | ✅ | ✅ | `OneVsTwo` / `OneVsThree` |
+| MJAI → `GameplayLoader` roundtrip | ✅ | ✅ | 실제 generated log 검증 |
+| Mode-specific GRP | ✅ | ✅ | input width 6 / 7 |
+| Mortal / ROGS / ROGS+Global ablation | ✅ | ✅ | Global reward default OFF |
+| Bidirectional duplicate comparison | ✅ | ✅ | same seeds + full seat rotation |
+| Native `libriichi.Stat` reporting | ✅ | ✅ | tactical metrics 포함 |
+| Rating utility / preset router | ✅ | ✅ | universal/specialized/curriculum logic |
+| Population checkpoint validation | ✅ | ✅ | real evaluator smoke 포함 |
+| Population self-play generator | ✅ | ✅ | resumable CLI/BAT |
+| Akagi legacy 775 teacher bridge | ✅ | — | 3P population/eval path only |
+| AkagiOT-compatible HTTP API | ✅ | ✅ | `/react_batch_3p` / `/react_batch` |
+| Dynamic batching / LKG / hot reload | ✅ | ✅ | shared-device coordination 포함 |
+| Benchmark / soak / production profile / rollback | ✅ | ✅ | 실제 30분 RTX gate는 🧪 |
+| Control Center core workflows | ✅ | ✅ | training/eval/serving/experiments |
+| Population self-play Web UI wiring | 🚧 | 🚧 | 현재 BAT/CLI가 canonical entrypoint |
+| Human-log + self-play automatic mixture | 🗺️ | 🗺️ | 현재 `activate`는 self-play root 직접 지정 |
+| High-throughput MJX evaluation | 🧪 | ✅* | 3P parity-gated; 4P backend registered, WSL/Linux 필요 |
+| Privileged Oracle distillation | 🗺️ | 🗺️ | Suphx-inspired future work |
 | Search teacher / amortized pMCPA | 🗺️ | 🗺️ | deployment ABI 유지 전제 |
-| Full LuckyJ neural CFR/search 재현 | 🗺️ | 🗺️ | 재현을 주장하지 않음 |
+| Full LuckyJ neural CFR/search reproduction | 🗺️ | 🗺️ | 재현을 주장하지 않음 |
 
-## 지금까지 실제 로컬에서 확인된 추가 항목
+`✅*` 4P MJX는 evaluation backend registry의 high-throughput primary 선택지입니다. **Mortal/libriichi native path는 계속 correctness/reference 및 현재 population/duplicate 검증의 기준**으로 유지합니다.
 
-- ✅ Windows + RTX 5080에서 3P/4P unified runtime, CUDA/BF16/`torch.compile`, gameplay, loader, mini-training, strict checkpoint reload, evaluator 검증
-- ✅ 4P 실제 Mortal v4 checkpoint population 준비/Champion 설치 경로 검증
-- ✅ Akagi legacy 3P `775 × 34 / 44 actions` checkpoint를 pinned `libriichi3p`로 실제 gameplay smoke 검증
-- ✅ legacy 3P Champion을 native 1010 training slot과 분리하여 `akagi_legacy_champion.pth`로 설치
-- ✅ legacy 3P teacher mirror self-play 24게임 생성, train/val 분할 및 loader/GRP validation 통과
-- 🧪 4P population self-play의 별도 로컬 대량 생성/장시간 run은 계속 검증 중
-- 🧪 실제 RTX 5080 **30분 production serving soak**은 아직 최종 실측 완료로 주장하지 않음
-- 🧪 Mortal vs ROGS vs ROGS+Global의 장시간 strength 결과도 아직 실측 우위로 주장하지 않음
+## Confirmed local validation
+
+현재 실제 Windows target workstation에서 확인된 범위:
+
+- ✅ RTX 5080에서 unified 3P/4P runtime, CUDA, BF16, `torch.compile`
+- ✅ 3P/4P gameplay, MJAI reload, mini-training, strict checkpoint reload, evaluator
+- ✅ 4P Mortal v4 checkpoint population validation 및 Champion 설치 경로
+- ✅ Akagi legacy 3P `775 × 34`, 44-action checkpoint actual gameplay smoke
+- ✅ legacy 775 Champion을 native 1010 training slots와 분리 설치
+- ✅ legacy 3P event adapter의 4-slot normalization + hidden-information masking
+- ✅ legacy 775 teacher mirror self-play 24게임 생성, 23 train / 1 val, loader + GRP validation
+- 🧪 4P population self-play의 별도 local generation/장시간 run 확대 검증 중
+- 🧪 실제 RTX 5080 30분 mixed production serving soak 미완료
+- 🧪 장시간 Mortal vs ROGS vs ROGS+Global strength 실측 미완료
 
 ---
 
-# 아키텍처
-
-## Unified runtime
+# Architecture
 
 ```text
 workspace/
-├─ mortal-rogs/                     # 이 저장소
+├─ mortal-rogs/                     # repository / Control Center / tools
 ├─ Mortal_Unified/                  # managed runtime
 │  ├─ .venv/
-│  ├─ mortal/                       # canonical Mortal + managed patches
-│  ├─ libriichi/                    # unified native source
+│  ├─ mortal/                       # pinned canonical Mortal + managed patches
+│  ├─ libriichi/                    # unified PyO3/Rust source
 │  ├─ compat/
 │  │  └─ akagi-ng/                  # pinned legacy 3P compatibility binary
 │  └─ runtime/
@@ -170,138 +178,142 @@ workspace/
 └─ Mortal_ROGS_Results/             # workstation experiment results
 ```
 
-한 runtime 안에서 3P/4P를 지원하지만 다음은 **공유하지 않습니다.**
+다음 항목은 mode 사이에서 공유하지 않습니다.
 
-- train/validation data
-- `current.pth`
-- `best_mortal.pth`
-- `baseline.pth`
-- `grp.pth`
-- experiment output
-- population manifest
-- promotion state
+```text
+data
+current.pth
+best_mortal.pth
+baseline.pth
+grp.pth
+population.json
+experiment runs
+promotion state
+```
 
 ---
 
-# 3P / 4P ABI 계약
+# 3P / 4P ABI contracts
 
 ## Native training ABI
 
-| 항목 | 3P Sanma | 4P Yonma |
+현재 **실제 manifest + unified consts patch + tests 기준** 계약입니다.
+
+| Contract | 3P Sanma | 4P Yonma |
 |---|---:|---:|
-| Mortal model version | 4 | 4 |
+| Mortal version | 4 | 4 |
 | Players | 3 | 4 |
-| Action space | 44 | 46 |
-| Observation | `(1010, 34)` | `(1012, 34)` |
-| Oracle observation | `(170, 34)` | `(217, 34)` |
-| GRP input width | 6 | 7 |
-| Evaluator | `OneVsTwo` | `OneVsThree` |
-| Native checkpoint | 별도 | 별도 |
+| Actions | 44 | 46 |
+| Observation v4 | `(1010, 34)` | `(1012, 34)` |
+| Oracle observation v4 | `(217, 34)` | `(217, 34)` |
+| GRP input | 6 | 7 |
+| Chi | disabled | enabled |
+| Nuki | enabled | disabled |
+| Native evaluator | `OneVsTwo` | `OneVsThree` |
+| Historical deploy filename | `mortal3p.pth` | `mortal.pth` |
 
-3P와 4P checkpoint를 tensor 단위로 합치거나 한 물리적 checkpoint에서 mode를 전환하지 않습니다.
+> [!IMPORTANT]
+> 3P oracle shape는 현재 코드 계약상 **`(217, 34)`** 입니다. README/설계 메모보다 `mortal_unified/manifest.toml`, unified consts patch, `training/game_mode.py`, CI contract test를 source of truth로 봅니다.
 
-## Akagi legacy 3P 775 ABI
+3P/4P weights를 tensor 단위로 합치거나 한 physical checkpoint가 두 mode를 동시에 표현하게 만들지 않습니다.
 
-Akagi-NG 계열의 기존 sanma checkpoint 중에는 native unified 1010ch와 다른 다음 ABI가 존재합니다.
+## Akagi legacy 3P ABI
+
+Akagi-NG/Mortal-Sanma 계열의 기존 3P checkpoint에는 native unified 1010ch와 다른 ABI가 존재합니다.
 
 ```text
 Observation: (775, 34)
 Actions:     44
-Mortal:      v4-compatible network/checkpoint family
 Encoder:     pinned Akagi-NG libriichi3p
+Checkpoint:  Mortal v4 family
 ```
 
-이 모델을 1010ch로 **padding/weight conversion하지 않습니다.** feature semantic이 다르기 때문입니다.
-
-현재 bridge는 다음 구조를 사용합니다.
+775 weight를 1010에 padding/reshape하지 않습니다. 두 feature layout의 semantic이 동일하지 않기 때문입니다.
 
 ```text
 Unified OneVsTwo arena
         │
-        ├─ full internal MJAI
-        │
+        │ full internal MJAI
         ▼
-Akagi legacy event adapter
-  ├─ 3-seat vector → historical 4-slot container
-  ├─ opponents' initial hands masked with '?'
-  └─ opponents' tsumo tile masked
+Legacy event adapter
+  ├─ 3-seat arrays → historical 4-slot containers
+  ├─ opponent start hands → '?' masked
+  └─ opponent tsumo tile  → '?' masked
         │
         ▼
 pinned libriichi3p.mjai.Bot
         │
         ▼
-775-channel observation / 44 actions
+775-channel public observation / 44 actions
         │
         ▼
-legacy Mortal v4 checkpoint
+legacy checkpoint
 ```
 
-### 안전 규칙
+### Legacy bridge safety rules
 
-- legacy 775 Champion은 `runtime/3p/models/akagi_legacy_champion.pth`에 설치합니다.
-- native `current.pth`, `best_mortal.pth`, `baseline.pth`는 보존합니다.
-- legacy 775 모델은 **현재 population teacher/opponent/evaluation bridge 용도**입니다.
-- 현재 Akagi-facing managed serving의 native 3P Best ABI를 legacy 775로 조용히 바꾸지 않습니다.
-- 775 teacher가 생성한 결과는 표준 MJAI game log이므로 native 1010 `GameplayLoader`의 학습 데이터로 사용할 수 있습니다.
+- legacy Champion: `runtime/3p/models/akagi_legacy_champion.pth`
+- native `current.pth`, `best_mortal.pth`, `baseline.pth`는 보존
+- legacy 775는 현재 **population teacher/opponent/evaluation bridge** 용도
+- managed Akagi-facing 3P serving ABI를 775로 조용히 바꾸지 않음
+- legacy teacher가 생성한 **game log는 표준 MJAI**이므로 native 1010 learner의 `GameplayLoader`가 학습 가능
 
 ---
 
-# Mortal-ROGS 학습 패러다임
+# Mortal-ROGS training
 
-ROGS는 Mortal v4의 배포 구조를 깨지 않으면서 **regret/advantage 기반 self-play 안정화와 game-level reward**를 실험하기 위한 연구 경로입니다.
+ROGS는 Mortal v4 network/deployment format을 유지하면서 regret/advantage 및 game-level reward를 실험하는 학습 경로입니다.
 
-## 현재 구현된 학습 요소
+## Implemented training hooks
 
-- 기존 Mortal value/Q 학습 경로 유지
+- canonical Mortal value/Q path 유지
 - CQL baseline behavior 유지
-- ROGS centered advantage / regret-style objective
-- Hedge-policy 기반 exploratory self-play hook
-- BC/CQL anchoring
-- online/offline curriculum hook
-- 3P/4P mode-aware GRP
+- centered advantage / regret-style ROGS objective
+- Hedge-policy exploration hook
+- BC/CQL anchor
+- online/offline curriculum hooks
+- mode-aware GRP / reward path
 - 3P rank reward `[6, 0, -6]`
-- 선택적 Global Reward shaping
-- Global Reward 기본값 **OFF**
-- `mortal`, `rogs`, `rogs-global` 공정 ablation
-- 동일 seed/dataset/architecture/optimizer/budget 기준 비교
-- 기본 training seed: `36887` (`0x9017`)
+- optional global reward shaping
+- **global reward default OFF**
+- fair ablation: `mortal`, `rogs`, `rogs-global`
+- 동일 base config / dataset / seed / architecture / optimizer / budget
+- default experiment training seed `36887` (`0x9017`)
 
 ```text
 train.py
-  ↓
+   ↓
 FileDatasetsIter
-  ↓
+   ↓
 GRP / RewardCalculator
-  ↓
-Mortal baseline or ROGS objective
-  ↓
+   ↓
+Mortal baseline OR ROGS objective
+   ↓
 optimizer
-  ↓
+   ↓
 ordinary Mortal v4 checkpoint
 ```
 
-## 논문 아이디어와 구현 범위
+## LuckyJ / ACH-inspired scope
 
-### LuckyJ / ACH-inspired
+Actor-Critic Hedge의 sampled advantage/regret와 Hedge policy 아이디어를 **self-play optimization heuristic**으로 차용합니다.
 
-Actor-Critic Hedge의 sampled advantage/regret 및 Hedge policy 아이디어를 **multiplayer self-play optimization heuristic**으로 사용합니다.
+ACH의 Nash-convergence motivation은 2-player zero-sum 조건에 대한 것이므로 3P/4P Mahjong에서 동일한 보장을 주장하지 않습니다.
 
-> ACH의 이론적 Nash convergence 동기는 2-player zero-sum에 대한 것입니다. 3P/4P Mahjong에 그대로 적용되는 보장을 주장하지 않습니다.
+## Suphx-inspired scope
 
-### Suphx-inspired
+현재 실제 구현으로 주장하는 것은 **GRP + optional global reward shaping**입니다.
 
-현재 구현은 GRP 및 optional global reward shaping에 Suphx의 game-level reward 아이디어를 참고합니다.
-
-다음은 아직 **완전 구현으로 주장하지 않습니다.**
+다음은 연구/향후 작업입니다.
 
 - privileged Oracle teacher distillation
+- sparse Search teacher distillation
 - runtime pMCPA
-- search teacher distillation
 - amortized pMCPA
 
-### 배포 원칙
+## Deployment rule
 
-학습용 state에 optimizer, GRP, teacher, league metadata 등이 존재할 수 있어도 최종 배포 모델은 평범한 Mortal v4 형태를 유지합니다.
+학습 checkpoint에 optimizer/teacher/GRP/league metadata가 존재할 수 있어도 배포 student의 핵심 parameter는 기존 Mortal 형식을 유지합니다.
 
 ```text
 config
@@ -309,72 +321,77 @@ mortal
 current_dqn
 ```
 
-Oracle/Search/GRP 전용 parameter를 `mortal`/`current_dqn`에 강제로 합치지 않습니다.
+Training-only parameter를 `mortal` 또는 `current_dqn`에 억지로 합치지 않습니다.
 
-자세한 연구 설계: [`docs/HYBRID_PARADIGM.md`](docs/HYBRID_PARADIGM.md)
+See: [`docs/HYBRID_PARADIGM.md`](docs/HYBRID_PARADIGM.md)
 
 ---
 
-# 학습 데이터 준비
+# Training data
 
-Mortal-ROGS는 **외부 패보가 없어도 population self-play로 시작할 수 있고**, 허가된 경우 Tenhou/Mahjong Soul 데이터를 bootstrap/calibration에 추가할 수 있습니다.
+세 경로를 지원합니다.
 
-## 권장 synthetic-first 흐름
+1. **Population self-play** — 외부 human logs 없이 시작 가능
+2. **Mahjong Soul local preparation** — 허가된 계정/기록에 대해 사용
+3. **Tenhou local preparation** — 사용 목적에 대한 권한 확인 후 사용
+
+권장 방향은 synthetic-first입니다.
 
 ```text
-강한 기존 Mortal checkpoint
-          │
-          ▼
+strong Mortal checkpoint(s)
+        ↓
 population validation
-          │
-          ▼
-local Mortal/libriichi self-play
-          │
-          ▼
-MJAI train / val
-          │
-          ▼
-GRP + native Mortal/ROGS learner
-          │
-          ▼
-Champion ↔ Learner cross-play
-          │
-          ▼
-duplicate evaluation / promotion
+        ↓
+local self-play MJAI
+        ↓
+GRP + native learner
+        ↓
+Champion / learner / history cross-play
+        ↓
+duplicate evaluation + promotion
 ```
 
-작은 human-log set이 있다면 초기 calibration에 사용하고, 이후 self-play 비중을 늘리는 방향을 권장합니다.
+작은 human-log set이 확보되면 bootstrap/calibration에 사용하고 이후 self-play 비중을 높이는 방향을 권장합니다.
 
 > [!WARNING]
-> 현재 `generate ... activate`는 해당 mode의 Mortal + GRP dataset 설정을 `selfplay-population` 데이터로 가리킵니다. **Tenhou/Mahjong Soul + self-play를 비율로 자동 혼합하는 기능은 아직 구현되지 않았습니다.**
+> 현재 `RUN_SELFPLAY_POPULATION.bat generate ... activate`는 해당 mode의 Mortal + GRP dataset config를 `selfplay-population` root로 지정합니다. **Tenhou/Mahjong Soul + self-play를 원하는 비율로 자동 혼합하는 기능은 아직 구현되지 않았습니다.**
+
+## Baseline behavior
+
+Tenhou/Mahjong Soul preparation은 기존 mode-compatible `baseline.pth`가 있으면 보존하고 ABI 검사합니다.
+
+없으면 validated unified smoke에서 생성된 checkpoint를 fixed canonical test-play reference로 사용할 수 있지만, 이것을 **강한 pretrained policy 또는 GRP 모델이라고 주장하지 않습니다.** GRP는 준비된 데이터로 mode별 학습/재사용합니다.
 
 ## Mahjong Soul
 
-구현된 준비 흐름:
-
 ```text
-Amae-Koromo metadata discovery
-  → authenticated Mahjong Soul record download
-  → raw protobuf
-  → pinned converter
-  → MJAI
-  → deterministic train/val split
-  → GameplayLoader + GRP validation
-  → mode-specific GRP
+Amae-Koromo metadata
+   ↓
+ranked UUID discovery
+   ↓
+authenticated record download
+   ↓
+raw protobuf
+   ↓
+pinned Majsoul → MJAI converter
+   ↓
+deterministic train/val
+   ↓
+GameplayLoader + GRP validation
 ```
 
-주요 특성:
+Implemented tooling:
 
 - 3P `pl3`, 4P `pl4` API family 분리
-- 3P: Sanma Throne → Jade → Gold
-- 4P: Throne → Jade → Gold
-- API discovery 최대 4 req/s
-- record-cap 도달 window 자동 subdivision
-- resumable local cache/journal
-- 3P `nukidora` 지원
+- 3P Sanma Throne → Jade → Gold
+- 4P Throne → Jade → Gold
+- discovery 최대 4 requests/s
+- record-cap window recursive subdivision
+- resumable cache/journal
+- 3P north extraction → `nukidora`
 - EN/KR Yostar OAuth compatibility layer
-- password/token/packet을 Git/config/result에 영구 저장하지 않음
-- 다운로드한 기록은 local runtime artifact이며 저장소에 포함하지 않음
+- secrets를 Git/TOML/experiment manifest/result에 영구 저장하지 않음
+- downloaded records는 local runtime artifact
 
 Pinned converter:
 
@@ -383,48 +400,56 @@ NikkeTryHard/tenhou-to-mjai
 69fb75a51c7efef3212be603227b2a58a9717237
 ```
 
-실행 예:
+Examples:
 
 ```powershell
-.\RUN_MAJSOUL_FULL.bat prepare 5000 5000 authorized 10000 en
+.\RUN_MAJSOUL_FULL.bat prepare    5000 5000 authorized 10000 en
+.\RUN_MAJSOUL_FULL.bat experiment 5000 5000 authorized 10000 en
+.\RUN_MAJSOUL_FULL.bat full       5000 5000 authorized 10000 en
 ```
 
-> 실제 계정/기록은 접근 권한이 있는 범위에서만 사용하십시오. EN/KR 인증 경로 tooling은 구현되어 있지만 실제 대량 데이터 수집 성공 여부는 외부 서비스 상태/인증 조건에도 영향을 받습니다.
+> [!CAUTION]
+> wrapper 자체는 credential을 영구 저장하지 않지만 pinned child process의 인자 전달 특성상 token이 실행 중 로컬 process-inspection tool에 **일시적으로 보일 가능성**은 있습니다. 실제 credential 운영 시 상세 문서를 확인하십시오.
 
-상세: [`docs/MAJSOUL_TRAINING_PREP.md`](docs/MAJSOUL_TRAINING_PREP.md)
+See: [`docs/MAJSOUL_TRAINING_PREP.md`](docs/MAJSOUL_TRAINING_PREP.md)
 
 ## Tenhou
 
-Tenhou 경로는 허가된 local use를 전제로 pinned downloader/converter를 재사용합니다.
-
-| 용도 | Tool | Pin |
+| Purpose | Tool | Pin |
 |---|---|---|
 | Houou download/cache | `Apricot-S/houou-logs` | `d4ca693771517b67172521f2bd76517500db4a6e` |
 | 3P XML → MJAI | `Mateces/tenhou-sanma-to-mjai` | `e0bd7bffe24227f97600c710cffa4490117b634a` |
 | 4P XML → MJAI | `Jim137/mjlog2mjai` | `c133f7dbf61046feaf1af72369d9a44056807657` |
 
+Examples:
+
 ```powershell
-.\RUN_TENHOU_FULL.bat prepare 5000 5000 authorized 10000
+.\RUN_TENHOU_FULL.bat prepare    5000 5000 authorized 10000
+.\RUN_TENHOU_FULL.bat experiment 5000 5000 authorized 10000
+.\RUN_TENHOU_FULL.bat full       5000 5000 authorized 10000
 ```
 
-- 3P/4P converter 분리
+The tooling provides:
+
+- separate 3P/4P converter path
 - deterministic 95/5 split
 - GameplayLoader + GRP loader validation
-- converter error ratio gate
-- mode-specific baseline/GRP
-- downloaded logs는 Git에 포함하지 않음
+- converter error-ratio gate
+- mode-specific baseline + GRP
+- local cache/resume
+- no downloaded logs committed to Git
 
-> 과거 연도 archive URL은 현재 신뢰할 수 있는 대규모 source로 간주하지 않습니다. 큰 historical dataset이 반드시 자동으로 확보된다고 주장하지 않습니다.
+Historical archive availability is **not** treated as guaranteed. A large multi-year dataset is not silently promised by this workflow.
 
-상세: [`docs/TENHOU_TRAINING_PREP.md`](docs/TENHOU_TRAINING_PREP.md)
+See: [`docs/TENHOU_TRAINING_PREP.md`](docs/TENHOU_TRAINING_PREP.md)
 
 ---
 
-# Population Self-play
+# Population self-play
 
-외부 human log가 부족해도 기존 Mortal checkpoint를 teacher/opponent population으로 사용해 로컬에서 MJAI 패보를 생성할 수 있습니다.
+Population self-play는 strong existing PTH를 초기 Champion/opponent로 삼고 Mortal/libriichi가 실제 MJAI game logs를 생성하는 synthetic bootstrap 경로입니다.
 
-## 1. Population 준비
+## Prepare checkpoints
 
 ### 3P
 
@@ -432,7 +457,7 @@ Tenhou 경로는 허가된 local use를 전제로 pinned downloader/converter를
 .\RUN_SELFPLAY_POPULATION.bat prepare 3p "D:\models\sanma.pth"
 ```
 
-native 1010 checkpoint와 Akagi legacy 775 checkpoint를 ABI에 맞게 구분하여 검증합니다.
+3P는 native 1010 checkpoint와 Akagi legacy 775 checkpoint를 구분합니다.
 
 ### 4P
 
@@ -442,209 +467,269 @@ native 1010 checkpoint와 Akagi legacy 775 checkpoint를 ABI에 맞게 구분하
   "D:\models\other-4p.pth"
 ```
 
-첫 checkpoint는 preferred trusted Champion이지만 **검증을 생략하지 않습니다.**
+첫 checkpoint는 preferred trusted Champion이지만 validation을 생략하지 않습니다.
 
-검증 항목:
+Validation gates:
 
 1. SHA-256 identify/deduplicate
-2. mode/ABI 검사
-3. strict Mortal v4 load
-4. synthetic forward
+2. mode / ABI detection
+3. Mortal v4 strict load
+4. forward smoke
 5. actual `OneVsTwo` / `OneVsThree` gameplay smoke
-6. 통과한 모델만 population directory에 복사
-7. reject 이유를 manifest에 기록
-
-Manifest:
+6. pass한 모델만 active population으로 복사
+7. reject reason을 manifest에 기록
+8. ABI-compatible Champion만 해당 slot에 설치
 
 ```text
 Mortal_Unified/runtime/3p/models/population/population.json
 Mortal_Unified/runtime/4p/models/population/population.json
 ```
 
-## 2. Self-play 패보 생성
+## Generate game logs
 
-작은 smoke부터 권장합니다.
+Small smoke first:
 
 ```powershell
 .\RUN_SELFPLAY_POPULATION.bat generate 3p 24
 .\RUN_SELFPLAY_POPULATION.bat generate 4p 32
 ```
 
-본 데이터 생성:
+Scale only after smoke:
 
 ```powershell
 .\RUN_SELFPLAY_POPULATION.bat generate 3p 1000 activate
 .\RUN_SELFPLAY_POPULATION.bat generate 4p 1000 activate
 ```
 
-특성:
+Behavior:
 
-- resumable state (`state-3p.json`, `state-4p.json`)
-- 3P: 1 challenger vs 2 Champion copies, seat rotation
-- 4P: 1 challenger vs 3 Champion copies, seat rotation
-- 한 모델만 있으면 mirror self-play
-- 여러 모델이면 양방향 cross-play 후 Champion mirror 포함
-- generated MJAI header/player-count 검사
-- deterministic train/val split
-- real `GameplayLoader` + GRP validation 후 성공 처리
-- interruption 후 같은 파일이 남아 있어도 reuse accounting
-
-데이터:
+- resumable state cursor
+- 3P: challenger 1 vs Champion 2 copies + seat rotation
+- 4P: challenger 1 vs Champion 3 copies + seat rotation
+- one member → mirror self-play
+- 2+ members → bidirectional cross-play + Champion mirror
+- generated MJAI player-count/header validation
+- deterministic train/val assignment
+- `GameplayLoader` + GRP validation before success
+- interruption/retry reuse accounting
+- mode-specific dataset activation
 
 ```text
 Mortal_Unified/runtime/3p/data/selfplay-population/{train,val}/
 Mortal_Unified/runtime/4p/data/selfplay-population/{train,val}/
+
+Mortal_Unified/runtime/3p/runs/selfplay-data/state-3p.json
+Mortal_Unified/runtime/4p/runs/selfplay-data/state-4p.json
 ```
 
-상세: [`docs/POPULATION_SELFPLAY.md`](docs/POPULATION_SELFPLAY.md)
+See: [`docs/POPULATION_SELFPLAY.md`](docs/POPULATION_SELFPLAY.md)
 
 ---
 
-# 평가 · 비교 · 승격
+# Evaluation backends
 
-Mortal-ROGS는 training loss만으로 Champion을 교체하지 않습니다.
+Evaluation infrastructure와 **Mortal native correctness path**를 구분합니다.
 
-## Duplicate evaluation
+| Backend | Mode | Role | Windows | Status |
+|---|---:|---|---:|---|
+| `libriichi3p` / unified 3P arena | 3P | current reference / native correctness / population path | ✅ | ✅ |
+| `libriichi` | 4P | correctness/reference fallback + native Mortal path | ✅ | ✅ |
+| `mjx` | 4P | high-throughput batched evaluator | WSL2 / Linux container | ✅ backend registered |
+| `mjx_sanma` | 3P | future high-throughput sanma evaluator | WSL2 / Linux | 🧪 experimental |
+| legacy `mjai` | 4P | cross-check only | non-native | reference only |
 
-동일 seed와 seat rotation을 사용합니다.
+`evaluation.select_backend(players=4, preference="auto")`는 4P에 MJX를 선택하도록 구성되어 있지만, 현재 repository의 native duplicate/model-comparison/population correctness 검증은 Mortal/libriichi 경로를 계속 사용합니다.
 
-| Mode | 한 seed당 seat rotation | 기본 대결 |
+## MJX-Sanma parity policy
+
+`mjx_sanma/manifest.toml`은 upstream을 다음에 pin합니다.
+
+```text
+mjx-project/mjx
+ref:      v0.1.0
+tree_sha: f52e27c4bfc6eb107af767e06266e2ba1e4c9333
+production_backend = false
+reference_backend  = libriichi3p
+```
+
+Production promotion 전 요구사항:
+
+1. rule/tile-set patch
+2. wall/deal
+3. nuki protocol
+4. state/scoring/game flow
+5. legal actions/observation
+6. Python bindings/parallel runner
+7. `libriichi3p` parity
+8. upstream file-hash match
+9. required parity mismatch **zero**
+
+따라서 **MJX-Sanma는 parity gate가 끝나기 전 production-disabled**입니다.
+
+See: [`docs/EVALUATION_BACKENDS.md`](docs/EVALUATION_BACKENDS.md)
+
+---
+
+# Model comparison & promotion
+
+새 checkpoint는 training loss만으로 Best가 되지 않습니다.
+
+## Duplicate protocol
+
+| Mode | Seat rotation per seed | Match |
 |---|---:|---|
 | 3P | A / B / C | Challenger 1 vs Champion 2 |
 | 4P | A / B / C / D | Challenger 1 vs Champion 3 |
 
-비교 runner는 양방향을 수행합니다.
+Comparison은 같은 seed range/key로 양방향 실행합니다.
 
 ```text
 Candidate → Baseline
 Baseline  → Candidate
 ```
 
-같은 seed range/key를 사용해 role asymmetry를 줄입니다.
+Generated outputs:
 
-## 산출물
+```text
+runtime/<mode>/runs/comparison/<name>/
+├─ candidate-vs-baseline/
+├─ baseline-vs-candidate/
+├─ paired.jsonl
+├─ paired.summary.json
+├─ paired.summary.md
+├─ native-stat.json
+├─ native-stat.txt
+├─ promotion-gate.json       # when rating profile is enabled
+└─ comparison.json
+```
 
-`runtime/<mode>/runs/comparison/<name>/` 아래에 다음이 생성됩니다.
-
-- native duplicate logs
-- `paired.jsonl`
-- `paired.summary.json`
-- `paired.summary.md`
-- `native-stat.json`
-- `native-stat.txt`
-- optional `promotion-gate.json`
-- `comparison.json`
-
-## 지표
+Metrics include:
 
 - placement distribution
 - average rank
 - tobi
-- rank points
-- game score delta
+- raw game-score delta
+- rank point EV
 - platform rating utility
 - paired bootstrap confidence interval
-- win/agari rate
-- deal-in/houjuu rate
-- call/fuuro rate
-- riichi rate
-- ryukyoku rate
+- agari / houjuu / riichi / fuuro / ryukyoku rates
+- native `libriichi.Stat` table
 
-> `--seed-count 100`은 preview용입니다. 작은 모델 차이를 promotion할 때는 충분히 큰 duplicate sample과 안정적인 CI가 필요합니다.
+`--seed-count 100`은 quick preview입니다. 작은 strength 차이를 promotion할 때는 CI와 effect size가 안정될 만큼 sample을 확대해야 합니다.
 
-상세: [`docs/MODEL_COMPARISON.md`](docs/MODEL_COMPARISON.md)
+### Seed key precision
+
+Mortal duplicate seed key 예시 `0xD5DFAA4CEF265CD7`는 JavaScript safe integer 범위를 넘습니다. Control Center/Web API 경계에서는 **문자열로 유지**하여 rounding하지 않습니다.
+
+See: [`docs/MODEL_COMPARISON.md`](docs/MODEL_COMPARISON.md)
 
 ---
 
-# Rating-aware 학습
+# Rating-aware objectives
 
-플랫폼마다 같은 1위/2위/3위/4위 및 최종 점수의 ladder 가치가 다르므로 reward를 하나의 고정 placement vector로만 다루지 않습니다.
-
-## 구현 방향
-
-Rating context는 neural observation에 넣지 않습니다.
+동일한 최종 순위/점수라도 platform/room/rank에 따라 실제 ladder value가 다릅니다. Rating context를 neural observation에 추가하지 않고 **training/evaluation utility**로만 사용합니다.
 
 ```text
 public Mahjong observation ────────────> Mortal v4 Brain/DQN
                                                │
-rank / score / platform preset ─> utility ─────┘  training/eval only
+platform / room / rank / result ─> utility ────┘
 ```
 
-따라서 Akagi-compatible input ABI는 그대로 유지됩니다.
+이 방식은 Mortal/Akagi input ABI를 유지합니다.
 
-## 지원 전략
+## Implemented strategies
 
-- **Universal** — 여러 rating objective를 mode별 mixture로 학습
-- **Specialized** — 하나의 platform/room/rank preset에 fine-tune
-- **Curriculum** — universal에서 시작해 target preset 비중을 점진 증가
+`training/rating_router.py`에 다음 전략이 구현되어 있습니다.
 
-`config/rating_presets.toml`과 rating utility layer가 mode별 설정을 관리합니다. Unknown context를 조용히 추측하지 않고 오류로 처리하도록 설계되어 있습니다.
+- **Universal** — mode별 configured mixture에서 objective sample
+- **Specialized** — 하나의 target preset으로 학습/fine-tune
+- **Curriculum** — universal에서 시작해 후반 target probability 증가
 
-중요한 제한:
+Preset/catalog:
 
-> 현재 Mortal observation에는 platform flag가 없으므로 하나의 checkpoint가 inference 순간에 platform별 성향을 자동 전환할 수 없습니다. 실제 specialization은 **모델 선택/별도 fine-tune**으로 처리해야 합니다.
+```text
+config/rating_presets.toml
+config/rating_contexts.toml
+training/rating.py
+training/platform_rating.py
+training/rating_router.py
+```
 
-장시간 specialized/universal strength 측정과 자동 catalog 운영은 계속 진행할 작업입니다.
+Unknown context는 조용히 guessed fallback하지 않고 error로 처리합니다.
 
-상세: [`docs/RATING_PRESETS_AND_DUAL_MODE.md`](docs/RATING_PRESETS_AND_DUAL_MODE.md)
+> 현재 Mortal observation에는 platform flag가 없으므로 **한 checkpoint가 inference 순간에 platform별 스타일을 자동 전환할 수 없습니다.** 실제 specialization은 별도 fine-tune/model selection/catalog로 처리하는 것이 ABI-safe합니다.
+
+자동 model catalog와 장시간 platform-specific strength 측정은 후속 단계입니다.
+
+See: [`docs/RATING_PRESETS_AND_DUAL_MODE.md`](docs/RATING_PRESETS_AND_DUAL_MODE.md)
 
 ---
 
-# Akagi-NG API Serving
+# Akagi-NG API serving
 
-Akagi-NG 연동은 **API-only**가 기본 구조입니다.
+Mortal-ROGS의 Akagi-NG 통합은 **API-only**입니다.
 
 ```text
-Vanilla Akagi-NG
-      │
-      │ gzip HTTP + Authorization
-      ▼
-Mortal-ROGS inference server
-      │
-      ├─ 3P POST /react_batch_3p
-      └─ 4P POST /react_batch
-      │
-      ▼
-Mortal_Unified mode-specific Best model
+untouched Akagi-NG
+       │
+       │ gzip HTTP + Authorization
+       ▼
+Mortal-ROGS inference API
+       ├─ POST /react_batch_3p
+       └─ POST /react_batch
+       │
+       ▼
+mode-specific Mortal model slots
 ```
 
-Mortal-ROGS는 다음을 하지 않습니다.
+하지 않는 것:
 
-- Akagi-NG `models` 폴더에 checkpoint 복사
-- Akagi-NG 소스 패치/수정
-- Akagi-NG가 Mortal-ROGS checkpoint를 직접 `torch.load`
-- Control Center에서 Akagi-NG 설치 경로 요구
+- Mortal-ROGS PTH를 Akagi-NG `models`에 복사
+- Akagi-NG 소스 수정/patch
+- Akagi-NG가 Mortal-ROGS PTH 직접 `torch.load`
+- Control Center가 Akagi 설치 경로를 요구
 
-사용자에게 필요한 연결 정보는 **API URL + API Key**입니다.
+Historical `scripts/export_akagi_mortal.py`도 **의도적으로 deprecated/disabled**되어 direct-copy automation이 조용히 동작하지 않게 합니다.
 
-## Serving reliability
+## AkagiOT timing contract
 
-구현된 항목:
+Pinned Akagi reference 기준:
 
-- mode별 persistent model slot
-- strict checkpoint validation
+```text
+connect timeout: 2 s
+read timeout:    4 s
+circuit breaker: 3 consecutive failures → open
+recovery probe:  30 s
+```
+
+Mortal-ROGS server default deadline은 `3500 ms`로 Akagi의 4초 read timeout보다 먼저 실패시켜 client fallback/circuit-breaker가 정상 동작하도록 합니다.
+
+## Serving reliability already implemented
+
+- independent 3P/4P model slots
+- strict load + warmup before publish
 - background hot reload
-- warmup 후 atomic publish
 - last-known-good fallback
-- invalid replacement 시 DEGRADED + 기존 model 계속 serving
+- DEGRADED state on rejected replacement
 - per-mode cross-request dynamic micro-batching
 - malformed request isolation
-- bounded queue/backpressure
-- server deadline (`3500 ms` default, pinned Akagi read timeout보다 짧음)
-- graceful drain/stop/restart
-- Windows Ctrl+Break handling
+- bounded queue / backpressure
+- server-side deadline
+- graceful drain / stop / restart
+- Windows Ctrl+Break lifecycle handling
 - serialized maintenance
-- reload quiet-window admission
-- 3P/4P shared GPU forward coordination
-- RTX 5080 production profile `max_device_executions=1`
-- CUDA allocator/latency/queue telemetry
-- benchmark / A-B sweep
-- serving soak
+- reload quiet/wait admission window
+- shared-GPU forward coordination
+- `max_device_executions=1` RTX production policy
+- latency/queue/CUDA allocator telemetry
+- benchmark + A/B sweep
+- mixed-mode soak runner
 - production profile transaction
-- verification / rollback / recovery
+- apply verification / rollback
+- persisted profile recovery / drift reporting
 - API key runtime-only handling
 
-## Management API
+Management endpoints include:
 
 ```text
 GET  /api/inference/health
@@ -660,23 +745,24 @@ GET  /api/inference/production/status
 
 ## Production soak gate
 
-기본 production gate:
+Default production eligibility requires approximately:
 
-- 최소 30분
-- mixed 3P + 4P
-- concurrency 8
-- p95 ≤ 100 ms
-- p99 ≤ 250 ms
-- busy/deadline/client error 없음
-- degraded health 없음
-- model signature 안정
-- peak VRAM ≤ 92%
-- GPU temperature ≤ 88°C
-- `nvidia-smi` telemetry 필수
+```text
+minimum duration      30 min
+traffic               mixed 3P + 4P
+concurrency           8
+rows/request          1
+p95 budget            100 ms
+p99 budget            250 ms
+peak VRAM             <= 92%
+peak GPU temperature  <= 88 C
+busy/deadline/errors  0
+NVIDIA telemetry      required
+```
 
-CI는 이 로직의 짧은 CPU smoke만 검증하며 **RTX 5080 성능 수치를 만들어내지 않습니다.** 실제 30분 RTX 측정은 별도 local gate입니다.
+CI runs the same report/gate logic as a short smoke but does **not** fabricate RTX 5080 production numbers.
 
-상세:
+See:
 
 - [`docs/AKAGI_API_INTEGRATION.md`](docs/AKAGI_API_INTEGRATION.md)
 - [`docs/INFERENCE_SERVING.md`](docs/INFERENCE_SERVING.md)
@@ -686,47 +772,49 @@ CI는 이 로직의 짧은 CPU smoke만 검증하며 **RTX 5080 성능 수치를
 
 ---
 
-# Control Center / Web UI
+# Control Center
 
-Control Center는 기존 하나의 JobManager/로그/stop workflow를 재사용합니다. 별도 experiment DB나 새 orchestration service를 만들지 않습니다.
+Web UI는 기존 JobManager를 재사용하며 별도 experiment database/server/workflow framework를 만들지 않습니다.
 
-현재 UI가 담당하는 영역:
+현재 UI가 다루는 항목:
 
-- unified runtime bootstrap / 상태 확인
+- unified runtime/bootstrap status
 - 3P / 4P mode selection
-- config editing
+- configuration
 - GRP training
-- Offline Mortal / ROGS training
-- 기존 self-play training flow
+- offline Mortal / ROGS training
+- existing self-play training flow
 - TensorBoard
-- checkpoint 관리
+- checkpoint management
 - evaluation / promotion
-- Akagi inference lifecycle
-- model reload
-- serving telemetry
-- benchmark / soak / profile / rollback / recovery
 - Mortal / ROGS / ROGS+Global ablation
-- bidirectional model comparison
-- GPU 사용률 / VRAM / 온도 / 전력 모니터링
-- Job status / logs / stop
+- bidirectional checkpoint comparison
+- Akagi inference process lifecycle
+- model reload
+- serving metrics
+- benchmark / A-B sweep
+- soak
+- production profile apply/rollback/recovery
+- GPU utilization / VRAM / temperature / power
+- jobs / logs / stop controls
 
-### 아직 UI에 연결 중인 것
+### Currently not wired into the UI
 
-새로운 **population bootstrap/self-play preparation**은 현재 안정화 우선으로 CLI/BAT 경로를 사용합니다.
+새 **population checkpoint preparation + population self-play generation**은 현재 local validation 안정화를 위해 다음 entrypoint를 사용합니다.
 
 ```text
 RUN_SELFPLAY_POPULATION.bat
 ```
 
-로컬 3P/4P 검증이 충분히 끝난 뒤 기존 JobManager와 Control Center에 연결하는 것이 다음 단계입니다. 새로운 서버/DB를 추가하지 않습니다.
+이 기능은 검증 후 기존 JobManager/Control Center에 연결할 예정이며 새 service/DB를 추가하지 않습니다.
 
 ---
 
-# 빠른 시작
+# Quick start
 
-## 요구 환경
+## Target environment
 
-현재 주 검증 환경:
+현재 주요 검증 환경:
 
 - Windows 10 / 11 x64
 - NVIDIA GPU
@@ -737,9 +825,9 @@ RUN_SELFPLAY_POPULATION.bat
 - BF16
 - `torch.compile`
 - Windows Triton 3.6.x
-- Rust / MSVC Build Tools (setup에서 검사/준비)
+- Rust / MSVC Build Tools
 
-다른 NVIDIA GPU에서도 사용할 수 있지만 batch/serving 설정은 VRAM과 성능에 맞게 조절해야 합니다.
+다른 NVIDIA GPU도 사용할 수 있지만 training batch와 serving profile은 VRAM/성능에 맞춰 조정해야 합니다.
 
 ## 1. Clone
 
@@ -753,27 +841,21 @@ git clone --branch research/mortal-rogs-v4-impl --single-branch `
 cd .\mortal-rogs
 ```
 
-업데이트:
+Update:
 
 ```powershell
 cd C:\Users\<사용자명>\Downloads\mortal-rogs
 git pull
 ```
 
-## 2. Unified runtime 설치 + smoke
+## 2. Install + smoke unified runtime
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File ".\scripts\setup_and_smoke_unified_windows.ps1"
 ```
 
-기본 runtime:
-
-```text
-<workspace>\Mortal_Unified
-```
-
-직접 지정:
+Custom runtime path:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
@@ -781,19 +863,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -InstallRoot "D:\Mortal_Unified"
 ```
 
-setup은 필요한 경우 다음을 수행합니다.
+Managed setup covers, when required:
 
-- canonical Mortal checkout/pin
+- pinned canonical Mortal checkout
 - Python venv
-- PyTorch/CUDA stack
-- Rust/MSVC check
-- managed patch chain
+- CUDA/PyTorch dependencies
+- Rust/MSVC detection
+- unified patch chain
 - PyO3 `libriichi` build/install
-- 3P/4P config generation
+- 3P/4P configs
 - CUDA/BF16/compile smoke
-- real gameplay/log/training/evaluator/API/Control Center smoke
+- real gameplay/log/mini-training/evaluator/API/Control Center smoke
 
-## 3. 검증만 재실행
+## 3. Re-run validation only
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
@@ -801,15 +883,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -InstallRoot "C:\Users\<사용자명>\Downloads\Mortal_Unified"
 ```
 
-## 4. Web UI
-
-프로젝트 root에서:
+## 4. Start Control Center
 
 ```powershell
 C:\Users\<사용자명>\Downloads\Mortal_Unified\.venv\Scripts\python.exe -m app.main
 ```
-
-브라우저:
 
 ```text
 http://127.0.0.1:8188
@@ -817,30 +895,28 @@ http://127.0.0.1:8188
 
 ---
 
-# 로컬 실험 실행
+# Local experiments
 
-## Workstation validation
+## Validate workstation
 
 ```powershell
 .\RUN_LOCAL.bat validate
 ```
 
-## 공정 ablation
-
-양 mode 모두:
+## Fair ablation
 
 ```powershell
 .\RUN_LOCAL.bat experiment fresh both
 ```
 
-단일 mode:
+Single mode:
 
 ```powershell
 .\RUN_LOCAL.bat experiment fresh 3p
 .\RUN_LOCAL.bat experiment fresh 4p
 ```
 
-Variant:
+Variants:
 
 ```text
 mortal
@@ -848,228 +924,250 @@ rogs
 rogs-global
 ```
 
-기존 output 처리 정책:
+Existing-run policy:
 
 ```text
-error   # 기본, 실수로 재사용/덮어쓰기 금지
-fresh   # 해당 isolated run만 삭제 후 새로 시작
-resume  # 명시적으로 이어서 학습
+error   # default; refuse accidental reuse
+fresh   # recreate only the isolated selected output
+resume  # explicitly resume an existing run
 ```
 
-## Full suite + serving soak
+## Full suite + production serving soak
 
 ```powershell
 .\RUN_LOCAL.bat full fresh both
 ```
 
-결과는 runtime 밖에 둡니다.
+Results are outside both Git tree and unified source runtime:
 
 ```text
 <workspace>\Mortal_ROGS_Results\YYYYMMDD-HHMMSS-*/
 ```
 
-상세: [`docs/LOCAL_WORKSTATION_RUN.md`](docs/LOCAL_WORKSTATION_RUN.md)
+See: [`docs/LOCAL_WORKSTATION_RUN.md`](docs/LOCAL_WORKSTATION_RUN.md)
 
 ---
 
-# 검증 현황
+# Validation
 
 ## GitHub Actions
 
-현재 branch는 다음 8개 workflow 계약을 유지합니다.
+현재 branch는 8개 workflow contract를 유지합니다.
 
-| Workflow | 역할 |
+| Workflow | Coverage |
 |---|---|
-| `research-ci.yml` | ROGS/research/training/eval contract |
-| `unified-core-ci.yml` | core patch/model/training contract |
-| `unified-runtime-ci.yml` | runtime/install/smoke contract |
-| `unified-gameplay-contract-ci.yml` | native gameplay/evaluator contract |
-| `libriichi-python-package-ci.yml` | PyO3 package/build/import contract |
-| `akagi-api-contract-ci.yml` | vanilla AkagiOT HTTP API contract |
-| `akagi-3p-compat-ci.yml` | pinned legacy 3P 775/Bot/event adapter contract |
-| `windows-script-ci.yml` | Windows orchestration/script contract |
+| `research-ci.yml` | ROGS / rating / evaluation research contracts |
+| `unified-core-ci.yml` | patch/model/training contracts |
+| `unified-runtime-ci.yml` | runtime/bootstrap/smoke contracts |
+| `unified-gameplay-contract-ci.yml` | native gameplay/evaluator contracts |
+| `libriichi-python-package-ci.yml` | PyO3 build/import + native E2E |
+| `akagi-api-contract-ci.yml` | untouched AkagiOT HTTP contract |
+| `akagi-3p-compat-ci.yml` | pinned 775 encoder/Bot/event-adapter contract |
+| `windows-script-ci.yml` | Windows orchestration contracts |
 
-README 수정 직전 project HEAD에서는 8개 workflow가 모두 성공했습니다. README commit 이후에는 GitHub가 해당 commit 기준으로 다시 실행하는 결과를 badge에서 확인하십시오.
+Badge는 항상 branch 최신 commit 결과를 표시합니다. README에 정적 `HEAD` SHA나 오래된 `7/7`, `8/8` 문구를 박아 두지 않습니다.
 
-## CI가 실제로 확인하는 범위
+## CI covers
 
-- canonical patch chain
+- pinned source/patch contracts
 - Rust compile/tests
-- PyO3 build/import
-- 3P/4P model/engine contract
-- real gameplay logs
-- GameplayLoader roundtrip
+- PyO3 package build/import
+- 3P/4P model/engine ABI
+- actual gameplay logs
+- `GameplayLoader` roundtrip
 - GRP/reward path
-- mini-training
+- real-log mini-training
 - strict checkpoint save/reload
-- 3P/4P evaluator
-- duplicate logs → paired JSONL
-- native `libriichi.Stat`
+- 3P/4P evaluators
+- duplicate → paired JSONL
+- native Stat reports
 - bidirectional model comparison
-- rating/promotion gate contract
-- vanilla AkagiOT 3P/4P HTTP client compatibility
-- inference batching/backpressure/deadline/LKG/reload
-- serving soak/profile/rollback/recovery logic
-- pinned Akagi 3P 775 encoder/Bot contract
-- Akagi 3P historical 4-slot MJAI container normalization
-- hidden-information masking regression tests
+- rating/promotion contracts
+- untouched AkagiOT client 3P/4P HTTP compatibility
+- serving batching/backpressure/deadline/LKG/reload
+- mixed-device coordination
+- soak/profile/rollback/recovery logic
+- pinned legacy 3P 775/Bot contract
+- 4-slot sanma MJAI normalization
+- hidden-information masking regression
 
-## CI가 주장하지 않는 것
+## CI does not claim
 
-- 실제 RTX 5080 30분 performance 수치
-- 장시간 training 안정성 완료
-- ROGS가 Mortal보다 강하다는 실증 결과
-- MJX 3P/4P production parity 완료
+- real RTX 5080 30-minute p95/p99/VRAM/temperature numbers
+- long-training stability completion
+- empirical ROGS > Mortal strength
+- MJX-Sanma production parity completion
 - full LuckyJ/Suphx reproduction
 
 ---
 
-# 로드맵
+# Roadmap
 
-## ✅ 완료
+## ✅ Implemented
 
 - unified Mortal v4 3P/4P runtime
-- one `.venv` / one canonical Mortal / one managed libriichi
+- one managed Python/Rust stack
 - mode-isolated data/models/runs
 - Windows RTX setup/smoke
-- Control Center 핵심 lifecycle
-- Mortal/ROGS/ROGS+Global training hooks
+- Control Center core lifecycle
+- Mortal / ROGS / ROGS+Global hooks
 - mode-aware GRP
-- rating preset/utility foundation
-- native 3P/4P gameplay + evaluators
+- rating preset/utility/router foundation
+- native 3P/4P gameplay and evaluator paths
 - bidirectional duplicate comparison
-- native statistics/reporting
+- native strength/stat reporting
 - promotion gate foundation
 - AkagiOT API-only integration
-- inference hot reload/LKG/dynamic batching/telemetry
-- serving soak/profile/rollback/recovery framework
+- dynamic batching / LKG / hot reload / telemetry
+- serving benchmark/soak/profile/rollback/recovery framework
 - population checkpoint validation
-- population self-play generator
-- Akagi legacy 3P 775 population/eval bridge
-- 3P legacy 4-slot MJAI compatibility + hidden-info masking
+- resumable population self-play generation
+- Akagi legacy 775 3P teacher/opponent bridge
+- legacy 4-slot MJAI normalization + hidden-info masking
+- 4P MJX backend registration/reference integration
+- MJX-Sanma pinned staged patch/parity framework
 
-## 🚧 진행 중 / 다음 우선순위
+## 🚧 / 🧪 Current priorities
 
-1. **4P population self-play local generation 검증 확대**
-2. **3P native 1010 learner bootstrap** — legacy 775 teacher가 만든 self-play 로그로 첫 native learner 학습
-3. **3P/4P population 확장** — Champion + learner + historical snapshots
-4. **cross-play → duplicate evaluation → gated promotion 반복**
-5. **population self-play를 기존 Control Center JobManager에 연결**
-6. **실제 RTX 5080 30분 mixed serving soak** 및 production profile 실측
-7. **실제 Mortal vs ROGS vs ROGS+Global 장시간 ablation**
-8. **Mahjong Soul / 허가된 Tenhou small bootstrap 실데이터 검증**
-9. **statistically meaningful promotion sample 확대**
-10. **platform-specific rating-aware fine-tuning 실측**
+1. **4P population self-play local generation validation 확대**
+2. **3P native 1010 learner bootstrap** from legacy-teacher MJAI
+3. Champion + learner + historical snapshot population expansion
+4. repeated cross-play → duplicate comparison → gated promotion
+5. population self-play → existing Control Center JobManager wiring
+6. real RTX 5080 30-minute mixed serving soak
+7. long Mortal vs ROGS vs ROGS+Global experiments
+8. small permitted Mahjong Soul / Tenhou bootstrap validation
+9. statistically meaningful promotion sample scaling
+10. platform-specific rating-aware fine-tuning measurement
+11. MJX-Sanma legal-action/scoring/terminal parity completion
 
-## 🗺️ 계획 / 실측 후 판단
+## 🗺️ Planned / only if measurements justify complexity
 
-- Tenhou/Mahjong Soul + self-play configurable mixture
-- Universal → Specialized rating curriculum 자동화
-- model catalog 기반 platform specialization selection
-- stronger population sampling / historical snapshot pruning
-- controlled exploration policy 개선
+- configurable human-log + self-play dataset mixture
+- automatic Universal → Specialized rating curriculum orchestration
+- platform-specialized checkpoint catalog/model selection
+- stronger population sampling and snapshot pruning
+- controlled exploration scheduling
 - Suphx-style privileged Oracle teacher
 - sparse Search teacher distillation
 - amortized pMCPA
-- MJX parity gate 및 4P high-throughput backend production 여부 결정
-- MJX-Sanma는 upstream/parity 조건이 충족되기 전 production-disabled 유지
-- Universal per-game rating-context metadata는 Mortal ABI를 깨지 않는 방식이 실증적으로 필요할 때만 재검토
+- MJX-Sanma production enablement after zero-mismatch parity
+- per-game runtime rating context only if an ABI-safe design is actually justified
+- full LuckyJ-style neural CFR/search remains out of scope unless reproducible evidence/design warrants it
 
 ---
 
-# 프로젝트 구조
+# Repository layout
 
 ```text
 mortal-rogs/
-├─ app/                         # Control Center backend / jobs / inference controls
-├─ config/
-│  ├─ hybrid_rogs_v4*.toml     # ROGS research config
-│  ├─ rating_presets.toml       # platform rating presets
-│  ├─ rating_contexts.toml
-│  ├─ akagi_abi.toml
-│  ├─ evaluation_backends.toml
-│  ├─ rtx5080.sanma.toml
-│  └─ rtx5080.yonma.toml
-├─ docs/                        # 상세 설계/운영 문서
-├─ scripts/                     # bootstrap, patch, data, eval, serving, self-play
+├─ app/                         # Control Center backend, jobs, GPU, production controls
+├─ static/                      # Control Center HTML/JS/CSS, experiments/inference/soak UI
+├─ training/                    # game mode, ROGS, objective, rating utility/router
+├─ evaluation/                  # backends, gating, paired results, strength/stat reports
+├─ serving/                     # inference, coordination, resilience/lifecycle
+├─ config/                      # ROGS, rating, ABI, backend, RTX presets
+├─ mortal_unified/
+│  └─ manifest.toml             # unified core source/mode contract metadata
+├─ mjx_sanma/
+│  └─ manifest.toml             # pinned MJX-Sanma parity/production policy
+├─ scripts/                     # bootstrap, patches, data prep, eval, serving, self-play
 ├─ tests/                       # source/contract/regression tests
+├─ docs/                        # detailed design and operations docs
 ├─ .github/workflows/           # 8 CI workflows
 ├─ RUN_LOCAL.bat                # validate / experiment / full
-├─ RUN_MAJSOUL_FULL.bat         # Mahjong Soul data + experiments
-├─ RUN_TENHOU_FULL.bat          # Tenhou data + experiments
+├─ RUN_MAJSOUL_FULL.bat         # Mahjong Soul prep + experiment/full handoff
+├─ RUN_TENHOU_FULL.bat          # Tenhou prep + experiment/full handoff
 ├─ RUN_SELFPLAY_POPULATION.bat  # population prepare / generate
+├─ start.ps1                    # local Control Center convenience entry
 └─ README.md
 ```
 
 ---
 
-# 상세 문서
+# Documentation
 
-| 문서 | 내용 |
+| Document | Purpose |
 |---|---|
-| [`AKAGI_API_INTEGRATION.md`](docs/AKAGI_API_INTEGRATION.md) | Vanilla Akagi-NG API-only 연동 |
-| [`INFERENCE_SERVING.md`](docs/INFERENCE_SERVING.md) | batching, deadline, hot reload, telemetry |
-| [`INFERENCE_PRODUCTION_PROFILE.md`](docs/INFERENCE_PRODUCTION_PROFILE.md) | production profile transaction/rollback |
-| [`INFERENCE_PRODUCTION_RECOVERY.md`](docs/INFERENCE_PRODUCTION_RECOVERY.md) | reboot/recovery/drift handling |
-| [`RTX5080_SERVING_SOAK.md`](docs/RTX5080_SERVING_SOAK.md) | 30분 production serving gate |
-| [`HYBRID_PARADIGM.md`](docs/HYBRID_PARADIGM.md) | ROGS / ACH / Suphx-inspired 연구 설계 |
-| [`RATING_PRESETS_AND_DUAL_MODE.md`](docs/RATING_PRESETS_AND_DUAL_MODE.md) | 3P/4P rating-aware reward/presets |
-| [`MODEL_COMPARISON.md`](docs/MODEL_COMPARISON.md) | duplicate/bidirectional comparison |
-| [`POPULATION_SELFPLAY.md`](docs/POPULATION_SELFPLAY.md) | checkpoint population + self-play bootstrap |
+| [`AKAGI_API_INTEGRATION.md`](docs/AKAGI_API_INTEGRATION.md) | untouched Akagi-NG API-only integration |
+| [`INFERENCE_SERVING.md`](docs/INFERENCE_SERVING.md) | batching, deadline, reload, telemetry |
+| [`INFERENCE_PRODUCTION_PROFILE.md`](docs/INFERENCE_PRODUCTION_PROFILE.md) | transactional production profile / rollback |
+| [`INFERENCE_PRODUCTION_RECOVERY.md`](docs/INFERENCE_PRODUCTION_RECOVERY.md) | reboot recovery and drift reporting |
+| [`RTX5080_SERVING_SOAK.md`](docs/RTX5080_SERVING_SOAK.md) | 30-minute RTX production gate |
+| [`HYBRID_PARADIGM.md`](docs/HYBRID_PARADIGM.md) | ROGS / ACH / Suphx-inspired research design |
+| [`RATING_PRESETS_AND_DUAL_MODE.md`](docs/RATING_PRESETS_AND_DUAL_MODE.md) | rating-aware 3P/4P objectives |
+| [`MODEL_COMPARISON.md`](docs/MODEL_COMPARISON.md) | duplicate/bidirectional model comparison |
+| [`POPULATION_SELFPLAY.md`](docs/POPULATION_SELFPLAY.md) | population validation and self-play bootstrap |
 | [`MAJSOUL_TRAINING_PREP.md`](docs/MAJSOUL_TRAINING_PREP.md) | Mahjong Soul local preparation |
-| [`TENHOU_TRAINING_PREP.md`](docs/TENHOU_TRAINING_PREP.md) | authorized Tenhou preparation |
-| [`LOCAL_WORKSTATION_RUN.md`](docs/LOCAL_WORKSTATION_RUN.md) | RTX workstation one-command flow |
-| [`EVALUATION_BACKENDS.md`](docs/EVALUATION_BACKENDS.md) | evaluator backend 방향과 MJX 범위 |
+| [`TENHOU_TRAINING_PREP.md`](docs/TENHOU_TRAINING_PREP.md) | permission-aware Tenhou preparation |
+| [`LOCAL_WORKSTATION_RUN.md`](docs/LOCAL_WORKSTATION_RUN.md) | one-command RTX workstation flow |
+| [`EVALUATION_BACKENDS.md`](docs/EVALUATION_BACKENDS.md) | MJX/libriichi backend policy |
 
 ---
 
-# 연구 범위와 주의사항
+# Research / safety boundaries
 
-## Mortal / Akagi 호환성
+## Compatibility
 
-- 배포는 Mortal v4가 기준입니다.
-- 3P/4P checkpoint는 별도입니다.
-- 3P 775 legacy compatibility는 teacher/opponent bridge이며 native 1010 training ABI를 대체하지 않습니다.
-- Akagi-NG는 API client이며 Mortal-ROGS checkpoint 소유자는 Mortal-ROGS입니다.
+- Mortal v4 is the deployment baseline.
+- 3P/4P checkpoints are physically separate.
+- legacy 775 bridge does not replace native 1010 training ABI.
+- Akagi-NG is a client; Mortal-ROGS owns/loading/serves checkpoints.
 
-## 연구 주장 범위
+## Claims intentionally not made
 
-이 프로젝트는 다음을 **주장하지 않습니다.**
+- full LuckyJ training reproduction
+- multiplayer Nash guarantee from ACH
+- full Suphx Oracle/pMCPA implementation
+- empirical ROGS superiority before long experiments
+- short CI smoke as production benchmark
+- MJX-Sanma production parity before gate completion
 
-- LuckyJ 전체 학습법의 재현
-- multiplayer Mahjong에 대한 ACH Nash-convergence 보장
-- Suphx 전체 oracle/pMCPA 구현
-- ROGS가 Mortal보다 이미 더 강하다는 실증적 결론
-- short smoke를 production benchmark로 해석
-- MJX-Sanma production parity 완료
-
-현재 표현은 다음과 같이 사용합니다.
-
-- **LuckyJ/ACH-inspired** regret/self-play ideas
-- **Suphx-inspired** GRP/global reward ideas
-
-## 데이터와 권한
-
-- 외부 game log는 repository에 포함하지 않습니다.
-- Mahjong Soul/Tenhou 데이터는 접근/사용 권한이 있는 경우에만 사용하십시오.
-- credential/token은 Git에 저장하지 않습니다.
-- Tenhou path의 `authorized` 인자는 사용 권한을 대신 부여하는 것이 아니라 명시적 local acknowledgement일 뿐입니다.
-
-## 안정성
-
-연구 브랜치이므로 중요한 다음 파일은 별도 백업을 권장합니다.
+Terminology used intentionally:
 
 ```text
-runtime/<mode>/models/
-runtime/<mode>/data/
+LuckyJ/ACH-inspired
+Suphx-inspired
+```
+
+## Data / authorization
+
+- external game logs are not bundled or redistributed by this repository
+- use Mahjong Soul/Tenhou records only within permissions applicable to the intended use
+- `authorized` arguments are explicit local acknowledgement, not a license grant
+- credentials/tokens are not committed to Git
+
+## Backups
+
+Research branch users should separately back up valuable artifacts:
+
+```text
+Mortal_Unified/runtime/<mode>/models/
+Mortal_Unified/runtime/<mode>/data/
 Mortal_ROGS_Results/
 ```
 
-managed setup은 runtime artifact 보존을 목표로 하지만, 장기 실험의 원본 모델/데이터 백업 책임까지 대체하지는 않습니다.
+Managed setup aims to preserve runtime artifacts but does not replace independent experiment/data backup practice.
 
 ---
 
-# 문제 해결
+# Legacy migration
+
+Current recommended layout is `Mortal_Unified`. Older development layouts such as `Mortal_Sanma` and earlier `_runtime` structures are legacy paths.
+
+`scripts/migrate_legacy_runtime.ps1` remains as compatibility/migration tooling. It is **not** the preferred fresh-install path.
+
+Likewise direct Akagi PTH export is deprecated:
+
+```text
+scripts/export_akagi_mortal.py
+```
+
+The script intentionally exits with an actionable API-only message instead of silently copying a checkpoint into Akagi-NG.
+
+---
+
+# Troubleshooting
 
 ## `fatal: not a git repository`
 
@@ -1078,18 +1176,18 @@ cd C:\Users\<사용자명>\Downloads\mortal-rogs
 Test-Path .\.git
 ```
 
-`True`여야 합니다.
+Expected: `True`.
 
 ## `ModuleNotFoundError: libriichi`
 
-반드시 unified runtime Python을 확인합니다.
+Use the unified runtime Python:
 
 ```powershell
 C:\Users\<사용자명>\Downloads\Mortal_Unified\.venv\Scripts\python.exe `
   -c "import libriichi; print(libriichi.__file__)"
 ```
 
-PyO3 submodule은 프로젝트 코드에서 다음 형태를 사용합니다.
+Managed PyO3 submodules use parent-module imports:
 
 ```python
 from libriichi import consts
@@ -1097,7 +1195,11 @@ from libriichi import stat
 from libriichi import arena
 ```
 
-`from libriichi.arena import ...` 같은 dotted import는 managed extension에서 사용하지 않습니다.
+Do not rely on:
+
+```python
+from libriichi.arena import OneVsTwo
+```
 
 ## `TritonMissing`
 
@@ -1109,27 +1211,27 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 ## MSVC / `link.exe`
 
-Visual Studio 2022 Build Tools의 다음 workload가 필요합니다.
+Visual Studio 2022 Build Tools:
 
 ```text
 Desktop development with C++
 ```
 
-managed setup/rebuild helper가 가능한 범위에서 MSVC 환경을 자동으로 찾습니다.
+Managed setup/rebuild helper attempts to locate and initialize the MSVC environment automatically.
 
 ## CUDA OOM
 
-training batch를 단계적으로 낮추십시오.
+Reduce training batch progressively, for example:
 
 ```text
 512 → 384 → 256 → 128
 ```
 
-Serving은 batch size만 늘리는 것보다 queue/deadline/micro-batch/VRAM telemetry를 함께 확인해야 합니다.
+Serving tuning should consider queue/deadline/micro-batch/VRAM telemetry together rather than only increasing batch size.
 
-## Population self-play 실패
+## Population self-play failure
 
-우선 다음 파일을 확인합니다.
+Inspect:
 
 ```text
 runtime/<mode>/models/population/population.json
@@ -1137,7 +1239,7 @@ runtime/<mode>/runs/selfplay-data/state-<mode>.json
 runtime/<mode>/runs/selfplay-data/generation-*.json
 ```
 
-3P legacy checkpoint는 `obs=775/actions=44`인지, native 3P는 현재 unified ABI와 일치하는지 구분해야 합니다.
+For 3P, first distinguish **native 1010** from **legacy Akagi 775** ABI. Do not convert one feature layout into the other by padding weights.
 
 ---
 
