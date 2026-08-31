@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.configuration import ConfigError, build_training_ablation_config, merge_preset
+from scripts.prepare_tenhou_training import split_for
 
 
 def test_merge_preset_deep_merge():
@@ -79,3 +80,12 @@ def test_training_ablation_rejects_mismatched_mode_and_unknown_variant(tmp_path:
             seed=1,
             mode_root=tmp_path,
         )
+
+
+def test_tenhou_train_val_split_is_deterministic_and_stable():
+    samples = [f"2026-log-{i}.xml" for i in range(1000)]
+    first = [split_for(name, 0.05) for name in samples]
+    second = [split_for(name, 0.05) for name in samples]
+    assert first == second
+    assert {"train", "val"} <= set(first)
+    assert 20 <= first.count("val") <= 80
