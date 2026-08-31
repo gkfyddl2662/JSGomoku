@@ -117,7 +117,7 @@ import secrets
 import torch
 from model import Brain, DQN
 from engine import MortalEngine
-from libriichi.arena import OneVsTwo
+from libriichi import arena
 from config import config
 from akagi_legacy_3p import AkagiLegacy3PMjaiLogEngine
 
@@ -234,7 +234,7 @@ def main():
     for i, seed in enumerate(range(seed_start, seed_start + seeds_per_iter * iters, seeds_per_iter)):
         print('-' * 50)
         print('#', i)
-        env = OneVsTwo(disable_progress_bar=False, log_dir=log_dir)
+        env = arena.OneVsTwo(disable_progress_bar=False, log_dir=log_dir)
         rankings = env.py_vs_py(
             challenger=engine_chal,
             champion=engine_cham,
@@ -293,12 +293,15 @@ def apply(root: Path) -> None:
         "NATIVE_OBS_CHANNELS = 1010",
         "AKAGI_LEGACY_OBS_CHANNELS = 775",
         "AkagiLegacy3PMjaiLogEngine",
-        "OneVsTwo",
+        "from libriichi import arena",
+        "arena.OneVsTwo",
         "game_mode=MODE",
         "action_space=ACTION_SPACE",
     ):
         if token not in post:
             raise RuntimeError(f"Stage 5C postcondition missing: {token}")
+    if "from libriichi.arena import" in post:
+        raise RuntimeError("Stage 5C must access PyO3 arena through the parent libriichi module")
     for token in (LEGACY_MARKER, "engine_type = 'mjai-log'", "libriichi3p", "LEGACY_OBS_CHANNELS = 775"):
         if token not in bridge_post:
             raise RuntimeError(f"Stage 5C legacy bridge postcondition missing: {token}")
