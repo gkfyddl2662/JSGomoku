@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import torch
+from torch import Tensor, nn
+from torch.nn import functional as F
+
+
+@dataclass(frozen=True)
+class MortalV4Outputs:
+    """Parameter-free view of a Mortal v4-style dueling DQN output.
+
+    The current compatibility backend stores a single Linear(1024, 1 +
+    ACTION_SPACE) layer. We expose value and centred advantage terms without
+    adding parameters. AkagiOT itself does not require this checkpoint layout;
+    preserving it is a Mortal compatibility choice for the current backend.
+    """
+
+    value: Tensor
+    advantage: Tensor
+    q: Tensor
+
+
+def mortal_v4_outputs(dqn: nn.Module, phi: Tensor, mask: Tensor) -> MortalV4Outputs:
+    if not hasattr(dqn, "net"):
+        raise TypeError("ROGS requires a Mortal-compatible DQN exposing dqn.net")
+    if mask.dtype != torch.bool:
+        mask = mask.to(torch.bool)
+
+    action_space = mask.shape[-1]
+    raw = dqn.net(phi)
+    if raw.shape[-1] != action_space + 1:
+        raise ValueError(f"Expected 1+{action_space} outputs, got {raw.shape[-1]}")
+
+    value, action_raw = raw.split((1, action_space), dim=-1)
+    valid_count = mask.sum(-1, keepdim=True).clamp_min(1)
+    masked_sum = action_raw.masked_fill(~mask, 0.0).sum(-1, keepdim=True)
+    centred_advantage = action_raw - masked_sum / valid_count
+    q = (value + centred_advantage).masked_fill(~mask, -torch.inf)
+    return MortalV4Outputs(value=value, advantage=centred_advantage, q=q)
+
+
+def hedge_policy(advantage: Tensor, mask: Tensor, eta: float = 1.0) -> Tensor:
+    """Convert neural cumulative-advantage/regret estimates into a Hedge policy.
+
+    This helper is available for controlled self-play experiments. The current
+    canonical population/self-play behavior path does not call it, so its
+    presence must not be described as active Hedge sampling.
+    """
+    if eta <= 0:
+        raise ValueError("eta must be positive")
+    if mask.dtype != torch.bool:
+        mask = mask.to(torch.bool)
+    logits = (advantage * eta).masked_fill(~mask, -torch.inf)
+    return torch.softmax(logits, dim=-1)
+
+
+def sampled_advantage_target(
+    returns: Tensor,
+    value: Tensor,
+    *,
+    clip: float | None = 12.0,
+    detach_baseline: bool = True,
+) -> Tensor:
+    """Low-variance sampled advantage used as a regret-like target.
+
+    This follows the ACH/LuckyJ direction conceptually: policy preference is
+    trained from sampled advantage rather than directly maximizing raw return.
+    For three/four-player Mahjong this is an optimization heuristic; the
+    two-player zero-sum Nash-convergence guarantee of ACH does not carry over.
+    """
+    baseline = value.detach() if detach_baseline else value
+    target = returns - baseline.squeeze(-1)
+    if clip is not None:
+        target = target.clamp(-clip, clip)
+    return target
+
+
+def regret_regression_loss(
+    advantage: Tensor,
+    actions: Tensor,
+    regret_target: Tensor,
+    *,
+    sample_weight: Tensor | None = None,
+    huber_delta: float = 1.0,
+) -> Tensor:
+    chosen = advantage.gather(-1, actions.long().unsqueeze(-1)).squeeze(-1)
+    loss = F.huber_loss(chosen, regret_target, reduction="none", delta=huber_delta)
+    if sample_weight is not None:
+        weight = sample_weight.to(loss.dtype)
+        return (loss * weight).sum() / weight.sum().clamp_min(1e-8)
+    return loss.mean()
+
+
+def value_loss(value: Tensor, returns: Tensor, *, huber_delta: float = 1.0) -> Tensor:
+    return F.huber_loss(value.squeeze(-1), returns, delta=huber_delta)
+
+
+def masked_teacher_kl(
+    student_scores: Tensor,
+    teacher_scores: Tensor,
+    mask: Tensor,
+    *,
+    temperature: float = 1.0,
+) -> Tensor:
+    """Distil optional oracle/search teacher preferences.
+
+    The objective interface supports teacher tensors, but the current canonical
+    trainer does not generate or pass oracle_q/search_q. This function is active
+    only when a caller explicitly supplies such tensors.
+    """
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
+    if mask.dtype != torch.bool:
+        mask = mask.to(torch.bool)
+    if not mask.any(dim=-1).all():
+        raise ValueError("Every sample must have at least one legal action")
+
+    s = (student_scores / temperature).masked_fill(~mask, -torch.inf)
+    t = (teacher_scores / temperature).masked_fill(~mask, -torch.inf)
+    teacher_prob = torch.softmax(t, dim=-1)
+    teacher_log_prob = torch.log_softmax(t, dim=-1)
+    student_log_prob = torch.log_softmax(s, dim=-1)
+    pointwise = teacher_prob * (teacher_log_prob - student_log_prob)
+    pointwise = torch.where(mask, pointwise, torch.zeros_like(pointwise))
+    return pointwise.sum(-1).mean() * (temperature**2)
+
+
+def entropy_bonus(policy: Tensor, mask: Tensor) -> Tensor:
+    if mask.dtype != torch.bool:
+        mask = mask.to(torch.bool)
+    safe_p = policy.clamp_min(1e-12)
+    pointwise = -(safe_p * safe_p.log())
+    pointwise = torch.where(mask, pointwise, torch.zeros_like(pointwise))
+    return pointwise.sum(-1).mean()
+
+
+def potential_shaped_reward(
+    base_reward: Tensor,
+    potential_prev: Tensor,
+    potential_next: Tensor,
+    *,
+    gamma: float = 1.0,
+) -> Tensor:
+    """Experimental configurable potential helper; not the canonical GRP reward.
+
+    Mortal's active RewardCalculator already uses a potential difference:
+    expected rank utility at the next kyoku minus the previous one. This helper
+    represents a separate gamma-configurable experiment and is not currently
+    called by the canonical trainer/data path.
+    """
+    return base_reward + gamma * potential_next - potential_prev

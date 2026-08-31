@@ -3,16 +3,22 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Mortal Sanma Control Center</title>
+  <title>Mortal ROGS Control Center</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <div class="eyebrow">MORTAL · 3 PLAYER RIICHI</div>
-      <h1>Sanma Control Center</h1>
+      <div class="eyebrow">MORTAL · 3P / 4P · ROGS</div>
+      <h1>Mortal ROGS Control Center</h1>
     </div>
     <div class="top-actions">
+      <label>Game Mode
+        <select id="gameMode" onchange="changeGameMode()">
+          <option value="3p" selected>3P · Sanma</option>
+          <option value="4p">4P · Yonma</option>
+        </select>
+      </label>
       <span id="setupBadge" class="badge">checking</span>
       <button class="ghost" onclick="refreshAll()">새로고침</button>
     </div>
@@ -32,21 +38,24 @@
       </article>
 
       <article class="panel">
-        <div class="panel-title"><span>Mortal</span><strong>Environment</strong></div>
+        <div class="panel-title"><span>Mortal</span><strong id="runtimeTitle">3P Environment</strong></div>
+        <div id="runtimePath" class="subtle"></div>
         <div id="setupChecks" class="check-grid"></div>
         <div class="button-row">
-          <button onclick="startJob('patch')">RTX 5080 패치 적용</button>
+          <button onclick="bootstrapRuntime()">통합 Runtime 설치/구성</button>
+          <button onclick="startJob('patch')">RTX 5080 + ROGS 패치</button>
           <button class="secondary" onclick="applyPreset()">5080 프리셋 적용</button>
         </div>
+        <div class="subtle top-gap">3P와 4P는 하나의 <code>Mortal_Unified</code>, 하나의 Python venv, 하나의 <code>libriichi</code>를 공유합니다. 데이터와 모델만 mode별로 분리됩니다.</div>
       </article>
     </section>
 
     <section class="panel command-panel">
-      <div class="panel-title"><span>PIPELINE</span><strong>학습 제어</strong></div>
+      <div class="panel-title"><span>PIPELINE</span><strong id="pipelineTitle">3P 학습 제어</strong></div>
       <div class="pipeline">
         <button onclick="startJob('train_grp')"><small>01</small>GRP 학습</button>
         <button onclick="setOnline(false).then(()=>startJob('train'))"><small>02</small>Offline Mortal</button>
-        <button onclick="startJob('evaluate')"><small>03</small>1 vs 2 평가</button>
+        <button onclick="startJob('evaluate')"><small>03</small>기본 평가</button>
         <button onclick="startSelfPlay()"><small>04</small>Self-play 시작</button>
         <button class="secondary" onclick="startJob('tensorboard')"><small>TB</small>TensorBoard</button>
       </div>
@@ -54,34 +63,172 @@
         <span>Training mode</span>
         <button class="mini" onclick="setOnline(false)">Offline</button>
         <button class="mini" onclick="setOnline(true)">Online self-play</button>
-        <a href="http://127.0.0.1:6006" target="_blank" rel="noreferrer">TensorBoard 열기 ↗</a>
+        <a id="tensorboardLink" href="http://127.0.0.1:6006" target="_blank" rel="noreferrer">TensorBoard 열기 ↗</a>
       </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span>EXPERIMENTS</span><strong>Mortal vs ROGS · 양방향 모델 비교</strong></div>
+      <div class="subtle">동일 base config·동일 seed로 학습 variant를 분리하고, Mortal docs 방식처럼 동일 duplicate seed를 좌석 회전하여 Candidate→Baseline / Baseline→Candidate 양방향 평가를 실행합니다.</div>
+
+      <div class="form-grid top-gap">
+        <label>Training variant
+          <select id="ablationVariant">
+            <option value="mortal">Mortal · ROGS OFF / Global OFF</option>
+            <option value="rogs" selected>ROGS · Global OFF</option>
+            <option value="rogs-global">ROGS + Global reward</option>
+          </select>
+        </label>
+        <label>Training seed<input id="ablationSeed" type="number" value="36887" min="0" /></label>
+      </div>
+      <div class="button-row">
+        <button onclick="startTrainingAblation('fresh')">새 A/B 학습</button>
+        <button class="secondary" onclick="startTrainingAblation('resume')">이어서 학습</button>
+        <button class="secondary" onclick="startTrainingAblation('prepare')">설정만 생성</button>
+      </div>
+
+      <div class="form-grid top-gap">
+        <label>Candidate checkpoint (models 상대경로)<input id="comparisonCandidate" placeholder="ablation\\seed-36887\\rogs\\current.pth" /></label>
+        <label>Baseline checkpoint (models 상대경로)<input id="comparisonBaseline" value="best_mortal.pth" /></label>
+        <label>Candidate 표시 이름<input id="comparisonCandidateName" placeholder="ROGS" /></label>
+        <label>Baseline 표시 이름<input id="comparisonBaselineName" placeholder="Mortal" /></label>
+        <label>Seed start<input id="comparisonSeedStart" type="number" value="10000" min="0" /></label>
+        <label>Seed count<input id="comparisonSeedCount" type="number" value="100" min="1" /></label>
+        <label>Seed key<input id="comparisonSeedKey" value="0xD5DFAA4CEF265CD7" /></label>
+        <label>Comparison name<input id="comparisonName" placeholder="rogs-vs-mortal" /></label>
+        <label>Device<input id="comparisonDevice" value="cuda:0" /></label>
+        <label>torch.compile
+          <select id="comparisonCompile">
+            <option value="inherit" selected>Config 상속</option>
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+        <label>AMP
+          <select id="comparisonAmp">
+            <option value="inherit" selected>Config 상속</option>
+            <option value="on">ON</option>
+            <option value="off">OFF</option>
+          </select>
+        </label>
+        <label>Rating profile<input id="comparisonProfile" placeholder="mahjongsoul" /></label>
+        <label>Round kind<input id="comparisonRoundKind" value="south" /></label>
+        <label>Room<input id="comparisonRoom" placeholder="jade / houou / *" /></label>
+        <label>Rank<input id="comparisonRank" placeholder="saint3 / 6dan / *" /></label>
+        <label><input id="comparisonFresh" type="checkbox" /> 같은 이름 결과가 있으면 삭제 후 재실행</label>
+      </div>
+      <div class="button-row top-gap">
+        <button onclick="startModelComparison()">양방향 Duplicate 비교 시작</button>
+        <button class="secondary" onclick="fillComparisonFromPromotion()">현재 승격 후보 → Candidate</button>
+      </div>
+      <div class="subtle top-gap">출력: <code>paired.jsonl</code>, Mortal-style strength JSON/Markdown, native <code>libriichi.Stat</code> JSON/TXT, <code>comparison.json</code>, 그리고 profile 지정 시 bootstrap rating gate. 기본 Seed count 100은 빠른 preview용이며 Mortal docs의 대규모 강도 검증과 동일한 통계 신뢰도를 의미하지 않습니다.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span>SERVING</span><strong>Akagi-NG · Mortal API</strong></div>
+      <div class="form-grid">
+        <label>Host<input id="inferenceHost" value="127.0.0.1" /></label>
+        <label>Port<input id="inferencePort" type="number" value="8190" min="1" max="65535" /></label>
+        <label>API Key<input id="inferenceApiKey" value="mortal-rogs-local" /></label>
+        <label>Device
+          <select id="inferenceDevice">
+            <option value="auto" selected>Auto (CUDA 우선)</option>
+            <option value="cuda:0">CUDA 0</option>
+            <option value="cpu">CPU</option>
+          </select>
+        </label>
+      </div>
+      <div class="button-row top-gap">
+        <button onclick="startInferenceApi()">Akagi API 시작/재시작</button>
+        <button class="danger" onclick="stopInferenceApi()">Akagi API 중지</button>
+        <button class="secondary" onclick="reloadInferenceModel(currentMode())">선택 Mode 모델 Reload</button>
+        <button class="secondary" onclick="reloadInferenceModel()">3P + 4P Reload</button>
+        <button class="secondary" onclick="loadInference()">상태 새로고침</button>
+      </div>
+      <div id="inferenceStatus" class="subtle top-gap">Inference API 확인 중…</div>
+      <div class="subtle top-gap">Akagi-NG에는 Mortal 모델 파일을 넣지 않습니다. Akagi-NG의 Online/AkagiOT 서버 URL을 이 API 주소로 설정하면 3P는 <code>/react_batch_3p</code>, 4P는 <code>/react_batch</code>로 통신합니다. 서버는 각 mode의 <code>best_mortal.pth</code>를 읽고 승격 시 자동 재로딩하며, 필요하면 위 버튼으로 안전한 strict hot-reload를 즉시 요청할 수 있습니다.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span>EVALUATION</span><strong>MJX · 3P / 4P Backends</strong></div>
+      <div id="evaluationBackends" class="metrics compact"></div>
+      <div class="form-grid top-gap">
+        <label>WSL 배포판 (선택)<input id="mjxDistro" placeholder="Ubuntu" /></label>
+        <label>MJX 4P Linux 경로<input id="mjxLinuxRoot" value="~/mortal-rogs-mjx" /></label>
+      </div>
+      <div class="button-row">
+        <button onclick="setupMjx()">MJX 4P Runtime 설치</button>
+        <button class="secondary" onclick="probeMjx()">MJX Runtime 검사</button>
+        <button class="secondary" onclick="loadEvaluation()">Backend 새로고침</button>
+      </div>
+
+      <div class="form-grid top-gap">
+        <label>MJX-Sanma 소스 경로<input id="mjxSanmaRoot" value="C:\\Mortal_ROGS\\mjx-sanma" /></label>
+        <label>패치 단계
+          <select id="mjxSanmaThrough">
+            <option value="1">Stage 1 · Rule + 108 tiles</option>
+            <option value="2">Stage 2 · Wall + Deal</option>
+            <option value="3" selected>Stage 3 · Nuki protocol</option>
+            <option value="4">Stage 4 · State/Game Flow</option>
+          </select>
+        </label>
+      </div>
+      <div class="button-row">
+        <button onclick="prepareMjxSanma()">MJX-Sanma 소스 준비</button>
+        <button onclick="patchMjxSanma()">선택 단계까지 패치</button>
+        <button class="secondary" onclick="auditMjxSanma()">Sanma Audit</button>
+      </div>
+      <div id="evaluationNote" class="subtle">3P/4P production 정확성 기준은 unified Mortal/libriichi입니다. MJX-Sanma는 parity gate 통과 전까지 experimental로 차단됩니다.</div>
     </section>
 
     <section class="two-col">
       <article class="panel">
-        <div class="panel-title"><span>DATA</span><strong>데이터 파이프라인</strong></div>
+        <div class="panel-title"><span>DATA</span><strong id="dataTitle">3P 데이터 파이프라인</strong></div>
         <div id="dataStats" class="metrics compact"></div>
-        <div class="form-grid">
-          <label>Tenhou GZ 입력 폴더<input id="tenhouSource" placeholder="D:\\tenhou_gz" /></label>
-          <label>변환 XML/JSON 출력 폴더<input id="tenhouOutput" placeholder="D:\\tenhou_json" /></label>
+        <div id="sanmaDataTools">
+          <div class="form-grid">
+            <label>Tenhou GZ 입력 폴더<input id="tenhouSource" placeholder="D:\\tenhou_gz" /></label>
+            <label>변환 XML/JSON 출력 폴더<input id="tenhouOutput" placeholder="D:\\tenhou_json" /></label>
+          </div>
+          <button onclick="startTenhou()">Tenhou 데이터 추출</button>
+          <div class="form-grid top-gap">
+            <label>변환 입력 폴더<input id="convertSource" placeholder="D:\\tenhou_json" /></label>
+            <label>Mortal JSONL 출력 폴더<input id="convertOutput" placeholder="C:\\Users\\<사용자명>\\Downloads\\Mortal_Unified\\runtime\\3p\\data" /></label>
+          </div>
+          <button onclick="startConvert()">MJAI JSONL 변환</button>
         </div>
-        <button onclick="startTenhou()">三鳳南喰赤 추출</button>
-        <div class="form-grid top-gap">
-          <label>변환 입력 폴더<input id="convertSource" placeholder="D:\\tenhou_json" /></label>
-          <label>Mortal JSONL 출력 폴더<input id="convertOutput" placeholder="C:\\Mortal_Sanma\\data" /></label>
-        </div>
-        <button onclick="startConvert()">MJAI JSONL 변환</button>
+        <div id="yonmaDataNote" class="subtle" hidden>4P Mortal은 native <code>*.json.gz</code> 로그를 <code>dataset.globs</code>에서 직접 읽습니다. Config의 dataset 경로를 4P 데이터셋에 지정하세요.</div>
       </article>
 
       <article class="panel">
-        <div class="panel-title"><span>CHECKPOINTS</span><strong>모델 관리</strong></div>
+        <div class="panel-title"><span>CHECKPOINTS</span><strong id="checkpointTitle">3P 모델 관리</strong></div>
         <div id="checkpoints" class="list"></div>
+        <div class="subtle top-gap">체크포인트는 직접 Best로 복사되지 않습니다. 후보를 선택한 뒤 아래 Promotion Gate를 통과해야 합니다.</div>
       </article>
     </section>
 
     <section class="panel">
-      <div class="panel-title"><span>CONFIG</span><strong>config.sanma.toml</strong></div>
+      <div class="panel-title"><span>PROMOTION</span><strong>Rating + Mortal API ABI Gate</strong></div>
+      <div class="form-grid">
+        <label>Candidate (선택 Runtime models 기준 상대경로)<input id="promotionCandidate" placeholder="candidate.pth" /></label>
+        <label>Mode
+          <select id="promotionMode" onchange="syncPromotionDestination()">
+            <option value="3p">3P · Sanma</option>
+            <option value="4p">4P · Yonma</option>
+          </select>
+        </label>
+        <label>Destination (models 기준 상대경로)<input id="promotionDestination" value="best_mortal.pth" /></label>
+        <label>Rating profile<input id="promotionProfile" value="mahjongsoul" /></label>
+        <label>Paired 평가 JSONL<input id="promotionResults" placeholder="C:\\Mortal_Unified\\runtime\\3p\\runs\\eval\\paired.jsonl" /></label>
+      </div>
+      <div class="button-row top-gap">
+        <button onclick="runGatedPromotion()">통계 + API ABI 검사 후 승격</button>
+      </div>
+      <div class="subtle">승격 순서: paired Rating EV/평균순위/라스율 bootstrap → Mortal v4 mode/action/observation strict load → API inference probe → 원자적 <code>best_mortal.pth</code> 교체. Akagi-NG는 모델 파일을 직접 읽지 않습니다.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><span>CONFIG</span><strong id="configTitle">3P Mortal config</strong></div>
       <div class="config-toolbar">
         <button class="secondary" onclick="loadConfig()">다시 읽기</button>
         <button onclick="saveConfig()">저장</button>
@@ -105,5 +252,8 @@
 
   <div id="toast"></div>
   <script src="/static/app.js"></script>
+  <script src="/static/experiments.js"></script>
+  <script src="/static/inference.js"></script>
+  <script src="/static/inference_soak.js"></script>
 </body>
 </html>

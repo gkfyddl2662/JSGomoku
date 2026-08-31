@@ -1,8 +1,8 @@
-# RTX 5080 / Blackwell / 16 GB VRAM preset for Mortal Sanma v5.
-# This file is merged over the upstream config.sanma.toml.
+# RTX 5080 / Blackwell / 16 GB VRAM preset for unified Mortal Sanma v4.
+# This file is merged over the upstream config and preserves the Akagi-NG v4 ABI.
 
 [control]
-version = 5
+version = 4
 online = false
 device = 'cuda'
 enable_cudnn_benchmark = true
@@ -13,6 +13,10 @@ opt_step_every = 1
 save_every = 400
 test_every = 20000
 submit_every = 400
+
+[env]
+# Keep dense GRP placement shaping on the same 3P scale used by online/eval.
+pts = [6, 0, -6]
 
 [dataset]
 file_batch_size = 48
@@ -61,6 +65,10 @@ lr = 1e-4
 enable_compile = true
 history_window = 50
 rank_pts = [6, 0, -6]
+
+[online.remote]
+host = '127.0.0.1'
+port = 5001
 
 [online.server]
 capacity = 2000

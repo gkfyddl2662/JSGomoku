@@ -1,0 +1,207 @@
+name: Windows Script CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse unified Windows scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in @(
+            'scripts/windows_msvc.ps1',
+            'scripts/bootstrap_unified_runtime.ps1',
+            'scripts/smoke_unified_windows.ps1',
+            'scripts/setup_and_smoke_unified_windows.ps1',
+            'scripts/run_local_workstation.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "PowerShell parse errors in $path"
+              $errors | ForEach-Object { Write-Host $_.Message }
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Verify MSVC bootstrap contract
+        shell: pwsh
+        run: |
+          foreach ($pattern in @(
+            'Ensure-MortalRogsMsvcBuildEnvironment',
+            'Test-MortalRogsRustMsvcLink',
+            'MSVC_LINK_PROBE_OK',
+            'Microsoft\.VisualStudio\.2022\.BuildTools',
+            'Microsoft\.VisualStudio\.Workload\.VCTools',
+            'Get-Variable -Name InstallRustIfMissing -Scope 1'
+          )) {
+            if (-not (Select-String -Path scripts/windows_msvc.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing windows_msvc contract: $pattern"
+            }
+          }
+          foreach ($pattern in @(
+            'InstallBuildToolsIfMissing',
+            'windows_msvc\.ps1',
+            'Ensure-MortalRogsMsvcBuildEnvironment',
+            'MORTAL_UNIFIED_BOOTSTRAP_OK'
+          )) {
+            if (-not (Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing bootstrap contract: $pattern"
+            }
+          }
+          foreach ($pattern in @(
+            'smoke_unified_runtime\.py',
+            'smoke_unified_gameplay\.py',
+            'smoke_unified_training\.py',
+            'smoke_unified_evaluator\.py',
+            'SkipRealDataTraining',
+            'SkipEvaluator',
+            'require-trained-checkpoints',
+            'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
+            'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK',
+            'triton-windows>=3\.6,<3\.7',
+            'TRITON_WINDOWS_OK',
+            'Invoke-NativeCapture',
+            'Get-TritonVersion',
+            'MORTAL_UNIFIED_MODEL_IMPORT_OK',
+            'MORTAL_CFG',
+            'config\.4p\.toml',
+            'patch_mortal_unified_stage1\.py',
+            'patch_mortal_unified_eval_stage8c\.py',
+            'MORTAL_UNIFIED_EVAL_STAGE8C_IMPORT_OK',
+            'Get-InstalledGameplayAbi',
+            'UNIFIED_GAMEPLAY_ABI',
+            'patch_libriichi_unified_dataset_stage8b\.py',
+            'MORTAL_UNIFIED_DATASET_STAGE8B_REBUILT',
+            'maturin develop --release'
+          )) {
+            if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing Windows smoke contract: $pattern"
+            }
+          }
+          if (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern 'import triton; print\(triton\.__version__\)" 2>\$null' -Quiet) {
+            throw 'Triton import probe must not terminate Windows PowerShell through NativeCommandError'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern "os\.environ\['MORTAL_CFG'\].*Config4P" -Quiet)) {
+            throw 'Unified Python import probe must bind MORTAL_CFG to a mode-specific config before importing config-dependent modules'
+          }
+          if (-not (Select-String -Path scripts/patch_mortal_unified_stage1.py -Pattern 'from libriichi import consts as _libriichi_consts' -Quiet)) {
+            throw 'Unified model Stage 1 must use extension-safe libriichi consts import'
+          }
+          if (-not (Select-String -Path scripts/patch_mortal_unified_stage1.py -Pattern 'legacy libriichi\.consts import remains' -Quiet)) {
+            throw 'Unified model Stage 1 must reject legacy libriichi.consts imports'
+          }
+          if (-not (Select-String -Path scripts/patch_libriichi_unified_dataset_stage8b.py -Pattern 'UNIFIED_GAMEPLAY_ABI' -Quiet)) {
+            throw 'Unified dataset Stage 8B must expose an installed gameplay ABI marker'
+          }
+          if (-not (Select-String -Path scripts/patch_mortal_unified_eval_stage8c.py -Pattern 'MORTAL_ROGS_UNIFIED_EVAL_STAGE8C' -Quiet)) {
+            throw 'Unified 4P evaluator Stage 8C marker missing'
+          }
+          if (-not (Select-String -Path scripts/patch_mortal_unified_eval_stage8c.py -Pattern 'action_space=ACTION_SPACE' -Quiet)) {
+            throw 'Unified 4P evaluator must pass the explicit action-space ABI to MortalEngine'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_training.py -Pattern 'MORTAL_UNIFIED_REAL_DATA_TRAINING_E2E_OK' -Quiet)) {
+            throw 'Missing real-data mini-training E2E success marker'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_training.py -Pattern 'GameplayLoader' -Quiet)) {
+            throw 'Real-data training smoke must consume native GameplayLoader data'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_evaluator.py -Pattern 'MORTAL_UNIFIED_TRAINED_CHECKPOINT_EVAL_E2E_OK' -Quiet)) {
+            throw 'Evaluator smoke must expose trained-checkpoint E2E success marker'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_evaluator.py -Pattern 'require-trained-checkpoints' -Quiet)) {
+            throw 'Evaluator smoke must support requiring real-data trained checkpoints'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) {
+            throw 'Missing Python unified runtime smoke success marker'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'TRITON_WINDOWS_OK' -Quiet)) {
+            throw 'Windows compile smoke must verify Triton before torch.compile'
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'descriptive_names = False' -Quiet)) {
+            throw 'Windows compile smoke must disable long descriptive Triton kernel names'
+          }
+          if (-not (Select-String -Path requirements.txt -Pattern 'triton-windows>=3\.6,<3\.7; sys_platform == "win32"' -Quiet)) {
+            throw 'PyTorch 2.11 Windows runtime must install Triton 3.6.x'
+          }
+          if (-not (Select-String -Path static/app.js -Pattern 'install_rust_if_missing:true' -Quiet)) {
+            throw 'Web UI bootstrap must request one-click native prerequisite installation'
+          }
+
+      - name: Verify one-command setup and smoke launcher
+        shell: pwsh
+        run: |
+          foreach ($pattern in @(
+            'bootstrap_unified_runtime\.ps1',
+            'smoke_unified_windows\.ps1',
+            'InstallRustIfMissing',
+            'InstallBuildToolsIfMissing',
+            'MORTAL_ROGS_UNIFIED_WINDOWS_READY',
+            '\[string\[\]\]\$GitArgs',
+            'Get-GitText -GitArgs @\('
+          )) {
+            if (-not (Select-String -Path scripts/setup_and_smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing one-command launcher contract: $pattern"
+            }
+          }
+          if (Select-String -Path scripts/setup_and_smoke_unified_windows.ps1 -Pattern '\[string\[\]\]\$Args' -Quiet) {
+            throw 'Do not use PowerShell automatic variable $args as a Git wrapper parameter'
+          }
+
+      - name: Verify local workstation orchestration contract
+        shell: pwsh
+        run: |
+          foreach ($pattern in @(
+            'setup_and_smoke_unified_windows\.ps1',
+            'run_training_ablation\.py',
+            'run_model_comparison\.py',
+            'serve_akagi_api\.py',
+            'soak_inference_api\.py',
+            'require-gpu-telemetry',
+            'MORTAL_ROGS_LOCAL_SUITE_OK',
+            'Mortal_ROGS_Results',
+            'ExistingPolicy',
+            'baseline\.pth',
+            'grp\.pth',
+            '0xD5DFAA4CEF265CD7'
+          )) {
+            if (-not (Select-String -Path scripts/run_local_workstation.ps1 -Pattern $pattern -Quiet)) {
+              throw "Missing local workstation suite contract: $pattern"
+            }
+          }
+          if (Select-String -Path scripts/run_local_workstation.ps1 -Pattern 'runtime\\local-suite' -Quiet) {
+            throw 'Local suite results must stay outside Mortal_Unified so fresh bootstrap remains safe'
+          }
+          foreach ($pattern in @(
+            'RUN_LOCAL\.bat validate',
+            'RUN_LOCAL\.bat experiment',
+            'RUN_LOCAL\.bat full',
+            'scripts\\run_local_workstation\.ps1'
+          )) {
+            if (-not (Select-String -Path RUN_LOCAL.bat -Pattern $pattern -Quiet)) {
+              throw "Missing RUN_LOCAL.bat contract: $pattern"
+            }
+          }
+          if (-not (Test-Path docs/LOCAL_WORKSTATION_RUN.md)) {
+            throw 'Missing local workstation run documentation'
+          }

@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+_runtime/
 .env
 logs/
 state/

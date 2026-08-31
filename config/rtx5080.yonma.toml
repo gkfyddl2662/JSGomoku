@@ -1,0 +1,83 @@
+# RTX 5080 / Blackwell / 16 GB VRAM preset for stock Mortal v4 (4-player).
+# This is an overlay: deployment/data/model paths stay in mortal/config.toml.
+
+[control]
+version = 4
+online = false
+device = 'cuda:0'
+enable_cudnn_benchmark = true
+enable_amp = true
+enable_compile = true
+batch_size = 512
+opt_step_every = 1
+save_every = 400
+test_every = 20000
+submit_every = 400
+
+[dataset]
+file_batch_size = 32
+num_workers = 8
+enable_augmentation = true
+augmented_first = false
+prefetch_factor = 4
+persistent_workers = true
+pin_memory = true
+
+[resnet]
+conv_channels = 192
+num_blocks = 40
+
+[optim]
+eps = 1e-8
+betas = [0.9, 0.999]
+weight_decay = 0.1
+max_grad_norm = 0
+
+[optim.scheduler]
+peak = 1e-4
+final = 1e-4
+warm_up_steps = 2000
+max_steps = 0
+
+[performance]
+amp_dtype = 'bfloat16'
+allow_tf32 = true
+matmul_precision = 'high'
+non_blocking_transfer = true
+
+[grp.control]
+device = 'cuda:0'
+enable_cudnn_benchmark = true
+batch_size = 2048
+save_every = 2000
+val_steps = 400
+dtype = 'float32'
+num_workers = 4
+prefetch_factor = 4
+persistent_workers = true
+pin_memory = true
+
+[grp.optim]
+lr = 1e-4
+
+[online]
+enable_compile = true
+history_window = 50
+
+[online.server]
+capacity = 2000
+force_sequential = false
+
+[1v3]
+games_per_iter = 96
+iters = 10
+
+[1v3.challenger]
+device = 'cuda:0'
+enable_amp = true
+enable_compile = true
+
+[1v3.champion]
+device = 'cuda:0'
+enable_amp = true
+enable_compile = true

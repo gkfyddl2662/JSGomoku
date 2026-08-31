@@ -1,0 +1,42 @@
+# Simulator rules are kept separate from rating objectives. Values here define
+# game mechanics only; platform rating/ladder utility remains in rating_presets.toml.
+
+[yonma.reference]
+players = 4
+starting_points = 25000
+return_points = 30000
+rounds_per_wind = 4
+remove_manzu_2_to_8 = false
+allow_chi = true
+allow_nuki = false
+nuki_is_dora = false
+dead_wall_tiles = 14
+tsumo_loss = true
+
+[sanma.reference]
+players = 3
+starting_points = 35000
+return_points = 40000
+rounds_per_wind = 3
+remove_manzu_2_to_8 = true
+allow_chi = false
+allow_nuki = true
+nuki_is_dora = true
+dead_wall_tiles = 14
+# Payment rules are deliberately explicit because different platforms can vary.
+tsumo_loss = false
+
+[sanma.validation]
+# Conservative mechanical profile used while comparing MJX-Sanma with
+# libriichi3p. Do not label this as a platform-specific ruleset until parity
+# fixtures for that platform have been verified.
+players = 3
+starting_points = 35000
+return_points = 40000
+rounds_per_wind = 3
+remove_manzu_2_to_8 = true
+allow_chi = false
+allow_nuki = true
+nuki_is_dora = true
+dead_wall_tiles = 14
+tsumo_loss = false

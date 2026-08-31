@@ -1,0 +1,148 @@
+name: Libriichi Python Package CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CANONICAL_MORTAL_SHA: 0cff2b52982be5b1163aa9a62fb01f03ce91e0d2
+  AKAGI_NG_SHA: 11c0ffc0d70bf8142585b92405b4412976c9e205
+
+jobs:
+  python-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone pinned canonical Mortal
+        run: |
+          git clone https://github.com/Equim-chan/Mortal.git /tmp/mortal-libriichi-package
+          git -C /tmp/mortal-libriichi-package checkout "$CANONICAL_MORTAL_SHA"
+
+      - name: Apply complete unified production patches
+        run: |
+          python scripts/patch_mortal_unified_all.py --root /tmp/mortal-libriichi-package
+          grep -q 'module-name = "libriichi"' /tmp/mortal-libriichi-package/libriichi/pyproject.toml
+          grep -q 'UNIFIED_GAMEPLAY_ABI' /tmp/mortal-libriichi-package/libriichi/src/dataset/mod.rs
+          grep -q 'fn libriichi(' /tmp/mortal-libriichi-package/libriichi/src/lib.rs
+          ! grep -R --include='*.py' -n 'from libriichi\.' /tmp/mortal-libriichi-package/mortal
+
+      - name: Build extension with maturin in bootstrap-style venv
+        run: |
+          python -m venv /tmp/mortal-libriichi-package/.venv
+          /tmp/mortal-libriichi-package/.venv/bin/python -m pip install --upgrade pip maturin numpy toml tqdm tensorboard
+          /tmp/mortal-libriichi-package/.venv/bin/python -m pip install -r requirements.txt
+          /tmp/mortal-libriichi-package/.venv/bin/python -m pip install 'requests~=2.33.1' 'loguru~=0.7.3' 'aiohttp~=3.13.5'
+          /tmp/mortal-libriichi-package/.venv/bin/python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+          cd /tmp/mortal-libriichi-package/libriichi
+          /tmp/mortal-libriichi-package/.venv/bin/python -m maturin develop --release
+
+      - name: Import unified Python extension
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python - <<'PY'
+          import libriichi
+          from libriichi import consts, arena, dataset, stat, mjai
+          assert consts.MAX_VERSION == 4
+          assert consts.action_space_for('3p') == 44
+          assert consts.action_space_for('4p') == 46
+          assert consts.obs_shape_for('3p', 4) == (1010, 34)
+          assert consts.obs_shape_for('4p', 4) == (1012, 34)
+          assert hasattr(arena, 'OneVsTwo') and hasattr(arena, 'OneVsThree')
+          assert hasattr(dataset, 'GameplayLoader')
+          assert dataset.UNIFIED_GAMEPLAY_ABI == 2
+          print('LIBRIICHI_PYTHON_IMPORT_OK', libriichi.__file__)
+          print('LIBRIICHI_GAMEPLAY_ABI_OK', dataset.UNIFIED_GAMEPLAY_ABI)
+          PY
+
+      - name: Run real CPU 3P and 4P gameplay log roundtrip
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_unified_gameplay.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
+
+      - name: Run real-data mini-training E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_unified_training.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu \
+            --batch-size 16
+
+      - name: Run trained checkpoint and evaluator E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_unified_evaluator.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu \
+            --require-trained-checkpoints
+
+      - name: Clone pinned vanilla Akagi-NG reference and verify HTTP contract
+        run: |
+          git clone https://github.com/Xe-Persistent/Akagi-NG.git /tmp/akagi-ng-api-contract
+          git -C /tmp/akagi-ng-api-contract checkout "$AKAGI_NG_SHA"
+          test "$(git -C /tmp/akagi-ng-api-contract rev-parse HEAD)" = "$AKAGI_NG_SHA"
+          test -z "$(git -C /tmp/akagi-ng-api-contract status --porcelain)"
+          CLIENT=/tmp/akagi-ng-api-contract/akagi_backend/akagi_ng/mjai_bot/engine/akagi_ot.py
+          grep -q 'endpoint = "/react_batch_3p" if is_3p else "/react_batch"' "$CLIENT"
+          grep -q '"Authorization": self.api_key' "$CLIENT"
+          grep -q '"Content-Encoding": "gzip"' "$CLIENT"
+          grep -q 'r_json\["q_out"\]' "$CLIENT"
+
+      - name: Run Mortal AkagiOT-compatible inference API E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_akagi_api.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
+
+      - name: Run mixed-mode device coordination and graceful drain E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_inference_coordination.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
+
+      - name: Run mixed-mode serving soak and production-preset E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_inference_soak.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
+
+      - name: Run production serving profile apply and rollback E2E
+        env:
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_inference_production_profile.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --device cpu
+
+      - name: Run untouched vanilla AkagiOT client against Mortal API
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          PYTHONPATH: /tmp/mortal-libriichi-package/mortal
+        run: |
+          /tmp/mortal-libriichi-package/.venv/bin/python scripts/smoke_vanilla_akagi_client.py \
+            --runtime-root /tmp/mortal-libriichi-package \
+            --akagi-root /tmp/akagi-ng-api-contract \
+            --device cpu
+          test -z "$(git -C /tmp/akagi-ng-api-contract status --porcelain)"

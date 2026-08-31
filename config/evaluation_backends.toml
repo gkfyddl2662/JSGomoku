@@ -1,0 +1,53 @@
+# Evaluation backend policy for Mortal-ROGS.
+#
+# The current model-comparison/promotion runners execute the native Mortal/
+# libriichi evaluators directly, so native libriichi is the canonical source of
+# truth for both modes. MJX remains an explicit high-throughput experiment until
+# fixed-seed rule/result/metric parity and automatic cross-checking are wired.
+
+[evaluation]
+primary_4p = "libriichi"
+primary_3p = "libriichi3p"
+experimental_high_throughput_4p = "mjx"
+experimental_high_throughput_3p = "mjx_sanma"
+legacy_crosscheck_4p = "mjai"
+seat_rotation = true
+paired_seeds = true
+rating_utility_gate = true
+
+[mjx]
+repository = "https://github.com/mjx-project/mjx"
+# Upstream README warns that master may be broken. Keep the pinned release for
+# parity/throughput experiments and change only after compatibility tests pass.
+ref = "v0.1.0"
+runtime = "wsl2"
+python = "3.11"
+batch_size = 64
+num_parallels = 16
+reference_translator = "https://github.com/mjx-project/mjx_mjai_translater"
+
+[gate.4p]
+backend = "libriichi"
+games = 12000
+crosscheck_games = 0
+# Candidate future acceleration backend; not active for promotion.
+experimental_backend = "mjx"
+experimental_crosscheck_games = 256
+
+[gate.3p]
+backend = "libriichi3p"
+games = 12000
+crosscheck_games = 0
+experimental_backend = "mjx_sanma"
+
+[statistics]
+report_average_rank = true
+report_place_rates = true
+report_raw_score = true
+report_rating_utility = true
+report_agari_rate = true
+report_houjuu_rate = true
+report_riichi_rate = true
+report_fuuro_rate = true
+bootstrap_samples = 5000
+bootstrap_unit = "seed-cluster"

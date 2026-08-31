@@ -1,0 +1,66 @@
+# Mortal-ROGS -> untouched Akagi-NG integration contract.
+#
+# Mortal-ROGS owns every model/checkpoint. Akagi-NG is an external client and
+# never loads Mortal-ROGS checkpoint files. The hard compatibility boundary is
+# AkagiOT's HTTP wire ABI (obs/masks -> actions/q_out/masks/is_greedy), not the
+# internal checkpoint format used by the server.
+
+[upstream]
+repository = "https://github.com/Xe-Persistent/Akagi-NG"
+branch = "master"
+commit_sha = "11c0ffc0d70bf8142585b92405b4412976c9e205"
+akagi_ot_client_path = "akagi_backend/akagi_ng/mjai_bot/engine/akagi_ot.py"
+akagi_ot_client_sha = "2493001440508be7301d366b9c9fae0a1a97d346"
+factory_path = "akagi_backend/akagi_ng/mjai_bot/engine/factory.py"
+factory_sha = "271674dd7dae1fd7240b5e65b2041f0613bbb578"
+constants_path = "akagi_backend/akagi_ng/schema/constants.py"
+constants_sha = "a045d1c11b98d99d709ef252e2f136ff5600aded"
+
+[protocol]
+name = "akagiot-v1"
+default_server = "http://127.0.0.1:8190"
+authorization_header = "Authorization"
+content_encoding = "gzip"
+request_fields = ["obs", "masks"]
+response_fields = ["actions", "q_out", "masks", "is_greedy"]
+connect_timeout_seconds = 2.0
+read_timeout_seconds = 4.0
+
+# Wire shapes are produced by untouched Akagi-NG's native encoder. 3P uses the
+# pinned libriichi3p v4 encoder (775 channels); this is intentionally different
+# from Mortal-ROGS's native 1010-channel sanma research/training representation.
+[mode.3p]
+endpoint = "/react_batch_3p"
+action_space = 44
+obs_channels = 775
+encoder = "pinned-akagi-libriichi3p-v4"
+
+[mode.4p]
+endpoint = "/react_batch"
+action_space = 46
+obs_channels = 1012
+encoder = "pinned-akagi-libriichi-v4"
+
+[deployment]
+modify_akagi_ng = false
+copy_checkpoint_to_akagi_ng = false
+akagi_loads_mortal_checkpoint = false
+mortal_rogs_owns_models = true
+hot_reload_best_checkpoint = true
+
+[model_backend]
+# AkagiOT does not require a Mortal checkpoint. Mortal v4 remains a supported
+# compatibility backend for existing strong checkpoints, population members,
+# baselines and historical comparison.
+require_mortal_v4_checkpoint = false
+allow_non_mortal_backend = true
+mortal_compat_version = 4
+
+[policy]
+# Backward-compatible Mortal backend policy. These are server/backend checks,
+# not requirements imposed by the AkagiOT wire protocol.
+model_version = 4
+strict_state_dict_on_server = true
+require_finite_smoke_inference = true
+reject_version_5 = true
+require_vanilla_akagi_client_e2e = true

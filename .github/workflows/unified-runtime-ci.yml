@@ -1,0 +1,229 @@
+name: Unified Runtime CI
+
+on:
+  push:
+    branches:
+      - research/mortal-rogs-v4-impl
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+  CANONICAL_MORTAL_SHA: 0cff2b52982be5b1163aa9a62fb01f03ce91e0d2
+
+jobs:
+  unified-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install validation stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest toml numpy
+          python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Clone pinned canonical Mortal
+        run: |
+          git clone https://github.com/Equim-chan/Mortal.git /tmp/mortal-unified-runtime
+          git -C /tmp/mortal-unified-runtime checkout "$CANONICAL_MORTAL_SHA"
+          test "$(git -C /tmp/mortal-unified-runtime rev-parse HEAD)" = "$CANONICAL_MORTAL_SHA"
+
+      - name: Apply exact production patch aggregator
+        run: python scripts/patch_mortal_unified_all.py --root /tmp/mortal-unified-runtime
+
+      - name: Compile and test unified libriichi
+        working-directory: /tmp/mortal-unified-runtime
+        run: |
+          cargo check -p libriichi --no-default-features
+          cargo test -p libriichi --no-default-features unified_ -- --nocapture
+
+      - name: Verify unified Rust contracts
+        run: |
+          grep -q "ACTION_SPACE_3P: usize = 44" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
+          grep -q "ACTION_SPACE_4P: usize = 46" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
+          grep -q "(3, 4) => (1010, 34)" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
+          grep -q "4 => Ok((170, 34))" /tmp/mortal-unified-runtime/libriichi/src/consts.rs
+          grep -q "MORTAL_ROGS_UNIFIED_ARENA_STAGE4C" /tmp/mortal-unified-runtime/libriichi/src/arena/board.rs
+          grep -q "MORTAL_ROGS_UNIFIED_GAME_STAGE5B" /tmp/mortal-unified-runtime/libriichi/src/arena/one_vs_two.rs
+          grep -q "MORTAL_ROGS_UNIFIED_GRP_STAGE6A" /tmp/mortal-unified-runtime/libriichi/src/dataset/grp.rs
+          grep -q "MORTAL_ROGS_UNIFIED_STAT_STAGE7A" /tmp/mortal-unified-runtime/libriichi/src/stat.rs
+          grep -q "m.add_class::<OneVsTwo>()" /tmp/mortal-unified-runtime/libriichi/src/arena/mod.rs
+          grep -q "m.add_class::<OneVsThree>()" /tmp/mortal-unified-runtime/libriichi/src/arena/mod.rs
+
+      - name: Compile unified Python core evaluator and self-play
+        run: |
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/model.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/train.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/train_grp.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/engine.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/one_vs_two.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/player.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/client.py
+          grep -q "MORTAL_ROGS_UNIFIED_MODEL_STAGE1" /tmp/mortal-unified-runtime/mortal/model.py
+          grep -q "MORTAL_ROGS_UNIFIED_TRAINER_STAGE2" /tmp/mortal-unified-runtime/mortal/train.py
+          grep -q "MORTAL_ROGS_UNIFIED_GRP_TRAINER_STAGE6B" /tmp/mortal-unified-runtime/mortal/train_grp.py
+          grep -q "MORTAL_ROGS_UNIFIED_EVAL_STAGE5C" /tmp/mortal-unified-runtime/mortal/one_vs_two.py
+          grep -q "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" /tmp/mortal-unified-runtime/mortal/player.py
+          grep -q "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" /tmp/mortal-unified-runtime/mortal/client.py
+          grep -q "compute_mortal_rogs_batch" /tmp/mortal-unified-runtime/mortal/train.py
+
+      - name: Synthetic shared-process 3P and 4P model contracts
+        run: |
+          mkdir -p /tmp/unified-stub/libriichi
+          touch /tmp/unified-stub/libriichi/__init__.py
+          cat > /tmp/unified-stub/libriichi/consts.py <<'PY'
+          ACTION_SPACE = 46
+          GRP_SIZE = 7
+          def obs_shape(version): return (1012, 34)
+          def oracle_obs_shape(version): return (217, 34)
+          PY
+          PYTHONPATH=/tmp/unified-stub:/tmp/mortal-unified-runtime/mortal python - <<'PY'
+          import math
+          import torch
+          from model import Brain, DQN, GRP
+          from engine import MortalEngine
+
+          for mode, players, actions, obs_channels, oracle_channels, grp_size in (
+              ('3p', 3, 44, 1010, 170, 6),
+              ('4p', 4, 46, 1012, 217, 7),
+          ):
+              brain = Brain(version=4, conv_channels=16, num_blocks=1, obs_channels=obs_channels).eval()
+              dqn = DQN(version=4, action_space=actions).eval()
+              obs = torch.randn(2, obs_channels, 34)
+              mask = torch.ones(2, actions, dtype=torch.bool)
+              with torch.inference_mode():
+                  phi = brain(obs)
+                  q = dqn(phi, mask)
+              assert phi.shape == (2, 1024)
+              assert q.shape == (2, actions)
+              assert torch.isfinite(q).all()
+
+              oracle = Brain(
+                  version=4,
+                  conv_channels=16,
+                  num_blocks=1,
+                  obs_channels=obs_channels,
+                  oracle_obs_channels=oracle_channels,
+                  is_oracle=True,
+              ).eval()
+              invisible = torch.randn(2, oracle_channels, 34)
+              with torch.inference_mode():
+                  assert oracle(obs, invisible).shape == (2, 1024)
+
+              engine = MortalEngine(
+                  brain=brain,
+                  dqn=dqn,
+                  is_oracle=False,
+                  version=4,
+                  game_mode=mode,
+                  action_space=actions,
+              )
+              acts, q_values, masks, greedy = engine.react_batch(
+                  [obs[0].numpy(), obs[1].numpy()],
+                  [mask[0].numpy(), mask[1].numpy()],
+                  None,
+              )
+              assert len(acts) == 2
+              assert all(len(row) == actions for row in q_values)
+              assert all(len(row) == actions for row in masks)
+              assert all(greedy)
+
+              grp = GRP(hidden_size=8, num_layers=1, num_players=players, input_size=grp_size)
+              seq = [torch.randn(3, grp_size, dtype=torch.float64), torch.randn(5, grp_size, dtype=torch.float64)]
+              logits = grp(seq)
+              assert logits.shape == (2, math.factorial(players))
+              matrix = grp.calc_matrix(logits)
+              assert matrix.shape == (2, players, players)
+              assert torch.allclose(matrix.sum(-1), torch.ones(2, players, dtype=matrix.dtype))
+          print('MORTAL_UNIFIED_RUNTIME_CPU_CONTRACTS_OK')
+          PY
+
+      - name: Test Control Center unified and legacy routing
+        run: python -m pytest -q tests/test_unified_runtime.py tests/test_dual_runtime.py
+
+      - name: Validate Windows bootstrap and smoke launchers
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in @(
+            'scripts/bootstrap_unified_runtime.ps1',
+            'scripts/smoke_unified_windows.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "PowerShell parse errors in $path"
+              $errors | ForEach-Object { Write-Host $_.Message }
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+          foreach ($pattern in @(
+            'MORTAL_UNIFIED_BOOTSTRAP_OK',
+            'config\.3p\.toml',
+            'config\.4p\.toml',
+            "control\['version'\] = 4",
+            '\.mortal-rogs-unified-runtime\.json',
+            'git -C \$InstallRoot reset --hard \$CanonicalSha',
+            'git -C \$InstallRoot clean -fd',
+            'ReuseManagedPatchedTree',
+            'Write-ManagedMarker'
+          )) {
+            if (-not (Select-String -Path scripts/bootstrap_unified_runtime.ps1 -Pattern $pattern -Quiet)) { exit 1 }
+          }
+
+          foreach ($pattern in @(
+            'MORTAL_UNIFIED_ROOT',
+            'CONTROL_CENTER_UNIFIED_RUNTIME_OK',
+            'WINDOWS_UNIFIED_RUNTIME_SMOKE_OK',
+            'one_vs_two\.py',
+            'one_vs_three\.py'
+          )) {
+            if (-not (Select-String -Path scripts/smoke_unified_windows.ps1 -Pattern $pattern -Quiet)) { exit 1 }
+          }
+          if (-not (Select-String -Path scripts/smoke_unified_runtime.py -Pattern 'MORTAL_UNIFIED_RUNTIME_SMOKE_OK' -Quiet)) { exit 1 }
+
+      - name: Verify production patch chain can be refreshed and reapplied
+        run: |
+          git -C /tmp/mortal-unified-runtime reset --hard "$CANONICAL_MORTAL_SHA"
+          git -C /tmp/mortal-unified-runtime clean -fd
+          test -z "$(git -C /tmp/mortal-unified-runtime status --porcelain)"
+          python scripts/patch_mortal_unified_all.py --root /tmp/mortal-unified-runtime
+          cargo check --manifest-path /tmp/mortal-unified-runtime/Cargo.toml -p libriichi --no-default-features
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/train.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/player.py
+          python -m py_compile /tmp/mortal-unified-runtime/mortal/client.py
+          grep -q "MORTAL_ROGS_UNIFIED_STAT_STAGE7A" /tmp/mortal-unified-runtime/libriichi/src/stat.rs
+          grep -q "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" /tmp/mortal-unified-runtime/mortal/player.py
+          grep -q "MORTAL_ROGS_UNIFIED_ONLINE_STAGE7B" /tmp/mortal-unified-runtime/mortal/client.py
+
+      - name: Compile unified runtime tools
+        run: |
+          python -m py_compile scripts/patch_mortal_unified_all.py
+          python -m py_compile scripts/patch_mortal_unified_eval_stage5c.py
+          python -m py_compile scripts/patch_libriichi_unified_stat_stage7a.py
+          python -m py_compile scripts/patch_mortal_unified_online_stage7b.py
+          python -m py_compile scripts/smoke_unified_runtime.py
+          grep -q "MORTAL_UNIFIED_RUNTIME_SMOKE_OK" scripts/smoke_unified_runtime.py
+          grep -q "OneVsTwo" scripts/smoke_unified_runtime.py
+          grep -q "OneVsThree" scripts/smoke_unified_runtime.py
+
+      - name: Reject whitespace-damaged patches
+        run: git -C /tmp/mortal-unified-runtime diff --check

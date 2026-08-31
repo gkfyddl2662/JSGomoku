@@ -1,0 +1,40 @@
+[project]
+name = "Mortal-ROGS Unified Core"
+deployment_version = 4
+runtime_root = "_runtime/core"
+python_env = ".venv"
+
+[canonical_upstream]
+repository = "https://github.com/Equim-chan/Mortal.git"
+commit = "0cff2b52982be5b1163aa9a62fb01f03ce91e0d2"
+role = "single shared Mortal codebase"
+
+[sanma_reference]
+repository = "https://github.com/Lawrencelea/Mortal_Sanma.git"
+commit = "74e52a9fb65a3cd8c4ffad958a72e96922aeb7be"
+role = "3P behavior and rule reference only"
+
+[modes.3p]
+players = 3
+action_space = 44
+obs_channels_v4 = 1010
+oracle_obs_channels_v4 = 170
+grp_size = 6
+allow_chi = false
+allow_nuki = true
+checkpoint_name = "mortal3p.pth"
+
+[modes.4p]
+players = 4
+action_space = 46
+obs_channels_v4 = 1012
+oracle_obs_channels_v4 = 217
+grp_size = 7
+allow_chi = true
+allow_nuki = false
+checkpoint_name = "mortal.pth"
+
+[migration]
+legacy_dual_runtime_supported = true
+single_core_default = false
+single_core_default_after = "unified_libriichi_parity"
