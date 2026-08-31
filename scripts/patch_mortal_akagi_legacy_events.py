@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import py_compile
+import re
 from pathlib import Path
 
 
@@ -87,6 +88,11 @@ def _normalize_legacy_event(event, player_id: int):
     return event
 '''
 
+SERIALIZE_RE = re.compile(
+    r"^(?P<indent>[ \t]*)event_json = json\.dumps\(event, ensure_ascii=False, separators=\(',', ':'\)\)\s*$",
+    re.MULTILINE,
+)
+
 
 def apply(root: Path) -> None:
     root = root.expanduser().resolve()
@@ -104,15 +110,20 @@ def apply(root: Path) -> None:
             raise RuntimeError("Akagi legacy bridge action-space anchor changed")
         text = text.replace(anchor, anchor + HELPERS, 1)
 
-    old = "                event_json = json.dumps(event, ensure_ascii=False, separators=(',', ':'))\n"
-    new = (
-        "                event = _normalize_legacy_event(event, self.player_ids[game_idx])\n"
-        "                event_json = json.dumps(event, ensure_ascii=False, separators=(',', ':'))\n"
-    )
-    if new not in text:
-        if text.count(old) != 1:
-            raise RuntimeError("Akagi legacy event serialization anchor changed")
-        text = text.replace(old, new, 1)
+    normalize_call = "event = _normalize_legacy_event(event, self.player_ids[game_idx])"
+    if normalize_call not in text:
+        matches = list(SERIALIZE_RE.finditer(text))
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Akagi legacy event serialization anchor changed: expected 1 line, found {len(matches)}"
+            )
+        match = matches[0]
+        indent = match.group("indent")
+        replacement = (
+            f"{indent}{normalize_call}\n"
+            f"{indent}event_json = json.dumps(event, ensure_ascii=False, separators=(',', ':'))"
+        )
+        text = text[: match.start()] + replacement + text[match.end() :]
 
     bridge.write_text(text, encoding="utf-8")
     py_compile.compile(str(bridge), doraise=True)
@@ -120,7 +131,7 @@ def apply(root: Path) -> None:
     post = bridge.read_text(encoding="utf-8")
     required = (
         PATCH_MARKER,
-        "_normalize_legacy_event(event, self.player_ids[game_idx])",
+        normalize_call,
         "masked = [list(_UNKNOWN_HAND) for _ in range(4)]",
         "event['pai'] = '?'",
         "for field in ('scores', 'deltas')",
