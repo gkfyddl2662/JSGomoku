@@ -7,6 +7,7 @@ def test_akagi_3p_compat_contract_is_pinned() -> None:
     root = Path(__file__).resolve().parents[1]
     helper = (root / "scripts" / "akagi_3p_compat.py").read_text(encoding="utf-8")
     evaluator = (root / "scripts" / "patch_mortal_unified_eval_stage5c.py").read_text(encoding="utf-8")
+    evaluator_4p = (root / "scripts" / "patch_mortal_unified_eval_stage8c.py").read_text(encoding="utf-8")
     rebuild = (root / "scripts" / "rebuild_unified_libriichi.ps1").read_text(encoding="utf-8")
     installer = (root / "scripts" / "install_population_champion.py").read_text(encoding="utf-8")
 
@@ -19,13 +20,25 @@ def test_akagi_3p_compat_contract_is_pinned() -> None:
     assert '"patch_mortal_unified_python_abi_stage8a.py"' in helper
     assert "hasattr(libriichi, 'arena')" in helper
     assert "hasattr(libriichi.arena, 'OneVsTwo')" in helper
+    assert "from libriichi.arena import" not in helper
+
     assert "engine_type = 'mjai-log'" in evaluator
     assert "AKAGI_LEGACY_OBS_CHANNELS = 775" in evaluator
     assert "NATIVE_OBS_CHANNELS = 1010" in evaluator
+    assert "from libriichi import arena" in evaluator
+    assert "arena.OneVsTwo" in evaluator
+    assert "from libriichi.arena import" not in evaluator
+
+    assert "from libriichi import arena" in evaluator_4p
+    assert "arena.OneVsThree" in evaluator_4p
+    assert "from libriichi.arena import" not in evaluator_4p
+
     assert "m.add_class::<OneVsTwo>()?;" in rebuild
     assert "maturin develop --release" in rebuild
     assert "MORTAL_UNIFIED_3P_ARENA_READY" in rebuild
     assert "hasattr(libriichi, 'arena')" in rebuild
+    assert "hasattr(libriichi.arena, 'OneVsTwo')" in rebuild
+    assert "from libriichi.arena import" not in rebuild
     assert 'LEGACY_3P_SLOT = "akagi_legacy_champion.pth"' in installer
     assert 'LEGACY_3P_ABI_KIND = "akagi-legacy-775"' in installer
 
