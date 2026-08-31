@@ -25,10 +25,11 @@ BACKENDS: dict[str, BackendCapabilities] = {
         high_throughput=True,
         batched_agent=True,
         native_windows=False,
-        experimental=False,
+        experimental=True,
         notes=(
-            "Primary 4P evaluator. Upstream is C++/Python, exposes batched Agent inference, "
-            "and officially targets Linux/macOS Intel. Use WSL2/container on Windows."
+            "Registered high-throughput 4P evaluator. It is not the canonical promotion backend yet; "
+            "use explicitly for parity/throughput experiments under WSL2/container and promote it only "
+            "after fixed-seed result/metric parity against native libriichi is demonstrated."
         ),
     ),
     "mjx_sanma": BackendCapabilities(
@@ -39,8 +40,8 @@ BACKENDS: dict[str, BackendCapabilities] = {
         native_windows=False,
         experimental=True,
         notes=(
-            "Target 3P production evaluator. Built from the pinned MJX fork/patch series. "
-            "Must pass libriichi3p legal-action, score and terminal-result parity before promotion."
+            "Experimental 3P high-throughput evaluator. Must pass libriichi3p legal-action, score and "
+            "terminal-result parity before any promotion use."
         ),
     ),
     "libriichi3p": BackendCapabilities(
@@ -50,7 +51,7 @@ BACKENDS: dict[str, BackendCapabilities] = {
         batched_agent=False,
         native_windows=True,
         experimental=False,
-        notes="Current 3P reference and production evaluator until MJX-Sanma parity passes.",
+        notes="Canonical 3P correctness and promotion evaluator.",
     ),
     "libriichi": BackendCapabilities(
         name="libriichi",
@@ -59,7 +60,7 @@ BACKENDS: dict[str, BackendCapabilities] = {
         batched_agent=False,
         native_windows=True,
         experimental=False,
-        notes="4P correctness/reference fallback compatible with the Mortal/Akagi engine stack.",
+        notes="Canonical 4P correctness and promotion evaluator used by the current model-comparison runner.",
     ),
     "mjai": BackendCapabilities(
         name="mjai",
@@ -79,14 +80,14 @@ def select_backend(
     *,
     allow_experimental: bool = False,
 ) -> BackendCapabilities:
-    """Select an evaluator and refuse unvalidated experimental engines by default."""
+    """Select an evaluator without silently changing the canonical promotion backend."""
 
     if players not in (3, 4):
         raise EvaluationBackendError(f"players must be 3 or 4, got {players}")
 
     pref = preference.casefold()
     if pref == "auto":
-        pref = "mjx" if players == 4 else "libriichi3p"
+        pref = "libriichi" if players == 4 else "libriichi3p"
 
     if pref not in BACKENDS:
         raise EvaluationBackendError(f"unknown evaluation backend: {preference!r}")
@@ -100,7 +101,7 @@ def select_backend(
         )
     if backend.experimental and not allow_experimental:
         raise EvaluationBackendError(
-            f"backend={backend.name!r} is experimental and has not passed its parity gate; "
-            "set allow_experimental=True only for validation runs"
+            f"backend={backend.name!r} is experimental and is not the canonical promotion evaluator; "
+            "set allow_experimental=True only for explicit validation/parity runs"
         )
     return backend
