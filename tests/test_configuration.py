@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.configuration import ConfigError, build_training_ablation_config, merge_preset
-from scripts.prepare_tenhou_training import split_for
+from scripts.prepare_tenhou_training import HOUOU_SHA, SANMA_SHA, YONMA_SHA, split_for
 
 
 def test_merge_preset_deep_merge():
@@ -89,3 +89,15 @@ def test_tenhou_train_val_split_is_deterministic_and_stable():
     assert first == second
     assert {"train", "val"} <= set(first)
     assert 20 <= first.count("val") <= 80
+
+
+def test_tenhou_preparation_pins_and_authorization_gate():
+    assert HOUOU_SHA == "d4ca693771517b67172521f2bd76517500db4a6e"
+    assert SANMA_SHA == "e0bd7bffe24227f97600c710cffa4490117b634a"
+    assert YONMA_SHA == "c133f7dbf61046feaf1af72369d9a44056807657"
+
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "RUN_TENHOU_FULL.bat").read_text(encoding="utf-8")
+    assert "authorized" in launcher
+    assert "--accept-tenhou-log-terms" in launcher
+    assert "RUN_TENHOU_FULL.bat full" in launcher
