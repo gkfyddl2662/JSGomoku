@@ -121,7 +121,7 @@ def _probe_unified_3p_arena(root: Path) -> str:
         "import libriichi; "
         "assert hasattr(libriichi, 'arena'); "
         "assert hasattr(libriichi.arena, 'OneVsTwo'); "
-        "print('MORTAL_UNIFIED_3P_ARENA_READY source=installed-unified-libriichi')"
+        "print('MORTAL_UNIFIED_3P_ARENA_READY source=installed-unified-libriichi import=top-level')"
     )
     return _run([str(python), "-c", code], cwd=root)
 
@@ -233,10 +233,18 @@ def apply_runtime_evaluator(runtime_root: Path, project_root: Path | None = None
     root = runtime_root.expanduser().resolve()
     project = (project_root or Path(__file__).resolve().parents[1]).expanduser().resolve()
     python = _runtime_python(root)
-    patcher = project / "scripts" / "patch_mortal_unified_eval_stage5c.py"
-    if not patcher.is_file():
-        raise RuntimeError(f"unified Stage 5C evaluator patcher is missing: {patcher}")
-    _run([str(python), str(patcher), "--root", str(root)], cwd=project)
+    # Stage 5C regenerates one_vs_two.py with the pre-Stage8A import form.
+    # Reapply Stage 8A immediately so the generated evaluator keeps the PyO3
+    # top-level submodule ABI used by the rest of the unified runtime.
+    patchers = [
+        project / "scripts" / "patch_mortal_unified_eval_stage5c.py",
+        project / "scripts" / "patch_mortal_unified_python_abi_stage8a.py",
+    ]
+    missing = [str(path) for path in patchers if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"3P evaluator patcher is missing: {missing}")
+    for patcher in patchers:
+        _run([str(python), str(patcher), "--root", str(root)], cwd=project)
     ensure_unified_3p_arena(root, project)
 
 
