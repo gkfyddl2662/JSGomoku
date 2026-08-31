@@ -29,8 +29,8 @@ def checkpoint_obs_channels(path: Path) -> int:
     return int(weight.shape[1])
 
 
-def _run(cmd: list[str], *, cwd: Path | None = None) -> str:
-    proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=False)
+def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
+    proc = subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[-40:])
         raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{tail}")
@@ -72,6 +72,31 @@ def _binary_name() -> tuple[str, str]:
     return f"libriichi3p-3.12-{arch}-{triple}.{suffix}", f"libriichi3p.{suffix}"
 
 
+def _runtime_python(root: Path) -> Path:
+    python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not python.is_file():
+        raise RuntimeError(f"unified runtime Python is missing: {python}")
+    return python
+
+
+def _validate_pinned_binary(root: Path, compat_dir: Path) -> None:
+    python = _runtime_python(root)
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(compat_dir) + (os.pathsep + existing if existing else "")
+    code = (
+        "import libriichi3p; "
+        "assert tuple(libriichi3p.consts.obs_shape(4)) == (775, 34); "
+        "assert int(libriichi3p.consts.ACTION_SPACE) == 44; "
+        "assert hasattr(libriichi3p, 'mjai') and hasattr(libriichi3p.mjai, 'Bot'); "
+        "assert hasattr(libriichi3p, 'arena') and hasattr(libriichi3p.arena, 'OneVsTwo'); "
+        "print('MORTAL_AKAGI3P_BINARY_OK obs=775 actions=44 arena=OneVsTwo')"
+    )
+    output = _run([str(python), "-c", code], cwd=root, env=env)
+    if output:
+        print(output, flush=True)
+
+
 def ensure_akagi_3p_compat(runtime_root: Path) -> Path:
     root = runtime_root.expanduser().resolve()
     external = root / "external" / "Akagi-NG"
@@ -101,6 +126,8 @@ def ensure_akagi_3p_compat(runtime_root: Path) -> Path:
         shutil.copy2(source, tmp)
         tmp.replace(target)
 
+    _validate_pinned_binary(root, compat_dir)
+
     manifest = {
         "protocol": COMPAT_PROTOCOL,
         "repository": AKAGI_REPO,
@@ -111,6 +138,7 @@ def ensure_akagi_3p_compat(runtime_root: Path) -> Path:
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
         "platform": sys.platform,
         "machine": platform.machine(),
+        "arena": "OneVsTwo",
     }
     manifest_path = compat_dir.parent / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -126,11 +154,16 @@ def ensure_akagi_3p_compat(runtime_root: Path) -> Path:
 def apply_runtime_evaluator(runtime_root: Path, project_root: Path | None = None) -> None:
     root = runtime_root.expanduser().resolve()
     project = (project_root or Path(__file__).resolve().parents[1]).expanduser().resolve()
-    python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    patcher = project / "scripts" / "patch_mortal_unified_eval_stage5c.py"
-    if not python.is_file() or not patcher.is_file():
-        raise RuntimeError("unified runtime Python or Stage 5C patcher is missing")
-    _run([str(python), str(patcher), "--root", str(root)], cwd=project)
+    python = _runtime_python(root)
+    patchers = [
+        project / "scripts" / "patch_mortal_unified_eval_stage5c.py",
+        project / "scripts" / "patch_mortal_akagi_legacy_arena.py",
+    ]
+    missing = [str(path) for path in patchers if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"3P evaluator patcher is missing: {missing}")
+    for patcher in patchers:
+        _run([str(python), str(patcher), "--root", str(root)], cwd=project)
 
 
 __all__ = [
